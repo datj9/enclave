@@ -8,7 +8,7 @@ import {
 } from '@/lib/artifacts/list-query'
 import { artifactViewUrl, slugFromTitle } from '@/lib/artifacts/naming'
 import { env } from '@/env'
-import { storageKey, versionPrefix } from '@/lib/storage/object-store'
+import { artifactPrefix, storageKey, versionPrefix } from '@/lib/storage/object-store'
 
 const CURSOR = { createdAt: '2026-08-01T10:00:00.000Z', id: '7f3e0000-0000-4000-8000-000000000001' }
 
@@ -110,5 +110,13 @@ describe('storage keys (§4.4)', () => {
   it('lays objects out under artifacts/{artifactId}/{versionId}/', () => {
     expect(versionPrefix('7f3e', '9a1c')).toBe('artifacts/7f3e/9a1c/')
     expect(storageKey('7f3e', '9a1c', 'assets/app.js')).toBe('artifacts/7f3e/9a1c/assets/app.js')
+  })
+
+  // The purge job deletes one prefix per artifact; if this containment ever broke, it would leave
+  // the objects of every version behind while removing the rows that point at them.
+  it('covers every version of an artifact from the artifact prefix alone', () => {
+    expect(artifactPrefix('7f3e')).toBe('artifacts/7f3e/')
+    expect(versionPrefix('7f3e', '9a1c').startsWith(artifactPrefix('7f3e'))).toBe(true)
+    expect(storageKey('7f3e', '9a1c', 'index.html').startsWith(artifactPrefix('7f3e'))).toBe(true)
   })
 })
