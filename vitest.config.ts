@@ -41,6 +41,13 @@ export default defineConfig({
           branches: 100,
           statements: 100,
         },
+        // S4 acceptance criterion: the read gate every read path runs through (§5.1).
+        '**/src/lib/artifacts/can-read.ts': {
+          lines: 100,
+          functions: 100,
+          branches: 100,
+          statements: 100,
+        },
       },
     },
   },
