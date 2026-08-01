@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   canRead,
   type ReadableArtifact,
   type ReadableVersion,
+  type ShareLinkBinding,
   type Viewer,
 } from '@/lib/artifacts/can-read'
 
@@ -19,6 +20,12 @@ const CAROL = 'cccccccc-3333-4333-8333-cccccccccccc'
 const ARTIFACT_ID = '11111111-4444-4444-8444-111111111111'
 const OTHER_ARTIFACT_ID = '22222222-5555-4555-8555-222222222222'
 const VERSION_ID = '33333333-6666-4666-8666-333333333333'
+const NEWER_VERSION_ID = '44444444-7777-4777-8777-444444444444'
+
+/** Stands in for Postgres `now()` — branch 4 never reads the app server's clock (§7). */
+const DATABASE_NOW = new Date('2026-08-01T12:00:00Z')
+const BEFORE_NOW = new Date('2026-07-31T12:00:00Z')
+const AFTER_NOW = new Date('2026-08-08T12:00:00Z')
 
 function artifact(overrides: Partial<ReadableArtifact> = {}): ReadableArtifact {
   return {
@@ -31,6 +38,19 @@ function artifact(overrides: Partial<ReadableArtifact> = {}): ReadableArtifact {
 }
 
 const VERSION: ReadableVersion = { id: VERSION_ID, artifactId: ARTIFACT_ID }
+const NEWER_VERSION: ReadableVersion = { id: NEWER_VERSION_ID, artifactId: ARTIFACT_ID }
+
+/** An active link pinned to `VERSION` unless a case overrides one field of it. */
+function shareToken(overrides: Partial<ShareLinkBinding> = {}): Viewer {
+  const link: ShareLinkBinding = {
+    artifactId: ARTIFACT_ID,
+    versionId: VERSION_ID,
+    revokedAt: null,
+    expiresAt: null,
+    ...overrides,
+  }
+  return { kind: 'shareToken', shareLinkId: 'c8d20000-1111-4111-8111-c8d200000000', link, databaseNow: DATABASE_NOW }
+}
 
 function user(id: string, overrides: { role?: 'admin' | 'member'; isActive?: boolean } = {}): Viewer {
   return { kind: 'user', id, role: overrides.role ?? 'member', isActive: overrides.isActive ?? true }
@@ -41,7 +61,7 @@ const OWNER_TOKEN: Viewer = { kind: 'apiToken', userId: ALICE }
 const STRANGER_SESSION = user(BOB)
 const STRANGER_TOKEN: Viewer = { kind: 'apiToken', userId: BOB }
 const ADMIN_SESSION = user(CAROL, { role: 'admin' })
-const SHARE_TOKEN: Viewer = { kind: 'shareToken', shareLinkId: 'link-1' }
+const SHARE_TOKEN = shareToken()
 
 interface Case {
   readonly name: string
@@ -116,16 +136,58 @@ const CASES: readonly Case[] = [
     expected: false,
   },
   {
-    name: 'branch 4 — a share token reads nothing until S5 lands (private)',
+    name: 'branch 4 — an active link pinned to this version opens a private artifact',
     viewer: SHARE_TOKEN,
+    artifact: artifact(),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 4 — the same link opens an org artifact, no extra permission needed',
+    viewer: SHARE_TOKEN,
+    artifact: artifact({ visibility: 'org' }),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 4 — a link pinned to v2 refuses v3, so a newer version never leaks',
+    viewer: SHARE_TOKEN,
+    artifact: artifact(),
+    version: NEWER_VERSION,
+    expected: false,
+  },
+  {
+    name: "branch 4 — a link for another artifact reads nothing of this one",
+    viewer: shareToken({ artifactId: OTHER_ARTIFACT_ID }),
     artifact: artifact(),
     version: VERSION,
     expected: false,
   },
   {
-    name: 'branch 4 — a share token reads nothing until S5 lands (org)',
-    viewer: SHARE_TOKEN,
-    artifact: artifact({ visibility: 'org' }),
+    name: 'branch 4 — a revoked link reads nothing, expiry or not',
+    viewer: shareToken({ revokedAt: BEFORE_NOW }),
+    artifact: artifact(),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 4 — a link whose expiry has passed on the database clock reads nothing',
+    viewer: shareToken({ expiresAt: BEFORE_NOW }),
+    artifact: artifact(),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 4 — a link expiring later still reads',
+    viewer: shareToken({ expiresAt: AFTER_NOW }),
+    artifact: artifact(),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 4 — expiry exactly at the database clock has passed, not "not yet"',
+    viewer: shareToken({ expiresAt: DATABASE_NOW }),
+    artifact: artifact(),
     version: VERSION,
     expected: false,
   },
@@ -174,6 +236,18 @@ describe('canRead — the promise the product makes', () => {
       const readable = canRead(ADMIN_SESSION, artifact({ ownerId }), VERSION)
       // Carol owns the third one, so branch 2 is why that single case is true.
       expect(readable).toBe(ownerId === CAROL)
+    }
+  })
+
+  it('judges expiry on the clock it was handed, never the app server\'s (§7)', () => {
+    const link = shareToken({ expiresAt: AFTER_NOW })
+    vi.useFakeTimers()
+    try {
+      // Node is a year past the expiry. Only `databaseNow` may decide, so the link still opens.
+      vi.setSystemTime(new Date('2027-08-01T12:00:00Z'))
+      expect(canRead(link, artifact(), VERSION)).toBe(true)
+    } finally {
+      vi.useRealTimers()
     }
   })
 

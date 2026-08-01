@@ -4,6 +4,7 @@ import { db } from '@/db'
 import { artifactVersions, artifacts, type Visibility } from '@/db/schema'
 import { users } from '@/db/schema/users'
 import type { ManifestEntry } from '@/lib/bundle/validate'
+import { loadShareLink } from '@/lib/shares/links'
 import { canRead, type Viewer } from './can-read'
 
 /**
@@ -20,6 +21,7 @@ import { canRead, type Viewer } from './can-read'
 
 const USER_VIEWER_PREFIX = 'user:'
 const API_TOKEN_VIEWER_PREFIX = 'apiToken:'
+const SHARE_VIEWER_PREFIX = 'share:'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export { canRead }
@@ -37,6 +39,17 @@ export function userViewerRef(userId: string): string {
 
 export function apiTokenViewerRef(userId: string): string {
   return `${API_TOKEN_VIEWER_PREFIX}${userId}`
+}
+
+/** The ref `/s/{token}` hands to the handoff token — the link's id, never the token itself (§8). */
+export function shareViewerRef(shareLinkId: string): string {
+  return `${SHARE_VIEWER_PREFIX}${shareLinkId}`
+}
+
+export function shareLinkIdFromViewerRef(viewerRef: string): string | null {
+  if (!viewerRef.startsWith(SHARE_VIEWER_PREFIX)) return null
+  const shareLinkId = viewerRef.slice(SHARE_VIEWER_PREFIX.length)
+  return UUID_PATTERN.test(shareLinkId) ? shareLinkId : null
 }
 
 /** Session viewers only — the handoff flow (§4.2) issues no ref for an API token. */
@@ -63,6 +76,13 @@ export interface AuthorizedVersion {
  * their reads — and their tokens' reads — on the next one (§7).
  */
 export async function resolveViewer(viewerRef: string): Promise<Viewer | null> {
+  const shareLinkId = shareLinkIdFromViewerRef(viewerRef)
+  if (shareLinkId !== null) {
+    const resolved = await loadShareLink(shareLinkId)
+    if (resolved === null) return null
+    return { kind: 'shareToken', shareLinkId, link: resolved.link, databaseNow: resolved.databaseNow }
+  }
+
   const userId = viewerUserIdFromRef(viewerRef)
   if (userId === null) return null
 
@@ -79,7 +99,7 @@ export async function resolveViewer(viewerRef: string): Promise<Viewer | null> {
     : { kind: 'user', id: userId, role: user.role, isActive: user.isActive }
 }
 
-interface ArtifactWithCurrentVersion {
+interface ArtifactWithVersion {
   readonly artifact: {
     readonly id: string
     readonly ownerId: string
@@ -98,11 +118,17 @@ interface ArtifactWithCurrentVersion {
  * No visibility or deletion predicate here on purpose: those are `canRead`'s branches 1 and 3,
  * and duplicating them in SQL would give the gate a second, silently diverging implementation.
  * `status = 'ready'` is not an authorization rule — a half-written version has nothing to serve.
+ *
+ * `pinnedVersionId` is the share link's version (§5.1 branch 4). `null` means the artifact's
+ * current version, which is what every other viewer kind reads. Either way `canRead` still has to
+ * agree that this viewer may read the version that came back.
  */
-export async function loadArtifactForRead(
+async function loadVersionForRead(
   artifactId: string,
-): Promise<ArtifactWithCurrentVersion | null> {
+  pinnedVersionId: string | null,
+): Promise<ArtifactWithVersion | null> {
   if (!UUID_PATTERN.test(artifactId)) return null
+  if (pinnedVersionId !== null && !UUID_PATTERN.test(pinnedVersionId)) return null
 
   const [row] = await db
     .select({
@@ -115,7 +141,15 @@ export async function loadArtifactForRead(
       manifest: artifactVersions.manifest,
     })
     .from(artifacts)
-    .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+    .innerJoin(
+      artifactVersions,
+      pinnedVersionId === null
+        ? eq(artifactVersions.id, artifacts.currentVersionId)
+        : and(
+            eq(artifactVersions.id, pinnedVersionId),
+            eq(artifactVersions.artifactId, artifacts.id),
+          ),
+    )
     .where(and(eq(artifacts.id, artifactId), eq(artifactVersions.status, 'ready')))
     .limit(1)
 
@@ -137,6 +171,11 @@ export async function loadArtifactForRead(
   }
 }
 
+/** The artifact's current ready version, for every viewer that is not holding a share link. */
+export async function loadArtifactForRead(artifactId: string): Promise<ArtifactWithVersion | null> {
+  return await loadVersionForRead(artifactId, null)
+}
+
 /**
  * `null` means "no readable artifact", never "exists but forbidden": the artifact id is part of
  * a public hostname, so distinguishing the two would confirm an artifact exists to anyone who
@@ -149,7 +188,10 @@ export async function authorizeArtifactRead(
   const viewer = await resolveViewer(viewerRef)
   if (viewer === null) return null
 
-  const loaded = await loadArtifactForRead(artifactId)
+  // A share link is pinned; everyone else reads whatever version is current. A purged pinned
+  // version finds no row here, which is the §7 "no longer available" 404.
+  const pinnedVersionId = viewer.kind === 'shareToken' ? viewer.link.versionId : null
+  const loaded = await loadVersionForRead(artifactId, pinnedVersionId)
   if (loaded === null) return null
   if (!canRead(viewer, loaded.artifact, loaded.version)) return null
 

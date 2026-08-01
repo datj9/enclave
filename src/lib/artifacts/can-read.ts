@@ -10,6 +10,17 @@ import type { UserRole } from '@/db/schema/users'
  * impossible to prove.
  */
 
+/**
+ * The share link a `shareToken` viewer presented, loaded but not judged: branch 4 below is what
+ * decides whether it still grants anything.
+ */
+export interface ShareLinkBinding {
+  readonly artifactId: string
+  readonly versionId: string
+  readonly revokedAt: Date | null
+  readonly expiresAt: Date | null
+}
+
 export type Viewer =
   | {
       readonly kind: 'user'
@@ -17,7 +28,17 @@ export type Viewer =
       readonly role: UserRole
       readonly isActive: boolean
     }
-  | { readonly kind: 'shareToken'; readonly shareLinkId: string }
+  | {
+      readonly kind: 'shareToken'
+      readonly shareLinkId: string
+      readonly link: ShareLinkBinding
+      /**
+       * Postgres `now()`, read in the same statement as the link. Branch 4 needs a clock and §7
+       * forbids the app server's, so the caller carries the database's in rather than this
+       * function reaching for `Date.now()`.
+       */
+      readonly databaseNow: Date
+    }
   | { readonly kind: 'apiToken'; readonly userId: string }
 
 export interface ReadableArtifact {
@@ -57,11 +78,17 @@ export function canRead(
   // 3. Org visibility. Session viewers only, per §5.1 — an API token stays owner-scoped.
   if (artifact.visibility === 'org' && viewer.kind === 'user' && viewer.isActive) return true
 
-  // 4. S5 SEAM — share links do not exist yet, so a share-token viewer reads nothing. When S5
-  //    lands, replace this with §5.1 branch 4: link.artifactId === artifact.id &&
-  //    link.versionId === version.id && link.revokedAt == null && (link.expiresAt == null ||
-  //    now < link.expiresAt). Nothing else in this function changes.
-  if (viewer.kind === 'shareToken') return false
+  // 4. Share link. The version match is what pins the link: a newer version of the same artifact
+  //    is a different `version.id` and this returns false for it.
+  if (viewer.kind === 'shareToken') {
+    const { link } = viewer
+    return (
+      link.artifactId === artifact.id &&
+      link.versionId === version.id &&
+      link.revokedAt === null &&
+      (link.expiresAt === null || viewer.databaseNow < link.expiresAt)
+    )
+  }
 
   // 5. Decision #26: an admin cannot read someone else's private artifact. Administering the
   //    instance is not permission to read its contents, and this is the headline privacy promise.
