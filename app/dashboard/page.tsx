@@ -25,6 +25,9 @@ export default async function DashboardPage() {
         <p className={styles.wordmark}>enclave</p>
         <div className={styles.identity}>
           <span className={styles.email}>{sessionUser.email}</span>
+          <a className="button-secondary" href="/trash">
+            Trash
+          </a>
           {sessionUser.role === 'admin' && (
             <a className="button-secondary" href="/admin/users">
               Admin

@@ -1,0 +1,124 @@
+/*
+ * The popup itself borrows the share dialog's entrance — `scale(0.96) → 1` plus opacity over
+ * 220 ms `ease-out`, `transform-origin: center` because modals are the documented exception to
+ * origin-aware scaling (docs/motion.md § This project's surfaces).
+ */
+.backdrop,
+.popup {
+  --dur-delete: 220ms;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(20% 0.01 60 / 0.44);
+  opacity: 1;
+  transition: opacity var(--dur-delete) var(--ease-out-app);
+}
+
+.backdrop[data-starting-style],
+.backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-modal);
+  width: min(26rem, calc(100vw - 2 * var(--space-md)));
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  transform-origin: center;
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  transition:
+    transform var(--dur-delete) var(--ease-out-app),
+    opacity var(--dur-delete) var(--ease-out-app);
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style] {
+  transform: translate(-50%, -50%) scale(0.96);
+  opacity: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  letter-spacing: -0.01em;
+}
+
+.description {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/*
+ * docs/motion.md: no animation on the destructive button — no `transition`, no `:active`
+ * transform. Both of these open or commit the delete, so both stay instant.
+ */
+.trigger,
+.confirm {
+  padding: var(--space-3xs) var(--space-2xs);
+  font: inherit;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}
+
+.trigger {
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+}
+
+.confirm {
+  color: var(--color-accent);
+  background: var(--color-paper);
+  border: 1px solid var(--color-accent);
+  font-weight: 500;
+}
+
+.confirm:disabled {
+  color: var(--color-ink-2);
+  border-color: var(--color-rule);
+  cursor: not-allowed;
+}
+
+.cancel {
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .popup {
+    transition-duration: var(--dur-delete);
+    transition-property: opacity;
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style] {
+    transform: translate(-50%, -50%);
+  }
+}

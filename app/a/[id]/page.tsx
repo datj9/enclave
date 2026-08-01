@@ -5,8 +5,10 @@ import { authorizeArtifactRead, userViewerRef } from '@/lib/artifacts/authorize'
 import { artifactViewUrl } from '@/lib/artifacts/naming'
 import { getSessionUser } from '@/lib/auth/session'
 import { signHandoffToken } from '@/lib/handoff'
+import { env } from '@/env'
 import { listShareLinks, listShareableVersions } from '@/lib/shares/manage'
 import { ArtifactFrame } from './artifact-frame'
+import { DeleteDialog } from './delete-dialog'
 import { PrivacySwitch } from './privacy-switch'
 import { ShareDialog } from './share-dialog'
 import styles from './page.module.css'
@@ -61,6 +63,13 @@ export default async function ArtifactViewerPage({
               artifactId={id}
               versions={shareState.versions}
               initialShares={shareState.shares}
+            />
+            <DeleteDialog
+              artifactId={id}
+              activeShareCount={
+                shareState.shares.filter((share) => share.revokedAt === null).length
+              }
+              retentionDays={env.TRASH_RETENTION_DAYS}
             />
           </div>
         )}
