@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   resolveManifestPath,
+  shareLinkIdFromViewerRef,
+  shareViewerRef,
   userIdFromViewerRef,
   userViewerRef,
 } from '@/lib/artifacts/authorize'
@@ -13,6 +15,7 @@ import type { ManifestEntry } from '@/lib/bundle/validate'
  */
 
 const USER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+const SHARE_LINK_ID = 'c8d2c8d2-1111-4111-8111-c8d2c8d2c8d2'
 
 function entry(path: string): ManifestEntry {
   return { path, bytes: 1, content_type: 'text/javascript', sha256: 'x' }
@@ -36,6 +39,28 @@ describe('viewer refs', () => {
     ['an empty ref', ''],
   ])('returns null for %s', (_case, viewerRef) => {
     expect(userIdFromViewerRef(viewerRef)).toBeNull()
+  })
+
+  it('round-trips a share link id', () => {
+    expect(shareLinkIdFromViewerRef(shareViewerRef(SHARE_LINK_ID))).toBe(SHARE_LINK_ID)
+  })
+
+  it('carries the link id, never the token — a ref reaches the artifact origin', () => {
+    expect(shareViewerRef(SHARE_LINK_ID)).toBe(`share:${SHARE_LINK_ID}`)
+  })
+
+  it.each([
+    ['a user ref', userViewerRef(USER_ID)],
+    ['a non-uuid share id', 'share:not-a-uuid'],
+    ['a bare id', SHARE_LINK_ID],
+    ['an empty ref', ''],
+  ])('resolves no share link id from %s', (_case, viewerRef) => {
+    expect(shareLinkIdFromViewerRef(viewerRef)).toBeNull()
+  })
+
+  it('keeps the two ref kinds from resolving as each other', () => {
+    expect(userIdFromViewerRef(shareViewerRef(SHARE_LINK_ID))).toBeNull()
+    expect(shareLinkIdFromViewerRef(userViewerRef(USER_ID))).toBeNull()
   })
 })
 

@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm'
 import { db } from '@/db'
 import { shareLinks } from '@/db/schema/share-links'
 import type { ShareLinkBinding } from '@/lib/artifacts/can-read'
+import { databaseNowEpoch, epochToDate } from './clock'
 import { hashShareToken, isShareTokenShaped } from './token'
 
 /**
@@ -32,7 +33,7 @@ const LINK_COLUMNS = {
   versionId: shareLinks.versionId,
   revokedAt: shareLinks.revokedAt,
   expiresAt: shareLinks.expiresAt,
-  databaseNow: sql<Date>`now()`,
+  databaseNow: databaseNowEpoch,
 }
 
 type LinkRow = {
@@ -41,7 +42,7 @@ type LinkRow = {
   readonly versionId: string
   readonly revokedAt: Date | null
   readonly expiresAt: Date | null
-  readonly databaseNow: Date
+  readonly databaseNow: string | number
 }
 
 function toResolvedShareLink(row: LinkRow): ResolvedShareLink {
@@ -53,7 +54,7 @@ function toResolvedShareLink(row: LinkRow): ResolvedShareLink {
       revokedAt: row.revokedAt,
       expiresAt: row.expiresAt,
     },
-    databaseNow: row.databaseNow,
+    databaseNow: epochToDate(row.databaseNow),
   }
 }
 

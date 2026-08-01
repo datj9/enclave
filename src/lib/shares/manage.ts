@@ -7,6 +7,7 @@ import { requireOwnedArtifact } from '@/lib/artifacts/update'
 import { recordAuditEvent } from '@/lib/audit'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
+import { databaseNowEpoch, epochToDate } from './clock'
 import { loadShareLink } from './links'
 import { mintShareToken, shareLinkUrl } from './token'
 
@@ -54,7 +55,7 @@ async function loadPinnableVersion(
   versionId: string,
 ): Promise<{ readonly versionId: string; readonly databaseNow: Date }> {
   const [row] = await db
-    .select({ id: artifactVersions.id, databaseNow: sql<Date>`now()` })
+    .select({ id: artifactVersions.id, databaseNow: databaseNowEpoch })
     .from(artifactVersions)
     .where(
       and(
@@ -71,7 +72,7 @@ async function loadPinnableVersion(
     })
   }
 
-  return { versionId: row.id, databaseNow: row.databaseNow }
+  return { versionId: row.id, databaseNow: epochToDate(row.databaseNow) }
 }
 
 export async function createShareLink(input: CreateShareLinkInput): Promise<CreatedShareLink> {
