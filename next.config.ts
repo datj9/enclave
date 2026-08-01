@@ -31,7 +31,9 @@ function requestBodyCeilingBytes(): number {
 }
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  // Only the Docker image wants a standalone bundle. Setting it unconditionally makes
+  // `next start` warn and serve from the wrong place, which breaks `pnpm test:e2e` locally.
+  ...(process.env.BUILD_STANDALONE === 'true' ? { output: 'standalone' as const } : {}),
   poweredByHeader: false,
   reactStrictMode: true,
   headers: async () => [{ source: '/:path*', headers: [...APP_SECURITY_HEADERS] }],

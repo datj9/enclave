@@ -16,6 +16,7 @@ COPY . .
 # `next build` evaluates route modules, so src/env.ts must not require a real environment at
 # import time — it does not; validation happens on first property read.
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV BUILD_STANDALONE=true
 RUN pnpm build
 
 FROM base AS runner
