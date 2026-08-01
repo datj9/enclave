@@ -6,6 +6,13 @@ import { db } from '@/db'
 import { users } from '@/db/schema'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
+import {
+  claimInvite,
+  findRedeemableInviteByEmail,
+  isInviteRedeemable,
+  lockInvite,
+  type DbHandle,
+} from '@/lib/invites/redeem'
 
 /**
  * Optional OIDC sign-in (grill-result §8, A.9.4.2). Everything here is inert until all three of
@@ -288,12 +295,17 @@ async function isEmailTaken(email: string): Promise<boolean> {
 }
 
 /**
- * S10 seam — invites do not exist yet. When they land, an unused invite for the asserted email
- * must satisfy this gate alongside ALLOW_OPEN_REGISTRATION, and consuming it belongs in
- * `createOidcUser` inside the same transaction as the insert.
+ * S10 filled the seam this function used to be. Registration is authorised by open registration,
+ * or by an outstanding invite naming the address the provider asserted — a link-only invite
+ * (`email is null`) cannot authorise it, because nothing would bind the link to this identity.
  */
-function isOidcRegistrationAllowed(): boolean {
-  return env.ALLOW_OPEN_REGISTRATION
+type RegistrationGrant = { readonly kind: 'open' } | { readonly kind: 'invite'; readonly inviteId: string }
+
+async function oidcRegistrationGrant(email: string): Promise<RegistrationGrant | null> {
+  if (env.ALLOW_OPEN_REGISTRATION) return { kind: 'open' }
+
+  const invite = await findRedeemableInviteByEmail(email)
+  return invite === null ? null : { kind: 'invite', inviteId: invite.id }
 }
 
 function outcomeForExistingUser(user: IdentityRow): OidcSigninOutcome {
@@ -301,8 +313,11 @@ function outcomeForExistingUser(user: IdentityRow): OidcSigninOutcome {
   return { ok: true, userId: user.id, created: false }
 }
 
-async function createOidcUser(identity: OidcIdentity): Promise<OidcSigninOutcome> {
-  const [created] = await db
+async function insertOidcUser(
+  identity: OidcIdentity,
+  handle: DbHandle,
+): Promise<OidcSigninOutcome> {
+  const [created] = await handle
     .insert(users)
     .values({
       email: identity.email,
@@ -323,6 +338,31 @@ async function createOidcUser(identity: OidcIdentity): Promise<OidcSigninOutcome
 }
 
 /**
+ * The invite claim and the insert share one transaction under the invite's advisory lock, so the
+ * invite is burnt exactly when a user is created — never by a sign-in that lost the insert race,
+ * and never twice.
+ */
+async function createOidcUser(
+  identity: OidcIdentity,
+  grant: RegistrationGrant,
+): Promise<OidcSigninOutcome> {
+  if (grant.kind === 'open') return insertOidcUser(identity, db)
+
+  return db.transaction(async (transaction) => {
+    await lockInvite(transaction, grant.inviteId)
+    if (!(await isInviteRedeemable(transaction, grant.inviteId))) {
+      return { ok: false, reason: 'registration_closed' }
+    }
+
+    const outcome = await insertOidcUser(identity, transaction)
+    if (outcome.ok && outcome.created) {
+      await claimInvite(transaction, grant.inviteId, outcome.userId)
+    }
+    return outcome
+  })
+}
+
+/**
  * The identity key is `oidc_sub` and never the email. An asserted email that already belongs to
  * a password account is refused outright: linking the two must start from the existing account
  * proving itself, otherwise anyone who can make their provider assert an address inherits it.
@@ -332,9 +372,11 @@ export async function resolveOidcIdentity(identity: OidcIdentity): Promise<OidcS
   if (existing !== undefined) return outcomeForExistingUser(existing)
 
   if (await isEmailTaken(identity.email)) return { ok: false, reason: 'email_taken' }
-  if (!isOidcRegistrationAllowed()) return { ok: false, reason: 'registration_closed' }
 
-  return createOidcUser(identity)
+  const grant = await oidcRegistrationGrant(identity.email)
+  if (grant === null) return { ok: false, reason: 'registration_closed' }
+
+  return createOidcUser(identity, grant)
 }
 
 const REJECTION_RESPONSES: Readonly<Record<OidcRejection, string>> = {
