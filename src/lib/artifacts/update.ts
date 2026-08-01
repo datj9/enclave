@@ -1,8 +1,10 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, gte, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { db } from '@/db'
 import { VISIBILITIES, artifacts, type Visibility } from '@/db/schema/artifacts'
+import { shareLinks } from '@/db/schema/share-links'
+import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
 import { authorizeArtifactRead, loadArtifactForRead, resolveViewer } from './authorize'
@@ -140,9 +142,13 @@ export async function updateArtifact(input: UpdateArtifactInput): Promise<Artifa
 }
 
 /**
- * The authorization half of delete, which S4 needs so a non-owner's `DELETE` is a 403 rather
- * than a 405. The soft delete itself is all `deleted_at` does today — trash listing, restore,
- * and purge are S9, and `canRead` branch 1 already makes a deleted artifact unreadable.
+ * `DELETE /api/v1/artifacts/{id}` (§5.3). One transaction stamps `deleted_at` and revokes every
+ * link that was still live, so there is no instant in which the artifact is in the trash while a
+ * share URL still opens it. `canRead` branch 1 does the rest: the artifact leaves every read path,
+ * the owner's included.
+ *
+ * A second `DELETE` is a 404 rather than a no-op — `requireOwnedArtifact` reads through the gate,
+ * and a trashed artifact is unreadable there.
  */
 export async function softDeleteArtifact(input: {
   readonly artifactId: string
@@ -151,18 +157,84 @@ export async function softDeleteArtifact(input: {
 }): Promise<void> {
   const current = await requireOwnedArtifact(input.artifactId, input.viewerRef)
 
-  await db
-    .update(artifacts)
-    .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
-    .where(eq(artifacts.id, input.artifactId))
+  const revoked = await db.transaction(async (transaction) => {
+    await transaction
+      .update(artifacts)
+      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(eq(artifacts.id, input.artifactId))
+
+    return await transaction
+      .update(shareLinks)
+      .set({ revokedAt: sql`now()` })
+      .where(and(eq(shareLinks.artifactId, input.artifactId), isNull(shareLinks.revokedAt)))
+      .returning({ id: shareLinks.id })
+  })
 
   await recordAuditEvent({
     action: 'artifact.delete',
     actorUserId: current.ownerId,
     actorIp: input.actorIp ?? null,
     artifactId: input.artifactId,
-    metadata: { visibility: current.visibility },
+    metadata: { visibility: current.visibility, revokedShareLinks: revoked.length },
   })
+}
+
+/**
+ * `POST /api/v1/artifacts/{id}/restore` (§5.3). The gate cannot authorize this one: branch 1
+ * refuses a trashed artifact to every viewer, so ownership is checked against the row instead.
+ * Everything that is not the active owner — another member, an admin (branch 5), an artifact that
+ * was never deleted, one past its retention window — collapses to the same 404.
+ */
+export async function restoreArtifact(input: {
+  readonly artifactId: string
+  readonly viewerRef: string
+  readonly actorIp?: string | null
+  readonly retentionDays?: number
+}): Promise<ArtifactView> {
+  const viewer = await resolveViewer(input.viewerRef)
+  const restorerId = viewer === null ? null : writerUserId(viewer)
+  if (restorerId === null) throw new HttpError('NOT_FOUND', 'No such artifact')
+
+  const retentionDays = input.retentionDays ?? env.TRASH_RETENTION_DAYS
+
+  const [row] = await db
+    .update(artifacts)
+    .set({ deletedAt: null, updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(artifacts.id, input.artifactId),
+        eq(artifacts.ownerId, restorerId),
+        // Restorable for exactly as long as it is not yet purgeable, on the database clock (§7).
+        gte(artifacts.deletedAt, sql`now() - make_interval(days => ${retentionDays})`),
+      ),
+    )
+    .returning({
+      id: artifacts.id,
+      title: artifacts.title,
+      slug: artifacts.slug,
+      visibility: artifacts.visibility,
+      createdAt: artifacts.createdAt,
+      updatedAt: artifacts.updatedAt,
+    })
+
+  if (row === undefined) throw new HttpError('NOT_FOUND', 'No such artifact')
+
+  // Share links stay revoked. Deleting an artifact is what the author reached for to kill the
+  // links; silently reviving URLs they believed dead would be the worse surprise.
+  await recordAuditEvent({
+    action: 'artifact.restore',
+    actorUserId: restorerId,
+    actorIp: input.actorIp ?? null,
+    artifactId: input.artifactId,
+    metadata: { retentionDays },
+  })
+
+  return {
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    viewUrl: artifactViewUrl(row.id),
+  }
 }
 
 /** Re-reads through the gate so the caller sees exactly what a reader would. */

@@ -38,9 +38,14 @@ export interface ObjectStore {
   deletePrefix(prefix: string): Promise<void>
 }
 
+/** Everything an artifact owns, across every version — what the purge job removes (S9). */
+export function artifactPrefix(artifactId: string): string {
+  return `artifacts/${artifactId}/`
+}
+
 /** `artifacts/{artifactId}/{versionId}/` — objects under a version are never mutated (§4.4). */
 export function versionPrefix(artifactId: string, versionId: string): string {
-  return `artifacts/${artifactId}/${versionId}/`
+  return `${artifactPrefix(artifactId)}${versionId}/`
 }
 
 export function storageKey(artifactId: string, versionId: string, path: string): string {

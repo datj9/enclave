@@ -50,6 +50,8 @@ export const artifacts = pgTable(
       table.createdAt.desc(),
       table.id.desc(),
     ),
+    // The trash listing (S9) and the purge job's due-row scan, which both filter on `deleted_at`.
+    index('artifacts_owner_deleted_idx').on(table.ownerId, table.deletedAt),
   ],
 )
 
