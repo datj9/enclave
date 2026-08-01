@@ -59,9 +59,9 @@ describe('decideQuota', () => {
   it('never reports a retry of less than a second', () => {
     const freesAt = new Date(NOW.getTime() + 10)
 
-    expect(decideQuota(usageWith({ hourlyCount: 2, hourlySlotFreesAt: freesAt }), NOW)).toMatchObject(
-      { retryAfterSeconds: 1 },
-    )
+    expect(
+      decideQuota(usageWith({ hourlyCount: 2, hourlySlotFreesAt: freesAt }), NOW),
+    ).toMatchObject({ retryAfterSeconds: 1 })
   })
 
   it('allows the call at n - 1 of the daily quota', () => {
