@@ -11,19 +11,39 @@ import type { ManifestEntry } from '@/lib/bundle/validate'
  * S3 authorizes the owner and nobody else — org visibility and share tokens become further
  * viewer kinds in S4/S5. The `viewerRef` string is the seam: it already distinguishes the kind
  * of viewer, so those slices add cases rather than changing every caller.
+ *
+ * S8 adds the `apiToken` kind (§5.1). It resolves to the token's owning user and gets no extra
+ * reach: an API token sees exactly what its owner's session would see.
  */
 
 const USER_VIEWER_PREFIX = 'user:'
+const API_TOKEN_VIEWER_PREFIX = 'apiToken:'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+function userIdWithPrefix(viewerRef: string, prefix: string): string | null {
+  if (!viewerRef.startsWith(prefix)) return null
+  const userId = viewerRef.slice(prefix.length)
+  return UUID_PATTERN.test(userId) ? userId : null
+}
 
 export function userViewerRef(userId: string): string {
   return `${USER_VIEWER_PREFIX}${userId}`
 }
 
+export function apiTokenViewerRef(userId: string): string {
+  return `${API_TOKEN_VIEWER_PREFIX}${userId}`
+}
+
+/** Session viewers only — the handoff flow (§4.2) issues no ref for an API token. */
 export function userIdFromViewerRef(viewerRef: string): string | null {
-  if (!viewerRef.startsWith(USER_VIEWER_PREFIX)) return null
-  const userId = viewerRef.slice(USER_VIEWER_PREFIX.length)
-  return UUID_PATTERN.test(userId) ? userId : null
+  return userIdWithPrefix(viewerRef, USER_VIEWER_PREFIX)
+}
+
+/** The user a read is authorized as, for either viewer kind. */
+export function viewerUserIdFromRef(viewerRef: string): string | null {
+  return (
+    userIdFromViewerRef(viewerRef) ?? userIdWithPrefix(viewerRef, API_TOKEN_VIEWER_PREFIX)
+  )
 }
 
 export interface AuthorizedVersion {
@@ -42,7 +62,7 @@ export async function authorizeArtifactRead(
   artifactId: string,
   viewerRef: string,
 ): Promise<AuthorizedVersion | null> {
-  const userId = userIdFromViewerRef(viewerRef)
+  const userId = viewerUserIdFromRef(viewerRef)
   if (userId === null || !UUID_PATTERN.test(artifactId)) return null
 
   const [row] = await db

@@ -1,4 +1,5 @@
-import { requireJsonContentType, readJsonBody, requireSessionUser } from '@/lib/api/guards'
+import { requireJsonContentType, readJsonBody } from '@/lib/api/guards'
+import { requireApiPrincipal } from '@/lib/auth/bearer'
 import { createArtifactWithBundle } from '@/lib/artifacts/create'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
 import { parseListQuery } from '@/lib/artifacts/list-query'
@@ -8,10 +9,13 @@ import { clientIpFromHeaders } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
-/** `POST /api/v1/artifacts` — creates the artifact and its first version (§5.3). */
+/**
+ * `POST /api/v1/artifacts` — creates the artifact and its first version (§5.3). Accepts a session
+ * cookie or a bearer API token scoped `artifacts:write`; the artifact is owned by the token's user.
+ */
 export async function POST(request: Request): Promise<Response> {
   try {
-    const sessionUser = await requireSessionUser()
+    const principal = await requireApiPrincipal(request, 'artifacts:write')
     requireJsonContentType(request)
 
     const parsed = parseCreateArtifactBody(await readJsonBody(request))
@@ -22,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const created = await createArtifactWithBundle({
-      ownerId: sessionUser.id,
+      ownerId: principal.userId,
       title: parsed.value.title,
       visibility: parsed.value.visibility,
       files: parsed.value.files,
@@ -38,7 +42,7 @@ export async function POST(request: Request): Promise<Response> {
 /** `GET /api/v1/artifacts` — the caller's own artifacts. Owner-only until S4. */
 export async function GET(request: Request): Promise<Response> {
   try {
-    const sessionUser = await requireSessionUser()
+    const principal = await requireApiPrincipal(request, 'artifacts:read')
 
     const query = parseListQuery(new URL(request.url).searchParams)
     if (!query.ok) {
@@ -47,7 +51,7 @@ export async function GET(request: Request): Promise<Response> {
       })
     }
 
-    return jsonData(await listOwnedArtifacts(sessionUser.id, query.value))
+    return jsonData(await listOwnedArtifacts(principal.userId, query.value))
   } catch (error) {
     return toErrorResponse(error)
   }
