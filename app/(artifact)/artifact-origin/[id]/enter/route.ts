@@ -8,6 +8,7 @@ import { createGrantCookie } from '@/lib/artifacts/grant'
 import { artifactIdFromHost, artifactNotAvailable, requestHost } from '@/lib/artifacts/origin'
 import { recordAuditEvent } from '@/lib/audit'
 import { consumeHandoffToken } from '@/lib/handoff'
+import { clientIpFromHeaders } from '@/lib/rate-limit'
 
 /**
  * grill-result §4.2 step 4. Reached only through the proxy's host rewrite, so `id` is the
@@ -40,12 +41,18 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
     return artifactNotAvailable()
   }
 
-  recordAuditEvent({
-    action: 'artifact.view',
-    actorUserId: userIdFromViewerRef(claims.viewerRef),
-    artifactId: authorized.artifactId,
-    versionId: authorized.versionId,
-  })
+  // §5.2: `artifact.view` is recorded for non-private artifacts only. Logging every read of a
+  // private artifact would build a record of what its owner looks at, which is the opposite of
+  // what "only me" promises.
+  if (authorized.visibility !== 'private') {
+    await recordAuditEvent({
+      action: 'artifact.view',
+      actorUserId: userIdFromViewerRef(claims.viewerRef),
+      actorIp: clientIpFromHeaders(request.headers),
+      artifactId: authorized.artifactId,
+      versionId: authorized.versionId,
+    })
+  }
 
   const setCookie = await createGrantCookie({
     artifactId: authorized.artifactId,
