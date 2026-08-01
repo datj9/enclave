@@ -1,10 +1,7 @@
 import { sql } from 'drizzle-orm'
-import { boolean, check, customType, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, check, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
-/** Postgres `citext`, so email uniqueness is case-insensitive without a functional index. */
-const citext = customType<{ data: string; driverData: string }>({
-  dataType: () => 'citext',
-})
+import { citext } from './column-types'
 
 export const USER_ROLES = ['admin', 'member'] as const
 export type UserRole = (typeof USER_ROLES)[number]
