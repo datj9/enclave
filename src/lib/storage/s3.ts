@@ -7,10 +7,16 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
-import type { FetchedObject, ObjectStore, PutObjectInput } from './object-store'
+import type {
+  FetchedObject,
+  ObjectStore,
+  PutObjectInput,
+  StreamedObject,
+} from './object-store'
 
 /**
  * The one S3-compatible adapter (decision #11/#16: AWS S3, GCS, R2, B2, MinIO all work).
@@ -157,6 +163,26 @@ async function getObject(
   }
 }
 
+async function getObjectStream(
+  client: S3Client,
+  bucket: string,
+  key: string,
+): Promise<StreamedObject | undefined> {
+  try {
+    const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+    if (response.Body === undefined) return undefined
+    return {
+      body: response.Body.transformToWebStream(),
+      contentType: response.ContentType ?? 'application/octet-stream',
+      contentLength: response.ContentLength,
+    }
+  } catch (error) {
+    if (isMissingObject(error)) return undefined
+    console.error(`[enclave] object storage get-stream failed — ${errorSummary(error)}`)
+    throw new HttpError('STORAGE_UNAVAILABLE', STORAGE_UNAVAILABLE_MESSAGE)
+  }
+}
+
 export function createS3ObjectStore(
   config: S3StoreConfig,
   client: S3Client = createClient(config),
@@ -177,6 +203,15 @@ export function createS3ObjectStore(
         )
       }),
     getObject: (key: string) => getObject(client, bucket, key),
+    getObjectStream: (key: string) => getObjectStream(client, bucket, key),
+    // The signed URL is a bearer credential for the object: it is returned to the caller and
+    // never logged, here or anywhere upstream (§8 log hygiene).
+    presignGetUrl: (key: string, expiresInSeconds: number) =>
+      withStorageErrors('presign', () =>
+        getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
+          expiresIn: expiresInSeconds,
+        }),
+      ),
     listKeys: (prefix: string) => listKeys(client, bucket, prefix),
     deletePrefix: async (prefix: string) => {
       const keys = await listKeys(client, bucket, prefix)

@@ -16,6 +16,8 @@ const refusingStore: ObjectStore = {
   ensureBucket: () => Promise.reject(new Error('storage must not be touched')),
   putObject: () => Promise.reject(new Error('storage must not be touched')),
   getObject: () => Promise.reject(new Error('storage must not be touched')),
+  getObjectStream: () => Promise.reject(new Error('storage must not be touched')),
+  presignGetUrl: () => Promise.reject(new Error('storage must not be touched')),
   listKeys: () => Promise.reject(new Error('storage must not be touched')),
   deletePrefix: () => Promise.reject(new Error('storage must not be touched')),
 }

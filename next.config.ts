@@ -1,13 +1,10 @@
 import type { NextConfig } from 'next'
 
-// Static app-origin headers per grill-result §4.3. The Content-Security-Policy is NOT here:
-// it carries a per-request nonce, so it is emitted from middleware.ts instead.
-const APP_SECURITY_HEADERS = [
-  { key: 'X-Frame-Options', value: 'DENY' },
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
-] as const
+// Security headers are NOT configured here. A `headers()` rule matches on path only, and S3
+// serves two origins from one process (grill-result §4.1) whose header sets differ — the app's
+// `X-Frame-Options: DENY` on an artifact response would block the viewer's own iframe. Both
+// sets are emitted per-host from proxy.ts instead, which also keeps them out of the
+// build-time routes manifest that a self-hosted image would otherwise freeze.
 
 const DEFAULT_BUNDLE_MAX_TOTAL_BYTES = 10_485_760
 const BASE64_OVERHEAD = 4 / 3
@@ -36,7 +33,6 @@ const nextConfig: NextConfig = {
   ...(process.env.BUILD_STANDALONE === 'true' ? { output: 'standalone' as const } : {}),
   poweredByHeader: false,
   reactStrictMode: true,
-  headers: async () => [{ source: '/:path*', headers: [...APP_SECURITY_HEADERS] }],
   experimental: {
     proxyClientMaxBodySize: requestBodyCeilingBytes(),
   },

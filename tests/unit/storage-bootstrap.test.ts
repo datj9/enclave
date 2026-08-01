@@ -8,6 +8,8 @@ function storeWhoseEnsureBucket(behaviour: () => Promise<void>): ObjectStore {
     ensureBucket: behaviour,
     putObject: () => Promise.reject(new Error('not used')),
     getObject: () => Promise.reject(new Error('not used')),
+    getObjectStream: () => Promise.reject(new Error('not used')),
+    presignGetUrl: () => Promise.reject(new Error('not used')),
     listKeys: () => Promise.reject(new Error('not used')),
     deletePrefix: () => Promise.reject(new Error('not used')),
   }
