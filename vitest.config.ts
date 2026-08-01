@@ -34,6 +34,13 @@ export default defineConfig({
           branches: 100,
           statements: 100,
         },
+        // S6 acceptance criterion: the same for the incremental model-output parser.
+        '**/src/lib/bundle/parse-file-blocks.ts': {
+          lines: 100,
+          functions: 100,
+          branches: 100,
+          statements: 100,
+        },
       },
     },
   },
