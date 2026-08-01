@@ -1,0 +1,65 @@
+name: enclave
+
+services:
+  app:
+    build:
+      context: .
+      target: runner
+    image: enclave:local
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      # Overrides .env's host-side URL: inside the compose network Postgres answers on its
+      # own service name and the container-internal port, not the published 5434.
+      DATABASE_URL: postgresql://enclave:enclave@postgres:5432/enclave
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      # 5434, not 5432 or 5433 — those collide with a locally installed Postgres and with
+      # Docker Desktop on many machines.
+      - '5434:5432'
+    environment:
+      POSTGRES_USER: enclave
+      POSTGRES_PASSWORD: enclave
+      POSTGRES_DB: enclave
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U enclave -d enclave']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional zero-config object storage for a local demo:
+  #   docker compose --profile minio up -d
+  # Any S3-compatible backend works in production (AWS S3, GCS, R2, B2).
+  minio:
+    image: minio/minio:latest
+    profiles: ['minio']
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      MINIO_ROOT_USER: enclave-dev-access-key
+      MINIO_ROOT_PASSWORD: enclave-dev-secret-key
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  minio-data:

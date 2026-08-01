@@ -1,0 +1,17 @@
+.claude
+.devkit
+.git
+.env
+.env.local
+.env.*.local
+node_modules
+.next
+coverage
+playwright-report
+test-results
+blob-report
+.playwright
+dist
+*.tsbuildinfo
+.DS_Store
+*.log
