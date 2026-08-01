@@ -1,0 +1,48 @@
+.shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  text-decoration: none;
+}
+
+.email {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-2xl) var(--space-md);
+  max-width: 72ch;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.heading {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+
+.body {
+  margin: 0 0 var(--space-sm);
+  color: var(--color-ink-2);
+  max-width: 65ch;
+}

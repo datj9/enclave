@@ -3,18 +3,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
+import { users } from '@/db/schema/users'
 import { generations } from '@/db/schema/generations'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
 import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { HttpError } from '@/lib/http'
+import type * as ProvidersModule from '@/lib/providers'
 import type { ArtifactProvider, ProviderSelection } from '@/lib/providers'
+import type * as S3Module from '@/lib/storage/s3'
 import type { ObjectStore } from '@/lib/storage/object-store'
-import {
-  createTestOwner,
-  createTestStore,
-  probeServices,
-  removeTestOwnerData,
-} from './services'
+import { createTestStore, probeServices, removeTestOwnerData } from './services'
 
 /**
  * The whole S6 route against real Postgres and real object storage, with the model replaced by a
@@ -61,7 +59,7 @@ vi.mock('@/lib/auth/session', () => ({
 }))
 
 vi.mock('@/lib/providers', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/providers')>()
+  const actual = await importOriginal<typeof ProvidersModule>()
   return {
     ...actual,
     resolveProviderForUser: () => {
@@ -72,7 +70,7 @@ vi.mock('@/lib/providers', async (importOriginal) => {
 })
 
 vi.mock('@/lib/storage/s3', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/storage/s3')>()
+  const actual = await importOriginal<typeof S3Module>()
   return { ...actual, objectStore: () => mocks.store ?? actual.objectStore() }
 })
 
@@ -134,6 +132,22 @@ async function readFrames(response: Response): Promise<SseFrame[]> {
     })
 }
 
+/**
+ * Its own owner, not `createTestOwner`'s shared one: vitest runs test files in parallel and that
+ * helper deletes by a single fixed email, so two suites would tear down each other's rows.
+ */
+const OWNER_EMAIL = 'integration-generate@example.test'
+
+async function createGenerationOwner(): Promise<string> {
+  const [owner] = await db
+    .insert(users)
+    .values({ email: OWNER_EMAIL, passwordHash: null, role: 'member', isActive: true })
+    .returning({ id: users.id })
+
+  if (owner === undefined) throw new Error('could not create the generation test owner')
+  return owner.id
+}
+
 async function generationRowsFor(userId: string) {
   return db.select().from(generations).where(eq(generations.userId, userId))
 }
@@ -149,8 +163,8 @@ describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
 
   beforeEach(async () => {
     if (ownerId !== '') await cleanUp()
-    ownerId = await createTestOwner()
-    mocks.sessionUser = { id: ownerId, email: 'owner@example.test', role: 'member', isActive: true }
+    ownerId = await createGenerationOwner()
+    mocks.sessionUser = { id: ownerId, email: OWNER_EMAIL, role: 'member', isActive: true }
     mocks.deltas = [...WELL_FORMED]
     mocks.failWith = undefined
     mocks.selection = selectionWith()
