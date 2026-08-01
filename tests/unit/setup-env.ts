@@ -1,7 +1,15 @@
+import { config as loadDotenv } from 'dotenv'
+
 /**
  * A valid environment for modules that read `env` at import time. Tests that exercise
  * validation failures call `parseEnv` with their own record instead of touching this.
+ *
+ * `.env` is loaded first and wins, because tests/integration/** talks to the real Postgres and
+ * object storage a developer (or CI) actually has running. Unit tests are indifferent to the
+ * values, so the fallbacks below only matter on a machine with no `.env` at all.
  */
+loadDotenv()
+
 const TEST_ENV: Readonly<Record<string, string>> = {
   APP_URL: 'http://localhost:3000',
   ARTIFACT_ORIGIN_TEMPLATE: 'http://{id}.artifacts.localhost:3000',

@@ -27,6 +27,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # tests/integration/** writes real bundles to object storage. Credentials and the port
+      # match .env.example so nothing differs between CI and a local `--profile minio` stack.
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: enclave-dev-access-key
+          MINIO_ROOT_PASSWORD: enclave-dev-secret-key
+        ports: ['9000:9000']
+        options: >-
+          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -47,9 +61,10 @@ jobs:
 
       - run: pnpm lint
 
-      - run: pnpm test
-
+      # Before `pnpm test`, not after: tests/integration/** queries the real schema.
       - run: pnpm db:migrate
+
+      - run: pnpm test
 
       - run: pnpm build
 

@@ -1,16 +1,23 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { listOwnedArtifacts } from '@/lib/artifacts/list'
+import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { getSessionUser } from '@/lib/auth/session'
+import { ArtifactList } from './artifact-list'
 import styles from './page.module.css'
 
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = { title: 'Dashboard · enclave' }
 
-/** Empty state only. S2 fills this with the artifact list. */
 export default async function DashboardPage() {
   const sessionUser = await getSessionUser()
   if (sessionUser === null) redirect('/signin')
+
+  const page = await listOwnedArtifacts(sessionUser.id, {
+    limit: DEFAULT_LIST_LIMIT,
+    cursor: undefined,
+  })
 
   return (
     <div className={styles.shell}>
@@ -27,12 +34,20 @@ export default async function DashboardPage() {
       </header>
 
       <main className={styles.main}>
-        <h1 className={styles.heading}>No artifacts yet</h1>
-        <p className={styles.body}>
-          Describe what you want and enclave generates it, then you choose who can see it — only
-          you, everyone on this instance, or anyone holding a share link.
-        </p>
+        {page.items.length === 0 ? <EmptyState /> : <ArtifactList items={page.items} />}
       </main>
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className={styles.empty}>
+      <h1 className={styles.heading}>No artifacts yet</h1>
+      <p className={styles.body}>
+        Describe what you want and enclave generates it, then you choose who can see it — only you,
+        everyone on this instance, or anyone holding a share link.
+      </p>
     </div>
   )
 }

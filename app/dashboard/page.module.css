@@ -39,6 +39,10 @@
   width: 100%;
 }
 
+.empty {
+  max-width: 65ch;
+}
+
 .heading {
   font-size: var(--text-lg);
   margin-bottom: var(--space-2xs);

@@ -8,4 +8,7 @@ export async function register(): Promise<void> {
 
   const { warnIfArtifactOriginLooksUnconfigured } = await import('@/lib/startup-checks')
   warnIfArtifactOriginLooksUnconfigured()
+
+  const { ensureArtifactBucket } = await import('@/lib/storage/bootstrap')
+  await ensureArtifactBucket()
 }
