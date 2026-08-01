@@ -1,0 +1,63 @@
+/* F4 · step sequence. The stage number stacks directly above its heading in one column — the
+   tag-left / heading-right split is the templated-editorial tell, so it is not used here. */
+.stage {
+  border-top: 2px solid var(--color-ink);
+  padding: var(--space-lg) var(--page-gutter) var(--space-2xl);
+  min-width: 0;
+}
+
+/* Stage 3 is the page's centre of gravity. Weight comes from hue and room, not shadow. */
+.stage[data-weight='lead'] {
+  background: var(--color-paper-2);
+  padding-block: var(--space-xl) var(--space-3xl);
+}
+
+.number {
+  font-size: var(--text-md);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: var(--color-ink-2);
+  margin: 0 0 var(--space-3xs);
+}
+
+.heading {
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  margin-bottom: var(--space-sm);
+}
+
+.lede {
+  font-size: var(--text-md);
+  max-width: 55ch;
+  margin: 0 0 var(--space-md);
+  font-variant-numeric: tabular-nums;
+}
+
+/* design.md § Typography rules — byte counts, quota figures and TTLs run through this prose. */
+.body {
+  max-width: 65ch;
+  color: var(--color-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.body > p {
+  margin: 0 0 var(--space-sm);
+}
+
+.body > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Full-width children (the privacy table) opt out of the 65ch reading measure. */
+.wide {
+  max-width: none;
+  margin-top: var(--space-lg);
+}
+
+.wide > table + p {
+  max-width: 65ch;
+  margin-top: var(--space-lg);
+}

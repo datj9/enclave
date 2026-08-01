@@ -1,0 +1,40 @@
+.section {
+  border-top: 2px solid var(--color-ink);
+  padding: var(--space-lg) var(--page-gutter) var(--space-xl);
+  min-width: 0;
+}
+
+.heading {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-md);
+}
+
+.list {
+  max-width: 65ch;
+  min-width: 0;
+}
+
+.item {
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.question {
+  cursor: pointer;
+  font-weight: 500;
+  /* The marker is the only disclosure affordance, so it must not be removed. Vertical padding
+     carries the row past the 44 px touch target without a flex display, which would hide it. */
+  list-style-position: outside;
+  padding: var(--space-xs) 0 var(--space-xs) var(--space-3xs);
+}
+
+.question:hover,
+.question:active {
+  color: var(--color-ink-2);
+}
+
+.answer {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-sm);
+  padding-inline-end: var(--space-sm);
+}

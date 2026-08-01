@@ -1,0 +1,40 @@
+/* N9 · edge-aligned minimal. The gap between wordmark and action is the design — filling it
+   with a link row would make it the AI nav with extra steps. */
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--page-gutter);
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* Underline drawn with text-decoration rather than a border so the 44 px touch target can be
+   padded out without the rule drifting away from the word. */
+.action {
+  display: inline-block;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  min-height: 2.75rem;
+  padding-block: var(--space-2xs);
+  text-decoration: underline;
+  text-decoration-color: var(--color-rule);
+  text-underline-offset: 0.3em;
+  transition: text-decoration-color var(--dur-fast) ease;
+}
+
+.action:hover {
+  text-decoration-color: var(--color-ink);
+}
+
+.action:active {
+  color: var(--color-ink-2);
+  text-decoration-color: var(--color-ink-2);
+}

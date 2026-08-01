@@ -1,0 +1,41 @@
+/* C1 · outlined chip, one button. design.md § CTA voice: the accent is a highlighter, not a
+   colour block — it appears here as a border and a label, and nowhere else on the page. */
+.strip {
+  border-top: 2px solid var(--color-ink);
+  padding: var(--space-xl) var(--page-gutter);
+  display: grid;
+  gap: var(--space-md);
+  align-items: end;
+  min-width: 0;
+}
+
+@media (min-width: 60rem) {
+  .strip {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2xl);
+  }
+}
+
+.heading {
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  margin-bottom: var(--space-2xs);
+}
+
+.line {
+  color: var(--color-ink-2);
+  max-width: 55ch;
+  margin: 0;
+}
+
+/* Accent text on paper measures 3.52:1 — under AA at body size, over the 3:1 large-text
+   threshold at 20 px/700. Sizing up keeps design.md's accent border *and* text rather than
+   dropping the label to ink, and the page's single CTA has earned the extra weight. */
+.action {
+  font-size: var(--text-md);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  justify-self: start;
+}

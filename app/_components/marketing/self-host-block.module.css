@@ -1,0 +1,56 @@
+/* Typographic frame — a label between two rules. Deliberately not a fake terminal window: the
+   reader already has a real one, and re-drawn chrome reads as invented UI. */
+.section {
+  border-top: 2px solid var(--color-ink);
+  padding: var(--space-lg) var(--page-gutter) var(--space-2xl);
+  min-width: 0;
+}
+
+.heading {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.lede {
+  font-size: var(--text-md);
+  max-width: 55ch;
+  margin: 0 0 var(--space-lg);
+}
+
+.frame {
+  border-top: 1px solid var(--color-rule);
+  border-bottom: 1px solid var(--color-rule);
+  padding-block: var(--space-2xs);
+  min-width: 0;
+}
+
+/* Body font on purpose: design.md reserves the mono face for the wordmark, file paths and code,
+   and this is a caption naming the block — not code. */
+.frameLabel {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  margin: 0;
+  padding-block: var(--space-3xs);
+}
+
+.commands {
+  margin: 0;
+  padding-block: var(--space-2xs) var(--space-xs);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.notes {
+  margin: var(--space-lg) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2xs);
+  max-width: 65ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}

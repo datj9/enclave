@@ -1,0 +1,118 @@
+/* F3 · tabular spec sheet. The three privacy levels are rows, not a three-equal-column card
+   grid — design.md bans that grid, and rows compare better anyway.
+
+   Mobile-first: three columns of prose at 375 px is unreadable, so the base styles stack every
+   cell and move each column head into the cell. The table shape returns at the 60 rem layout
+   breakpoint. */
+.table {
+  display: block;
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  text-align: start;
+}
+
+.caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.head {
+  display: none;
+}
+
+.body {
+  display: block;
+}
+
+.row {
+  display: block;
+  border-bottom: 1px solid var(--color-rule);
+  padding-block: var(--space-sm);
+  min-width: 0;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.columnHead {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--color-ink-2);
+  text-align: start;
+  padding: 0 var(--space-md) var(--space-2xs) 0;
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.audience {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-ink);
+  text-align: start;
+  padding: 0 0 var(--space-2xs);
+  min-width: 0;
+}
+
+.cell {
+  display: block;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  padding: 0 0 var(--space-2xs);
+  min-width: 0;
+}
+
+.cell:last-child {
+  padding-bottom: 0;
+}
+
+.cell::before {
+  content: attr(data-label);
+  display: block;
+  color: var(--color-ink-2);
+}
+
+@media (min-width: 60rem) {
+  .table {
+    display: table;
+  }
+
+  .head {
+    display: table-header-group;
+  }
+
+  .body {
+    display: table-row-group;
+  }
+
+  .row {
+    display: table-row;
+    border-bottom: 0;
+    padding-block: 0;
+  }
+
+  .audience,
+  .cell {
+    display: table-cell;
+    vertical-align: baseline;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .cell:last-child {
+    padding-inline-end: 0;
+  }
+
+  .cell::before {
+    display: none;
+  }
+}

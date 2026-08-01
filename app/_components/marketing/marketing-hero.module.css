@@ -1,0 +1,78 @@
+/* H2 · split diptych, 7/5. Left-biased on purpose — design.md bans the everything-centred fold
+   and the 100vh hero, so this fold is exactly as tall as its content. */
+.hero {
+  display: grid;
+  gap: var(--space-lg);
+  padding: var(--space-2xl) var(--page-gutter) var(--space-3xl);
+  min-width: 0;
+}
+
+@media (min-width: 60rem) {
+  .hero {
+    grid-template-columns: 7fr 5fr;
+    gap: var(--space-3xl);
+    align-items: start;
+    padding-block: var(--space-3xl) var(--space-4xl);
+  }
+}
+
+.headline {
+  font-size: var(--text-display);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  margin-bottom: var(--space-md);
+}
+
+.lede {
+  font-size: var(--text-md);
+  color: var(--color-ink-2);
+  max-width: 48ch;
+  margin: 0;
+}
+
+.spec {
+  border-top: 1px solid var(--color-rule);
+  padding-top: var(--space-sm);
+  min-width: 0;
+}
+
+@media (min-width: 60rem) {
+  .spec {
+    border-top: 0;
+    border-inline-start: 1px solid var(--color-rule);
+    padding-top: 0;
+    padding-inline-start: var(--space-md);
+  }
+}
+
+.specHeading {
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.specList {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.specRow {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr);
+  gap: var(--space-2xs);
+}
+
+@media (min-width: 26rem) {
+  .specRow {
+    grid-template-columns: 8rem minmax(0, 1fr);
+  }
+}
+
+.specTerm {
+  color: var(--color-ink-2);
+}
+
+.specValue {
+  margin: 0;
+}
