@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 
 import {
   authorizeArtifactRead,
+  shareLinkIdFromViewerRef,
   userIdFromViewerRef,
 } from '@/lib/artifacts/authorize'
 import { createGrantCookie } from '@/lib/artifacts/grant'
@@ -9,6 +10,7 @@ import { artifactIdFromHost, artifactNotAvailable, requestHost } from '@/lib/art
 import { recordAuditEvent } from '@/lib/audit'
 import { consumeHandoffToken } from '@/lib/handoff'
 import { clientIpFromHeaders } from '@/lib/rate-limit'
+import { recordShareLinkView } from '@/lib/shares/links'
 
 /**
  * grill-result §4.2 step 4. Reached only through the proxy's host rewrite, so `id` is the
@@ -44,15 +46,23 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   // §5.2: `artifact.view` is recorded for non-private artifacts only. Logging every read of a
   // private artifact would build a record of what its owner looks at, which is the opposite of
   // what "only me" promises.
-  if (authorized.visibility !== 'private') {
+  //
+  // A share-link view is always recorded whatever the visibility: the reader is anonymous and
+  // outside the instance, which is the case the owner most needs the trail for (§5.2, A.12.4.1).
+  const shareLinkId = shareLinkIdFromViewerRef(claims.viewerRef)
+  if (shareLinkId !== null || authorized.visibility !== 'private') {
     await recordAuditEvent({
       action: 'artifact.view',
       actorUserId: userIdFromViewerRef(claims.viewerRef),
+      actorShareLinkId: shareLinkId,
       actorIp: clientIpFromHeaders(request.headers),
       artifactId: authorized.artifactId,
       versionId: authorized.versionId,
+      shareLinkId,
     })
   }
+
+  if (shareLinkId !== null) await recordShareLinkView(shareLinkId)
 
   const setCookie = await createGrantCookie({
     artifactId: authorized.artifactId,
