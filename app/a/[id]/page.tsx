@@ -6,6 +6,7 @@ import { artifactViewUrl } from '@/lib/artifacts/naming'
 import { getSessionUser } from '@/lib/auth/session'
 import { signHandoffToken } from '@/lib/handoff'
 import { ArtifactFrame } from './artifact-frame'
+import { PrivacySwitch } from './privacy-switch'
 import styles from './page.module.css'
 
 /**
@@ -43,6 +44,9 @@ export default async function ArtifactViewerPage({
           ← Artifacts
         </a>
         <p className={styles.origin}>{new URL(artifactViewUrl(id)).host}</p>
+        {authorized.isOwner && (
+          <PrivacySwitch artifactId={id} initialVisibility={authorized.visibility} />
+        )}
       </header>
       <ArtifactFrame
         enterUrl={`${artifactViewUrl(id)}__enter?t=${encodeURIComponent(handoffToken)}`}

@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { GET as listArtifactsRoute, POST as createArtifactRoute } from '@app/api/v1/artifacts/route'
 import { db } from '@/db'
