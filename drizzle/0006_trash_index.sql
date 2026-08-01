@@ -1,0 +1,1 @@
+CREATE INDEX "artifacts_owner_deleted_idx" ON "artifacts" USING btree ("owner_id","deleted_at");

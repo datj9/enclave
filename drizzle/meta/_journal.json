@@ -36,6 +36,13 @@
       "when": 1785579043908,
       "tag": "0005_share_links_and_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785580554719,
+      "tag": "0006_trash_index",
+      "breakpoints": true
     }
   ]
 }
