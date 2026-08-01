@@ -18,6 +18,8 @@ import { hashShareToken, isShareTokenShaped } from './token'
  * `databaseNow` is what keeps the expiry comparison on Postgres time (§7 clock skew).
  */
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 export interface ResolvedShareLink {
   readonly shareLinkId: string
   readonly link: ShareLinkBinding
@@ -73,6 +75,10 @@ export async function resolveShareLinkByToken(plaintext: string): Promise<Resolv
  * effect on the next document load rather than whenever the grant cookie happens to expire.
  */
 export async function loadShareLink(shareLinkId: string): Promise<ResolvedShareLink | null> {
+  // A share id reaches this from a URL path, where anything at all can appear; `uuid` would
+  // reject a non-UUID as a 500 rather than the 404 every other rejection collapses to.
+  if (!UUID_PATTERN.test(shareLinkId)) return null
+
   const [row] = await db
     .select(LINK_COLUMNS)
     .from(shareLinks)

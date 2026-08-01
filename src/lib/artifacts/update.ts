@@ -73,8 +73,11 @@ function writerUserId(viewer: Viewer): string | null {
   return null
 }
 
-/** Both write paths share this: unreadable is 404, readable-but-not-yours is 403. */
-async function requireOwnedArtifact(
+/**
+ * Every owner-only write shares this: unreadable is 404, readable-but-not-yours is 403. Exported
+ * for the share routes (S5), which are owner-only for exactly the same reason.
+ */
+export async function requireOwnedArtifact(
   artifactId: string,
   viewerRef: string,
 ): Promise<{ readonly ownerId: string; readonly visibility: Visibility }> {
