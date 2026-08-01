@@ -3,12 +3,8 @@ import { z } from 'zod'
 import { requireAdminUser } from '@/lib/admin/guards'
 import { readJsonBody, requireJsonContentType } from '@/lib/api/guards'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
-import {
-  DEFAULT_INVITE_TTL_HOURS,
-  MAX_INVITE_TTL_HOURS,
-  createInvite,
-  listInvites,
-} from '@/lib/invites/manage'
+import { DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS } from '@/lib/invites/limits'
+import { createInvite, listInvites } from '@/lib/invites/manage'
 import { clientIpFromHeaders } from '@/lib/rate-limit'
 
 /**

@@ -13,9 +13,6 @@ import { inviteUrl, mintInviteToken } from './tokens'
  * Never log an invite token and never put one in an audit row or an error message (§8).
  */
 
-export const DEFAULT_INVITE_TTL_HOURS = 72
-export const MAX_INVITE_TTL_HOURS = 24 * 30
-
 const MILLIS_PER_HOUR = 3_600_000
 
 export interface CreateInviteInput {

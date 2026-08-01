@@ -13,9 +13,11 @@ interface AuthScreenProps {
   readonly errorMessage: string | null
   /** Optional sign-in route rendered below the form — S11 puts the OIDC button here. */
   readonly alternative?: ReactNode
+  /** Extra values the route needs — S10 posts the invite token this way. Never rendered visibly. */
+  readonly hiddenFields?: Readonly<Record<string, string>>
 }
 
-/** Shared shell for /setup and /signin — the only two unauthenticated app screens in S1. */
+/** Shared shell for the unauthenticated app screens: /setup, /signin, and S10's /signup. */
 export function AuthScreen({
   heading,
   caption,
@@ -25,6 +27,7 @@ export function AuthScreen({
   passwordHint,
   errorMessage,
   alternative,
+  hiddenFields,
 }: AuthScreenProps) {
   return (
     <main className={styles.screen}>
@@ -34,6 +37,10 @@ export function AuthScreen({
         <p className={styles.caption}>{caption}</p>
 
         <form className={styles.form} method="post" action={action}>
+          {Object.entries(hiddenFields ?? {}).map(([name, value]) => (
+            <input key={name} name={name} type="hidden" value={value} />
+          ))}
+
           {errorMessage !== null && (
             <p className="form-error" role="alert">
               {errorMessage}

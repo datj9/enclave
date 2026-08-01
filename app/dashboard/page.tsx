@@ -25,6 +25,11 @@ export default async function DashboardPage() {
         <p className={styles.wordmark}>enclave</p>
         <div className={styles.identity}>
           <span className={styles.email}>{sessionUser.email}</span>
+          {sessionUser.role === 'admin' && (
+            <a className="button-secondary" href="/admin/users">
+              Admin
+            </a>
+          )}
           <form method="post" action="/api/auth/signout">
             <button className="button-secondary" type="submit">
               Sign out
