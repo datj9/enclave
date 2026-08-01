@@ -1,0 +1,146 @@
+/* Base element styles. Every value here resolves to a token from tokens.css. */
+
+/* next/font hashes the family name it generates, so the literal 'Geist' / 'JetBrains Mono'
+   in tokens.css cannot resolve on its own. These point the design.md font tokens at the
+   loaded faces while keeping the same fallback chains. */
+:root {
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+
+code,
+kbd,
+pre,
+samp,
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* design.md § Typography rules */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.prose {
+  max-width: 65ch;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+a {
+  color: inherit;
+}
+
+/* --- primitives shared by every app screen ---------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.field-label {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font: inherit;
+  transition: border-color var(--dur-fast) ease;
+}
+
+.input:hover {
+  border-color: var(--color-ink-2);
+}
+
+/* design.md § CTA voice — accent border and text over a paper fill, never a colour block */
+.button-primary,
+.button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-input);
+  background: var(--color-paper);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out-app);
+}
+
+.button-primary {
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+}
+
+.button-secondary {
+  border: 1px solid var(--color-rule);
+  color: var(--color-ink);
+}
+
+/* motion.md § Physicality — press feedback, 0.95–0.98 range */
+.button-primary:active,
+.button-secondary:active {
+  transform: scale(0.97);
+}
+
+.button-primary:disabled,
+.button-secondary:disabled {
+  color: var(--color-ink-2);
+  border-color: var(--color-rule);
+  cursor: not-allowed;
+}
+
+.form-error {
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+
+/* motion.md § Accessibility — drop transform motion, keep opacity and colour.
+   Functional motion (skeletons, streaming indicators) is deliberately left running. */
+@media (prefers-reduced-motion: reduce) {
+  .button-primary:active,
+  .button-secondary:active {
+    transform: none;
+  }
+}

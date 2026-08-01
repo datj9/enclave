@@ -1,0 +1,139 @@
+@import 'tailwindcss';
+
+/*
+ * Token layer. `design.md` § Tokens is the rule; the `:root` block below reproduces it
+ * verbatim and fills in the two scales design.md defers to this file (4-pt spacing,
+ * 1.25-ratio type).
+ *
+ * Motion curves exist twice on purpose. `design.md` owns the marketing page and supplies
+ * --ease-out / --ease-in-out; `docs/motion.md` owns app-shell motion and specifies different
+ * curves for the same job. Rather than shadow one with the other, app-shell motion uses the
+ * --ease-*-app curves below. In-app code must not reach for --ease-out.
+ */
+
+:root {
+  --color-paper: oklch(97% 0.008 60);
+  --color-paper-2: oklch(94% 0.01 60);
+  --color-ink: oklch(19% 0.01 60);
+  --color-ink-2: oklch(44% 0.008 60);
+  --color-rule: oklch(84% 0.008 60);
+  --color-accent: oklch(62% 0.16 55);
+  --color-accent-ink: oklch(99% 0.005 60);
+  --color-focus: oklch(58% 0.19 55);
+
+  --font-display: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* 4-pt spacing scale */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 8rem;
+
+  /* Type scale, 1.25 (major-third) ratio off a 1rem body */
+  --text-xs: 0.64rem;
+  --text-sm: 0.8rem;
+  --text-base: 1rem;
+  --text-md: 1.25rem;
+  --text-lg: 1.5625rem;
+  --text-xl: 1.9531rem;
+  --text-2xl: 2.4414rem;
+  --text-3xl: 3.0518rem;
+  --text-display: clamp(2.75rem, 5vw + 1rem, 5.25rem);
+
+  /* Marketing motion — design.md */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* App-shell motion — docs/motion.md. ease-out both directions; never ease-in. */
+  --ease-out-app: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-app: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --dur-press: 160ms;
+  --dur-fast: 180ms;
+  --dur-base: 240ms;
+  --dur-slow: 320ms;
+
+  --radius-card: 6px;
+  --radius-pill: 999px;
+  --radius-input: 6px;
+
+  --z-base: 1;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+
+  /* design.md § Depth — the only shadow in the system */
+  --shadow-raised: 0 1px 2px oklch(20% 0.01 60 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: oklch(15% 0.01 60);
+    --color-paper-2: oklch(19% 0.011 60);
+    --color-ink: oklch(94% 0.006 70);
+    --color-ink-2: oklch(72% 0.006 60);
+    --color-rule: oklch(31% 0.008 60);
+    --color-accent: oklch(70% 0.13 55);
+    --color-focus: oklch(72% 0.19 55);
+  }
+
+  body {
+    font-weight: 350;
+  }
+}
+
+/* Tailwind v4 utility surface. `inline` keeps the var references live so the
+   prefers-color-scheme override above still applies to generated utilities. */
+@theme inline {
+  --color-paper: var(--color-paper);
+  --color-paper-2: var(--color-paper-2);
+  --color-ink: var(--color-ink);
+  --color-ink-2: var(--color-ink-2);
+  --color-rule: var(--color-rule);
+  --color-accent: var(--color-accent);
+  --color-accent-ink: var(--color-accent-ink);
+  --color-focus: var(--color-focus);
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-md: var(--text-md);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-2xl: var(--text-2xl);
+  --text-3xl: var(--text-3xl);
+  --text-display: var(--text-display);
+
+  --spacing-3xs: var(--space-3xs);
+  --spacing-2xs: var(--space-2xs);
+  --spacing-xs: var(--space-xs);
+  --spacing-sm: var(--space-sm);
+  --spacing-md: var(--space-md);
+  --spacing-lg: var(--space-lg);
+  --spacing-xl: var(--space-xl);
+  --spacing-2xl: var(--space-2xl);
+  --spacing-3xl: var(--space-3xl);
+  --spacing-4xl: var(--space-4xl);
+
+  --radius-card: var(--radius-card);
+  --radius-pill: var(--radius-pill);
+  --radius-input: var(--radius-input);
+
+  --shadow-raised: var(--shadow-raised);
+}
