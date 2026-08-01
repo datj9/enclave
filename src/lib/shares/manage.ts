@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 
 import { db } from '@/db'
-import { artifactVersions } from '@/db/schema/artifacts'
+import { artifactVersions, artifacts } from '@/db/schema/artifacts'
 import { shareLinks } from '@/db/schema/share-links'
 import { requireOwnedArtifact } from '@/lib/artifacts/update'
 import { recordAuditEvent } from '@/lib/audit'
@@ -148,6 +148,40 @@ export async function listShareLinks(
     viewCount: row.viewCount,
     lastViewedAt: row.lastViewedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+  }))
+}
+
+export interface ShareableVersion {
+  readonly versionId: string
+  readonly versionNo: number
+  readonly isCurrent: boolean
+}
+
+/**
+ * The versions a link may pin, newest first — what the share dialog offers. `ready` only, for the
+ * same reason `createShareLink` refuses anything else: a pending version has nothing to serve.
+ */
+export async function listShareableVersions(
+  artifactId: string,
+  viewerRef: string,
+): Promise<readonly ShareableVersion[]> {
+  await requireOwnedArtifact(artifactId, viewerRef)
+
+  const rows = await db
+    .select({
+      id: artifactVersions.id,
+      versionNo: artifactVersions.versionNo,
+      currentVersionId: artifacts.currentVersionId,
+    })
+    .from(artifactVersions)
+    .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
+    .where(and(eq(artifactVersions.artifactId, artifactId), eq(artifactVersions.status, 'ready')))
+    .orderBy(desc(artifactVersions.versionNo))
+
+  return rows.map((row) => ({
+    versionId: row.id,
+    versionNo: row.versionNo,
+    isCurrent: row.currentVersionId === row.id,
   }))
 }
 

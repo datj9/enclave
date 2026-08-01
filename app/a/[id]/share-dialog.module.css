@@ -1,0 +1,219 @@
+/*
+ * docs/motion.md § This project's surfaces, share dialog row: `scale(0.96) → 1` plus opacity over
+ * 220 ms `ease-out`, backdrop the same duration, `transform-origin: center` because modals are the
+ * documented exception to origin-aware scaling.
+ *
+ * `--dur-share` is 220 ms and lives here rather than in tokens.css: it is this one surface's
+ * duration, not a scale step every surface picks from.
+ */
+.backdrop,
+.popup {
+  --dur-share: 220ms;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(20% 0.01 60 / 0.44);
+  opacity: 1;
+  transition: opacity var(--dur-share) var(--ease-out-app);
+}
+
+.backdrop[data-starting-style],
+.backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-modal);
+  width: min(30rem, calc(100vw - 2 * var(--space-md)));
+  max-height: calc(100dvh - 2 * var(--space-lg));
+  overflow-y: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  transform-origin: center;
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  transition:
+    transform var(--dur-share) var(--ease-out-app),
+    opacity var(--dur-share) var(--ease-out-app);
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style] {
+  transform: translate(-50%, -50%) scale(0.96);
+  opacity: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  letter-spacing: -0.01em;
+}
+
+.description {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.created {
+  padding: var(--space-xs);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+
+.createdHeading {
+  margin: 0 0 var(--space-3xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.createdBody {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.createdRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.createdUrl {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+/* The copy button: press feedback only, and an icon swap for the confirmation. */
+.copy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  padding: var(--space-3xs) var(--space-2xs);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-input);
+  cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out-app);
+}
+
+.copy:active {
+  transform: scale(0.97);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  border-top: 1px solid var(--color-rule);
+  padding-top: var(--space-2xs);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2xs);
+}
+
+.rowName {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.rowMeta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+/*
+ * docs/motion.md: no animation on the destructive button. An instant response is what reads as
+ * trustworthy, so this one deliberately has no `transition` and no `:active` transform.
+ */
+.revoke {
+  flex-shrink: 0;
+  padding: var(--space-3xs) var(--space-2xs);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}
+
+.revoke:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.revoked {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.done {
+  align-self: flex-start;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .popup,
+  .copy {
+    transition-duration: var(--dur-share);
+    transition-property: opacity;
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style] {
+    transform: translate(-50%, -50%);
+  }
+
+  .copy:active {
+    transform: none;
+  }
+}
