@@ -22,6 +22,13 @@
       "when": 1785573729290,
       "tag": "0003_generations_and_api_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785576172232,
+      "tag": "0004_audit_quotas_and_keys",
+      "breakpoints": true
     }
   ]
 }
