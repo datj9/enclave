@@ -1,7 +1,9 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { AuthScreen } from '@app/_components/auth-screen'
+import { OidcSignin } from '@app/_components/oidc-signin'
 import { GENERIC_SIGNIN_FAILURE } from '@/lib/auth/credentials'
+import { isOidcEnabled } from '@/lib/auth/oidc'
 import { getSessionUser } from '@/lib/auth/session'
 import { isSetupComplete } from '@/lib/auth/setup'
 
@@ -9,8 +11,15 @@ export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = { title: 'Sign in · enclave' }
 
+const OIDC_FAILURE = 'Your identity provider did not complete the sign-in.'
+
 interface SigninPageProps {
   searchParams: Promise<{ error?: string }>
+}
+
+function errorMessageFor(error: string | undefined): string | null {
+  if (error === undefined) return null
+  return error === 'oidc' ? OIDC_FAILURE : `${GENERIC_SIGNIN_FAILURE}.`
 }
 
 export default async function SigninPage({ searchParams }: SigninPageProps) {
@@ -26,7 +35,8 @@ export default async function SigninPage({ searchParams }: SigninPageProps) {
       action="/api/auth/signin"
       submitLabel="Sign in"
       passwordAutoComplete="current-password"
-      errorMessage={error === undefined ? null : `${GENERIC_SIGNIN_FAILURE}.`}
+      errorMessage={errorMessageFor(error)}
+      alternative={isOidcEnabled() ? <OidcSignin /> : null}
     />
   )
 }

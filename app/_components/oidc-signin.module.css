@@ -1,0 +1,17 @@
+.alternative {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.divider {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  text-align: center;
+}
+
+.action {
+  width: 100%;
+}
