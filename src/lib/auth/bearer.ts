@@ -107,7 +107,7 @@ export async function createApiToken(input: CreateApiTokenInput): Promise<Create
 
   if (row === undefined) throw new HttpError('INTERNAL_ERROR', 'Could not create the token')
 
-  recordAuditEvent({
+  await recordAuditEvent({
     action: 'token.create',
     actorUserId: input.userId,
     actorIp: input.actorIp ?? null,
@@ -167,7 +167,7 @@ export async function revokeApiToken(
 
   if (revoked.length === 0) return await isOwnedToken(userId, tokenId)
 
-  recordAuditEvent({
+  await recordAuditEvent({
     action: 'token.revoke',
     actorUserId: userId,
     actorIp: actorIp ?? null,

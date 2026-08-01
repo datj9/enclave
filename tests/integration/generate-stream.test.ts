@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
+import { auditLog } from '@/db/schema/audit-log'
 import { users } from '@/db/schema/users'
 import { generations } from '@/db/schema/generations'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
@@ -427,7 +428,15 @@ describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
     info.mockRestore()
 
     expect(logged.some((line) => line.includes('secret plan'))).toBe(false)
-    expect(logged.some((line) => line.includes('artifact.create'))).toBe(true)
     expect((await generationRowsFor(ownerId))[0]?.prompt).toBe(prompt)
+
+    // S4 moved the audit trail from stdout to `audit_log`; the prompt must not follow it there.
+    const auditRows = await db
+      .select({ action: auditLog.action, metadata: auditLog.metadata })
+      .from(auditLog)
+      .where(eq(auditLog.actorUserId, ownerId))
+
+    expect(auditRows.map((row) => row.action)).toContain('artifact.create')
+    expect(JSON.stringify(auditRows)).not.toContain('secret plan')
   })
 })

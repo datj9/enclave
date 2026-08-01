@@ -146,14 +146,14 @@ export async function createArtifactWithBundle(
   await markVersionReady(version)
 
   const actorIp = input.actorIp ?? null
-  recordAuditEvent({
+  await recordAuditEvent({
     action: 'artifact.create',
     actorUserId: input.ownerId,
     actorIp,
     artifactId: version.artifactId,
     metadata: { visibility: input.visibility },
   })
-  recordAuditEvent({
+  await recordAuditEvent({
     action: 'version.create',
     actorUserId: input.ownerId,
     actorIp,

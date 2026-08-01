@@ -5,6 +5,7 @@ import { GET as listArtifactsRoute, POST as createArtifactRoute } from '@app/api
 import { db } from '@/db'
 import { apiTokens, type ApiTokenScope } from '@/db/schema/api-tokens'
 import { artifacts } from '@/db/schema/artifacts'
+import { auditLog } from '@/db/schema/audit-log'
 import { users } from '@/db/schema/users'
 import { apiTokenViewerRef, authorizeArtifactRead } from '@/lib/artifacts/authorize'
 import {
@@ -412,28 +413,26 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
 
   describe('audit and log hygiene', () => {
     it('writes token.create and token.revoke without the token value', async () => {
-      const logged: string[] = []
-      const infoSpy = vi.spyOn(console, 'info').mockImplementation((line: unknown) => {
-        logged.push(String(line))
+      const created = await createApiToken({
+        userId: aliceId,
+        name: 'audited',
+        scopes: ['artifacts:write'],
+        actorIp: '203.0.113.7',
       })
+      await revokeApiToken(aliceId, created.id, '203.0.113.7')
 
-      try {
-        const created = await createApiToken({
-          userId: aliceId,
-          name: 'audited',
-          scopes: ['artifacts:write'],
-          actorIp: '203.0.113.7',
-        })
-        await revokeApiToken(aliceId, created.id, '203.0.113.7')
+      const rows = await db
+        .select({ action: auditLog.action, metadata: auditLog.metadata })
+        .from(auditLog)
+        .where(eq(auditLog.actorUserId, aliceId))
 
-        const audit = logged.join('\n')
-        expect(audit).toContain('"action":"token.create"')
-        expect(audit).toContain('"action":"token.revoke"')
-        expect(audit).toContain(created.id)
-        expect(audit).not.toContain(created.plaintext)
-      } finally {
-        infoSpy.mockRestore()
-      }
+      const actions = rows.map((row) => row.action)
+      expect(actions).toContain('token.create')
+      expect(actions).toContain('token.revoke')
+
+      const serialized = JSON.stringify(rows)
+      expect(serialized).toContain(created.id)
+      expect(serialized).not.toContain(created.plaintext)
     })
   })
 })
