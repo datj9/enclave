@@ -20,7 +20,12 @@ import { artifactViewUrl } from '@/lib/artifacts/naming'
 import { createApiToken } from '@/lib/auth/bearer'
 import { signHandoffToken } from '@/lib/handoff'
 import { resolveShareLinkByToken } from '@/lib/shares/links'
-import { createShareLink, listShareLinks, revokeShareLink } from '@/lib/shares/manage'
+import {
+  createShareLink,
+  listShareLinks,
+  listShareableVersions,
+  revokeShareLink,
+} from '@/lib/shares/manage'
 import { hashShareToken } from '@/lib/shares/token'
 import { probeServices } from './services'
 
@@ -333,6 +338,14 @@ describe.skipIf(!database)('S5 share links', () => {
       expect(raw).not.toContain('"token"')
     })
 
+    it('offers every ready version to pin, newest first, flagging the current one', async () => {
+      const versions = await listShareableVersions(artifactId, `user:${aliceId}`)
+
+      expect(versions.map((version) => version.versionId)).toEqual([...versionIds].reverse())
+      expect(versions.map((version) => version.isCurrent)).toEqual([true, false, false])
+      expect(versions.map((version) => version.versionNo)).toEqual([3, 2, 1])
+    })
+
     it('404s another member', async () => {
       const response = await listSharesRoute(
         new Request(`${SHARES_URL}/${artifactId}/shares`, {
@@ -362,6 +375,20 @@ describe.skipIf(!database)('S5 share links', () => {
 
     it('refuses a token that was never issued', async () => {
       expect(await resolveShareLinkByToken('a'.repeat(43))).toBeNull()
+    })
+
+    it('refuses a malformed token without asking Postgres', async () => {
+      expect(await resolveShareLinkByToken('../etc/passwd')).toBeNull()
+    })
+
+    it('refuses a viewer ref whose share id is not a UUID', async () => {
+      expect(await authorizeArtifactRead(artifactId, 'share:not-a-uuid')).toBeNull()
+    })
+
+    it('refuses a viewer ref naming a share link that does not exist', async () => {
+      expect(
+        await authorizeArtifactRead(artifactId, shareViewerRef('99999999-9999-4999-8999-999999999999')),
+      ).toBeNull()
     })
 
     it('refuses the link the moment it is revoked', async () => {
