@@ -4,3 +4,4 @@
  */
 export * from './column-types'
 export * from './users'
+export * from './artifacts'
