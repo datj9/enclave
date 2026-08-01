@@ -1,13 +1,11 @@
 import { sql } from 'drizzle-orm'
 import { boolean, check, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
+import { PROVIDER_IDS } from '@/lib/providers/types'
 import { users } from './users'
 
 export const GENERATION_STATUSES = ['streaming', 'succeeded', 'failed'] as const
 export type GenerationStatus = (typeof GENERATION_STATUSES)[number]
-
-export const PROVIDER_IDS = ['anthropic', 'openai-compatible'] as const
-export type ProviderId = (typeof PROVIDER_IDS)[number]
 
 /**
  * grill-result §5.2. One row per generation attempt, written before the first provider call and
