@@ -20,6 +20,13 @@ const ADMIN_PASSWORD = 'correct-horse-battery'
 
 const MARKER_ID = 'marker'
 
+/**
+ * The per-IP auth budget is one in-process counter shared by every spec in the run, and the suite
+ * already sits close to it. Signing in from a distinct forwarded address puts this file on its own
+ * counter so adding it cannot push another spec into a 429.
+ */
+const OWNER_IP = '203.0.113.55'
+
 function indexHtml(label: string): string {
   return [
     '<!doctype html><meta charset="utf-8"><title>Artifact</title>',
@@ -192,7 +199,7 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
 
   /** One sign-in for the whole file: the per-IP auth budget is shared with every other spec. */
   test.beforeAll(async ({ browser }) => {
-    owner = await browser.newContext()
+    owner = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': OWNER_IP } })
     await signInAsAdmin(owner.request)
     await owner.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: APP_ORIGIN })
     ownerPage = await owner.newPage()
