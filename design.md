@@ -4,7 +4,7 @@ Locked design system. Future Hallmark runs read this file first; pages defer
 to it. Amend intentionally — the file is the rule.
 
 In-app motion and interaction are **not** governed here — see
-`.claude/rules/motion.md`. This file owns colour, type, space, depth, and the
+`docs/motion.md`. This file owns colour, type, space, depth, and the
 marketing page's structure.
 
 ## System
@@ -87,7 +87,7 @@ single signal amber. There is no gradient anywhere in this system.
 ## Motion stance
 - Marketing page · one orchestrated reveal, staggered by DOM index, capped at
   500 ms total. No parallax, no scroll-scrubbing.
-- App shell · governed entirely by `.claude/rules/motion.md`.
+- App shell · governed entirely by `docs/motion.md`.
 - Reduced-motion fallback · ≤150 ms opacity crossfade, all spatial motion cut.
 
 ## Marketing page structure (Narrative Workflow)
