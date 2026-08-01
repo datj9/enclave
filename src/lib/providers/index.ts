@@ -17,7 +17,7 @@ export { PROVIDER_IDS } from './types'
 const NO_KEY_MESSAGE =
   'No model provider is configured. Add an instance API key, or your own in settings.'
 
-/** Per-user keys, decrypted by the caller. S7 fills this in; S6 always passes an empty map. */
+/** Per-user keys, decrypted by the caller — see `loadUserProviderKeys` in ./user-keys. */
 export type UserProviderKeys = Readonly<Partial<Record<ProviderId, string>>>
 
 export interface ProviderCredentials {
@@ -65,9 +65,9 @@ export function selectProvider(credentials: ProviderCredentials): ProviderSelect
 }
 
 /**
- * S7 seam. Per-user keys live in `user_provider_keys`, encrypted with `ENCRYPTION_KEY`, and that
- * table does not exist yet — so this reads the instance keys and passes an empty user map. When
- * S7 lands, decrypt the caller's row here and hand it in as `userKeys`; nothing else moves.
+ * Instance keys from the environment, the caller's own keys from `user_provider_keys` — the
+ * caller decrypts those with `loadUserProviderKeys` and passes them in. An empty map means the
+ * user has none stored, which is also what marks the selection as running on the instance key.
  */
 export function resolveProviderForUser(userKeys: UserProviderKeys = {}): ProviderSelection {
   return selectProvider({
