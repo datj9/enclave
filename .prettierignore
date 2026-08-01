@@ -1,0 +1,11 @@
+.next
+coverage
+node_modules
+pnpm-lock.yaml
+playwright-report
+test-results
+drizzle/meta
+
+# Locked design artefacts — never reformat
+design.md
+docs/motion.md
