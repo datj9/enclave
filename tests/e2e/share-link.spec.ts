@@ -190,24 +190,18 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
   let owner: BrowserContext
   let ownerPage: Page
 
-  test.beforeAll(async ({ browser, playwright }) => {
-    const request = await playwright.request.newContext()
-    try {
-      await signInAsAdmin(request)
-      const created = await createArtifact(request)
-      artifactId = created.id
-    } finally {
-      await request.dispose()
-    }
-
-    // v1 exists from the create call; v2 is what the link will pin, v3 is what it must ignore.
-    pinnedVersionId = await seedVersion(artifactId, 2, 'version two')
-    await seedVersion(artifactId, 3, 'version three')
-
+  /** One sign-in for the whole file: the per-IP auth budget is shared with every other spec. */
+  test.beforeAll(async ({ browser }) => {
     owner = await browser.newContext()
     await signInAsAdmin(owner.request)
     await owner.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: APP_ORIGIN })
     ownerPage = await owner.newPage()
+
+    artifactId = (await createArtifact(owner.request)).id
+
+    // v1 exists from the create call; v2 is what the link will pin, v3 is what it must ignore.
+    pinnedVersionId = await seedVersion(artifactId, 2, 'version two')
+    await seedVersion(artifactId, 3, 'version three')
   })
 
   test.afterAll(async () => {
