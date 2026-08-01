@@ -2,6 +2,8 @@ import { S3Client } from '@aws-sdk/client-s3'
 import { eq } from 'drizzle-orm'
 import { db, pingDatabase } from '@/db'
 import { artifacts } from '@/db/schema/artifacts'
+import { usageCounters } from '@/db/schema/usage-counters'
+import { userProviderKeys } from '@/db/schema/user-provider-keys'
 import { users } from '@/db/schema/users'
 import { env } from '@/env'
 import { createS3ObjectStore, s3ConfigFromEnv } from '@/lib/storage/s3'
@@ -104,6 +106,10 @@ export async function removeTestOwnerData(ownerId: string, store: ObjectStore): 
   }
 
   await db.delete(artifacts).where(eq(artifacts.ownerId, ownerId))
+  // Written by the generation path for every suite that generates, and both reference `users`,
+  // so the delete below fails without them.
+  await db.delete(usageCounters).where(eq(usageCounters.userId, ownerId))
+  await db.delete(userProviderKeys).where(eq(userProviderKeys.userId, ownerId))
   await db.delete(users).where(eq(users.id, ownerId))
 }
 
