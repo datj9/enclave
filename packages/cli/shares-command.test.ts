@@ -85,7 +85,9 @@ describe('share commands', () => {
       patch: mocks.patch,
       remove: mocks.remove,
     })
-    mocks.post.mockResolvedValue({ data: { shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL } })
+    mocks.post.mockResolvedValue({
+      data: { shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL },
+    })
     mocks.get.mockResolvedValue({ data: { items: [] } })
     mocks.remove.mockResolvedValue(undefined)
   })
@@ -353,9 +355,7 @@ describe('share commands', () => {
   // AC 6 — a token without `shares:write` is rejected and the CLI names the missing scope.
   describe('a missing scope is named (AC 6)', () => {
     it('names the scope on the 403 the server actually sends', async () => {
-      mocks.post.mockRejectedValue(
-        new ApiError(403, 'FORBIDDEN', 'Token lacks scope shares:write'),
-      )
+      mocks.post.mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'Token lacks scope shares:write'))
 
       const code = await runShareCreate({
         host: HOST,
@@ -369,7 +369,9 @@ describe('share commands', () => {
     })
 
     it('names the scope on a 401 too', async () => {
-      mocks.get.mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED', 'The API token is not valid'))
+      mocks.get.mockRejectedValue(
+        new ApiError(401, 'UNAUTHENTICATED', 'The API token is not valid'),
+      )
 
       const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
 
