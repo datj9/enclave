@@ -20,7 +20,7 @@
   "author": "datj9",
   "type": "module",
   "bin": {
-    "enclave": "./dist/packages/cli/src/bin.js"
+    "enclave": "dist/packages/cli/src/bin.js"
   },
   "files": [
     "dist",
