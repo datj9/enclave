@@ -1,13 +1,18 @@
 import { parseArgs } from 'node:util'
 
-import { runList, runPrivacy, runRemove, runRename, runRestore, runShow } from './commands/artifacts.ts'
+import {
+  runList,
+  runPrivacy,
+  runRemove,
+  runRename,
+  runRestore,
+  runShow,
+} from './commands/artifacts.ts'
 import { runLogin } from './commands/login.ts'
 import { runLogout } from './commands/logout.ts'
 import { runPush } from './commands/push.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './commands/shares.ts'
-
-const EXIT_OK = 0
-const EXIT_USAGE = 2
+import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
 
@@ -45,13 +50,34 @@ const OPTION_CONFIG = {
   help: { type: 'boolean', default: false },
 } as const
 
+interface ParsedValues {
+  readonly host?: string
+  readonly title?: string
+  readonly visibility?: string
+  readonly limit?: string
+  readonly cursor?: string
+  readonly version?: string
+  readonly expires?: string
+  readonly new: boolean
+  readonly 'dry-run': boolean
+  readonly json: boolean
+  readonly help: boolean
+}
+
+type CommandHandler = (
+  positionals: readonly string[],
+  values: ParsedValues,
+) => Promise<number> | number
+
+class UsageError extends Error {}
+
 function usage(message?: string): number {
   if (message !== undefined) process.stderr.write(`${message}\n\n`)
   process.stdout.write(USAGE)
   return message === undefined ? EXIT_OK : EXIT_USAGE
 }
 
-/** `push` is the exception: it can recover a host from .enclave.json, so it resolves its own. */
+/** `push` is the exception: it recovers a host from .enclave.json, so it resolves its own. */
 function requireHost(flag: string | undefined): string {
   const host = flag ?? process.env['ENCLAVE_HOST']
   if (host === undefined || host === '') {
@@ -59,8 +85,6 @@ function requireHost(flag: string | undefined): string {
   }
   return host
 }
-
-class UsageError extends Error {}
 
 function requirePositional(positionals: readonly string[], index: number, name: string): string {
   const value = positionals[index]
@@ -71,133 +95,129 @@ function requirePositional(positionals: readonly string[], index: number, name: 
 function parseLimit(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined
   const parsed = Number(raw)
-  if (!Number.isInteger(parsed) || parsed < 1) throw new UsageError(`--limit must be a positive integer, got '${raw}'`)
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new UsageError(`--limit must be a positive integer, got '${raw}'`)
+  }
   return parsed
 }
 
-async function runShare(
-  positionals: readonly string[],
-  values: { host?: string; version?: string; expires?: string; json: boolean },
-): Promise<number> {
-  const subcommand = positionals[1]
-
-  if (subcommand === 'create') {
-    const id = requirePositional(positionals, 2, 'id')
-    return runShareCreate({
-      host: requireHost(values.host),
-      id,
-      isJson: values.json,
-      ...(values.version === undefined ? {} : { versionId: values.version }),
-      ...(values.expires === undefined ? {} : { expires: values.expires }),
-    })
-  }
-  if (subcommand === 'list') {
-    return runShareList({
+const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
+  create: (positionals, values) =>
+    runShareCreate({
       host: requireHost(values.host),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
-    })
-  }
-  if (subcommand === 'revoke') {
-    return runShareRevoke({
+      ...(values.version === undefined ? {} : { versionId: values.version }),
+      ...(values.expires === undefined ? {} : { expires: values.expires }),
+    }),
+  list: (positionals, values) =>
+    runShareList({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 2, 'id'),
+      isJson: values.json,
+    }),
+  revoke: (positionals, values) =>
+    runShareRevoke({
       host: requireHost(values.host),
       shareId: requirePositional(positionals, 2, 'shareId'),
+    }),
+}
+
+/** Every command takes the same two arguments, which is what lets this be a table and not a switch. */
+const COMMANDS: Readonly<Record<string, CommandHandler>> = {
+  login: (_positionals, values) => runLogin(requireHost(values.host)),
+
+  logout: (_positionals, values) => runLogout(requireHost(values.host)),
+
+  push: (positionals, values) =>
+    runPush({
+      directory: requirePositional(positionals, 1, 'dir'),
+      isNew: values.new,
+      isDryRun: values['dry-run'],
+      isJson: values.json,
+      ...(values.host === undefined ? {} : { host: values.host }),
+      ...(values.title === undefined ? {} : { title: values.title }),
+      ...(values.visibility === undefined
+        ? {}
+        : { visibility: values.visibility as 'private' | 'org' }),
+    }),
+
+  list: (_positionals, values) => {
+    const limit = parseLimit(values.limit)
+    return runList({
+      host: requireHost(values.host),
+      isJson: values.json,
+      ...(limit === undefined ? {} : { limit }),
+      ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
     })
-  }
-  throw new UsageError(`unknown share subcommand '${subcommand ?? ''}' — expected create, list or revoke`)
+  },
+
+  show: (positionals, values) =>
+    runShow({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 1, 'id'),
+      isJson: values.json,
+    }),
+
+  rename: (positionals, values) =>
+    runRename({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 1, 'id'),
+      title: requirePositional(positionals, 2, 'title'),
+      isJson: values.json,
+    }),
+
+  privacy: (positionals, values) =>
+    runPrivacy({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 1, 'id'),
+      visibility: requirePositional(positionals, 2, 'visibility'),
+      isJson: values.json,
+    }),
+
+  rm: (positionals, values) =>
+    runRemove({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 1, 'id'),
+      isJson: values.json,
+    }),
+
+  restore: (positionals, values) =>
+    runRestore({
+      host: requireHost(values.host),
+      id: requirePositional(positionals, 1, 'id'),
+      isJson: values.json,
+    }),
+
+  share: (positionals, values) => {
+    const subcommand = positionals[1] ?? ''
+    const handler = SHARE_HANDLERS[subcommand]
+    if (handler === undefined) {
+      throw new UsageError(
+        `unknown share subcommand '${subcommand}' — expected create, list or revoke`,
+      )
+    }
+    return handler(positionals, values)
+  },
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-  let values: {
-    host?: string
-    title?: string
-    visibility?: string
-    limit?: string
-    cursor?: string
-    version?: string
-    expires?: string
-    new: boolean
-    'dry-run': boolean
-    json: boolean
-    help: boolean
-  }
-  let positionals: string[]
-
+  let parsed: { values: ParsedValues; positionals: string[] }
   try {
-    const parsed = parseArgs({ args: [...argv], options: OPTION_CONFIG, allowPositionals: true })
-    values = parsed.values
-    positionals = parsed.positionals
+    parsed = parseArgs({ args: [...argv], options: OPTION_CONFIG, allowPositionals: true })
   } catch (error) {
     return usage(error instanceof Error ? error.message : 'could not parse the arguments')
   }
 
+  const { values, positionals } = parsed
   const command = positionals[0]
   if (values.help || command === undefined) return usage()
 
+  const handler = COMMANDS[command]
+  if (handler === undefined) return usage(`unknown command '${command}'`)
+
   try {
-    switch (command) {
-      case 'login':
-        return await runLogin(requireHost(values.host))
-      case 'logout':
-        return runLogout(requireHost(values.host))
-      case 'push':
-        return await runPush({
-          directory: requirePositional(positionals, 1, 'dir'),
-          isNew: values.new,
-          isDryRun: values['dry-run'],
-          isJson: values.json,
-          ...(values.host === undefined ? {} : { host: values.host }),
-          ...(values.title === undefined ? {} : { title: values.title }),
-          ...(values.visibility === undefined
-            ? {}
-            : { visibility: values.visibility as 'private' | 'org' }),
-        })
-      case 'list': {
-        const limit = parseLimit(values.limit)
-        return await runList({
-          host: requireHost(values.host),
-          isJson: values.json,
-          ...(limit === undefined ? {} : { limit }),
-          ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
-        })
-      }
-      case 'show':
-        return await runShow({
-          host: requireHost(values.host),
-          id: requirePositional(positionals, 1, 'id'),
-          isJson: values.json,
-        })
-      case 'rename':
-        return await runRename({
-          host: requireHost(values.host),
-          id: requirePositional(positionals, 1, 'id'),
-          title: requirePositional(positionals, 2, 'title'),
-          isJson: values.json,
-        })
-      case 'privacy':
-        return await runPrivacy({
-          host: requireHost(values.host),
-          id: requirePositional(positionals, 1, 'id'),
-          visibility: requirePositional(positionals, 2, 'visibility'),
-          isJson: values.json,
-        })
-      case 'rm':
-        return await runRemove({
-          host: requireHost(values.host),
-          id: requirePositional(positionals, 1, 'id'),
-          isJson: values.json,
-        })
-      case 'restore':
-        return await runRestore({
-          host: requireHost(values.host),
-          id: requirePositional(positionals, 1, 'id'),
-          isJson: values.json,
-        })
-      case 'share':
-        return await runShare(positionals, values)
-      default:
-        return usage(`unknown command '${command}'`)
-    }
+    return await handler(positionals, values)
   } catch (error) {
     if (error instanceof UsageError) return usage(error.message)
     throw error

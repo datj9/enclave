@@ -1,6 +1,7 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
 import { IdResolutionError, resolveArtifactId, shortId } from '../ids.ts'
+import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 /**
  * `enclave share create|list|revoke` (S20). A share URL is a bearer capability: it is printed to
@@ -14,10 +15,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
 const HOURS_PER_UNIT: Readonly<Record<string, number>> = { h: 1, d: 24, w: 168 }
 const MILLISECONDS_PER_HOUR = 3_600_000
-
-const EXIT_OK = 0
-const EXIT_FAILED = 1
-const EXIT_INVALID_INPUT = 2
 
 const EXPIRES_COLUMN_WIDTH = 24
 const NEVER = 'never'
@@ -146,9 +143,7 @@ function createRequestBody(
   versionId: string,
   expiresAt: Date | null,
 ): Readonly<Record<string, string>> {
-  return expiresAt === null
-    ? { versionId }
-    : { versionId, expiresAt: expiresAt.toISOString() }
+  return expiresAt === null ? { versionId } : { versionId, expiresAt: expiresAt.toISOString() }
 }
 
 function printCreated(
@@ -191,7 +186,7 @@ export async function runShareCreate(options: ShareCreateOptions): Promise<numbe
   } catch (error) {
     if (!(error instanceof InvalidInputError)) throw error
     fail(error.message)
-    return EXIT_INVALID_INPUT
+    return EXIT_USAGE
   }
 
   const client = clientFor(options.host)
@@ -238,9 +233,7 @@ function printLinks(items: readonly ShareLinkSummary[], isJson: boolean): void {
     return
   }
 
-  process.stdout.write(
-    `SHARE ID  VERSION   ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`,
-  )
+  process.stdout.write(`SHARE ID  VERSION   ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
     process.stdout.write(
@@ -272,7 +265,7 @@ export async function runShareRevoke(options: ShareRevokeOptions): Promise<numbe
   } catch (error) {
     if (!(error instanceof InvalidInputError)) throw error
     fail(error.message)
-    return EXIT_INVALID_INPUT
+    return EXIT_USAGE
   }
 
   const client = clientFor(options.host)

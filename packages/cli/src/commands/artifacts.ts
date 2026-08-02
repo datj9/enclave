@@ -1,14 +1,11 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
 import { IdResolutionError, resolveArtifactId, shortId, type ArtifactSummary } from '../ids.ts'
+import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 const VISIBILITIES = ['private', 'org'] as const
 
 export type Visibility = (typeof VISIBILITIES)[number]
-
-const EXIT_OK = 0
-const EXIT_FAILED = 1
-const EXIT_USAGE = 2
 
 const VISIBILITY_COLUMN_WIDTH = 7
 
@@ -76,6 +73,15 @@ function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 }
 
+/**
+ * Failures go to stderr, never stdout. `--json` promises stdout carries the API object and nothing
+ * else, so a human-readable error printed there turns `enclave show … --json | jq` into a parse
+ * error instead of a diagnosable failure.
+ */
+function fail(line: string): void {
+  process.stderr.write(`${line}\n`)
+}
+
 function requireClient(host: string): ApiClient {
   const token = tokenFor(host)
   if (token === null || token === '') {
@@ -90,14 +96,18 @@ function requireClient(host: string): ApiClient {
  */
 function reportFailure(error: unknown, given?: string): number {
   if (error instanceof ApiError && error.status === 404) {
-    write(given === undefined ? '✗ not found' : `✗ not found: ${given}`)
+    fail(given === undefined ? '✗ not found' : `✗ not found: ${given}`)
     return EXIT_FAILED
   }
-  if (error instanceof ApiError || error instanceof IdResolutionError || error instanceof CliError) {
-    write(`✗ ${error.message}`)
+  if (
+    error instanceof ApiError ||
+    error instanceof IdResolutionError ||
+    error instanceof CliError
+  ) {
+    fail(`✗ ${error.message}`)
     return EXIT_FAILED
   }
-  write(`✗ ${error instanceof Error ? error.message : String(error)}`)
+  fail(`✗ ${error instanceof Error ? error.message : String(error)}`)
   return EXIT_FAILED
 }
 

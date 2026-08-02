@@ -97,6 +97,7 @@ const PRICING = {
 type StdoutWrite = typeof process.stdout.write
 
 let written: string[] = []
+let writtenToStderr: string[] = []
 let configHome: string
 let originalConfigHome: string | undefined
 let originalToken: string | undefined
@@ -105,10 +106,17 @@ function output(): string {
   return written.join('')
 }
 
+/** Failures land on stderr so `--json` can promise stdout is nothing but the API object. */
+function errorOutput(): string {
+  return writtenToStderr.join('')
+}
+
 function callAt(index: number): RecordedCall {
   const call = harness.calls[index]
   if (call === undefined) {
-    throw new Error(`expected a call at index ${String(index)}, saw ${String(harness.calls.length)}`)
+    throw new Error(
+      `expected a call at index ${String(index)}, saw ${String(harness.calls.length)}`,
+    )
   }
   return call
 }
@@ -131,6 +139,7 @@ function respondWith(routes: Readonly<Record<string, unknown>>): void {
 beforeEach(() => {
   harness.reset()
   written = []
+  writtenToStderr = []
 
   originalConfigHome = process.env['XDG_CONFIG_HOME']
   originalToken = process.env['ENCLAVE_TOKEN']
@@ -144,6 +153,12 @@ beforeEach(() => {
     return true
   }) as StdoutWrite
   vi.spyOn(process.stdout, 'write').mockImplementation(capture)
+
+  const captureStderr = ((chunk: string | Uint8Array): boolean => {
+    writtenToStderr.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    return true
+  }) as StdoutWrite
+  vi.spyOn(process.stderr, 'write').mockImplementation(captureStderr)
 })
 
 afterEach(() => {
@@ -355,7 +370,7 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
     notFoundForEverything()
 
     expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(1)
-    expect(output()).toContain('not found')
+    expect(errorOutput()).toContain('not found')
     expect(output()).not.toContain('forbidden')
   })
 
@@ -363,7 +378,7 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
     notFoundForEverything()
 
     expect(await runRemove({ host: HOST, id: FULL_ID })).toBe(1)
-    expect(output()).toContain('not found')
+    expect(errorOutput()).toContain('not found')
     expect(output()).not.toContain('forbidden')
   })
 
@@ -374,7 +389,7 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
     expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' })).toBe(1)
     expect(await runRestore({ host: HOST, id: FULL_ID })).toBe(1)
     expect(output()).not.toContain('forbidden')
-    expect(output().match(/not found/g)).toHaveLength(3)
+    expect(errorOutput().match(/not found/g)).toHaveLength(3)
   })
 })
 
@@ -391,9 +406,9 @@ describe('AC 8 — an ambiguous prefix', () => {
 
     expect(harness.calls).toHaveLength(1)
     expect(callAt(0).path).toBe('/api/v1/artifacts')
-    expect(output()).toContain('matches 2 artifacts')
-    expect(output()).toContain('Kanban board')
-    expect(output()).toContain('Kanban archive')
+    expect(errorOutput()).toContain('matches 2 artifacts')
+    expect(errorOutput()).toContain('Kanban board')
+    expect(errorOutput()).toContain('Kanban archive')
   })
 })
 
@@ -421,9 +436,9 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
     const renamed = { ...KANBAN, title: 'Sprint board' }
     respondWith({ [`PATCH /api/v1/artifacts/${FULL_ID}`]: renamed })
 
-    expect(
-      await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board', isJson: true }),
-    ).toBe(0)
+    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board', isJson: true })).toBe(
+      0,
+    )
 
     expect(JSON.parse(output())).toEqual(renamed)
   })
@@ -464,6 +479,55 @@ describe('credentials', () => {
     expect(await runList({ host: HOST, isJson: false })).toBe(1)
 
     expect(harness.calls).toHaveLength(0)
-    expect(output()).toContain('not logged in to enclave.example.com')
+    expect(errorOutput()).toContain('not logged in to enclave.example.com')
+  })
+})
+
+/**
+ * The rule `--json` promises: stdout carries the API object and nothing else. A human-readable
+ * error printed there turns `enclave show … --json | jq` into a parse error rather than a
+ * diagnosable failure, so every failure path must leave stdout empty or valid JSON.
+ */
+describe('--json keeps stdout machine-readable on failure', () => {
+  // respondWith 404s any key it was not given, which is exactly the missing-artifact case.
+
+  it('show prints nothing to stdout when the artifact is missing', async () => {
+    respondWith({})
+
+    const code = await runShow({
+      host: 'enclave.example.com',
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      isJson: true,
+    })
+
+    expect(code).toBe(1)
+    expect(written.join('')).toBe('')
+    expect(writtenToStderr.join('')).toContain('not found')
+  })
+
+  it('rm prints nothing to stdout when the artifact is missing', async () => {
+    respondWith({})
+
+    const code = await runRemove({
+      host: 'enclave.example.com',
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      isJson: true,
+    })
+
+    expect(code).toBe(1)
+    expect(written.join('')).toBe('')
+  })
+
+  it('anything stdout does emit under --json parses as JSON', async () => {
+    respondWith({})
+
+    await runShow({
+      host: 'enclave.example.com',
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      isJson: true,
+    })
+
+    const stdout = written.join('').trim()
+    if (stdout !== '') expect(() => JSON.parse(stdout) as unknown).not.toThrow()
   })
 })

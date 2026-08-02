@@ -52,7 +52,9 @@ export async function resolveArtifactId(client: ApiClient, given: string): Promi
   if (only === undefined) throw new IdResolutionError(`no artifact starts with '${given}'`)
   if (matches.length > 1) {
     const listed = matches.map((item) => `  ${shortId(item.id)}  ${item.title}`).join('\n')
-    throw new IdResolutionError(`'${given}' matches ${String(matches.length)} artifacts:\n${listed}`)
+    throw new IdResolutionError(
+      `'${given}' matches ${String(matches.length)} artifacts:\n${listed}`,
+    )
   }
   return only.id
 }
