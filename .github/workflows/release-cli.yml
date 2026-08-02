@@ -1,0 +1,105 @@
+name: release-cli
+
+# Publishes the CLI when a `cli-v*` tag is pushed. The server image has its own `v*` tag and its
+# own workflow; keeping the prefixes distinct is what lets the two ship on separate cadences.
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # No credentials in the job that runs project code.
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # A tag that disagrees with the manifest publishes a package that lies about itself.
+      - name: verify the tag matches packages/cli/package.json
+        run: |
+          tag="${GITHUB_REF_NAME#cli-v}"
+          manifest="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package version $manifest" >&2
+            exit 1
+          fi
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      - run: pnpm build:cli
+
+      - name: pack
+        working-directory: packages/cli
+        run: npm pack
+
+      # The check that matters. `npm publish` drops a malformed `bin` with only a warning and
+      # succeeds, shipping a CLI with no command — and a published version cannot be replaced.
+      # Typecheck, lint and tests all pass on that package. Only installing it catches the fault.
+      - name: install the tarball and run the binary
+        working-directory: packages/cli
+        run: |
+          npm i -g --prefix "$RUNNER_TEMP/cli-check" ./enclave-artifacts-*.tgz
+          test -x "$RUNNER_TEMP/cli-check/bin/enclave" \
+            || { echo "the bin entry did not survive packaging" >&2; exit 1; }
+          "$RUNNER_TEMP/cli-check/bin/enclave" --help > /dev/null
+          # --json promises stdout carries the payload and nothing else, on every path.
+          bytes="$("$RUNNER_TEMP/cli-check/bin/enclave" list --json 2>/dev/null | wc -c)"
+          test "$bytes" -eq 0 \
+            || { echo "a usage error put $bytes bytes on stdout under --json" >&2; exit 1; }
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: npm-tarball
+          path: packages/cli/enclave-artifacts-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Requires a reviewer before anything reaches the registry. npm allows unpublish only within
+    # 72 hours and only when nothing depends on the version, so this gate is the last chance.
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/enclave-artifacts
+
+    permissions:
+      contents: read
+      id-token: write # trusted publishing; no NPM_TOKEN is stored anywhere
+
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: npm-tarball
+
+      # Publishes the exact artifact the build job verified, not a rebuild of it.
+      - name: publish to npm
+        run: npm publish enclave-artifacts-*.tgz --provenance
