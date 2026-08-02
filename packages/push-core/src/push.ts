@@ -42,7 +42,8 @@ async function errorFrom(response: Response): Promise<PushError> {
   try {
     const body: unknown = await response.json()
     if (typeof body === 'object' && body !== null && 'error' in body) {
-      const envelope = (body as { error: { code?: string; message?: string; details?: unknown } }).error
+      const envelope = (body as { error: { code?: string; message?: string; details?: unknown } })
+        .error
       if (typeof envelope.code === 'string') code = envelope.code
       if (typeof envelope.message === 'string') message = envelope.message
       if (typeof envelope.details === 'object' && envelope.details !== null) {
