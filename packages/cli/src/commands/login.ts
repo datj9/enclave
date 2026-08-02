@@ -4,6 +4,13 @@ import { Writable } from 'node:stream'
 import { baseUrlFor } from '../../../push-core/src/index.ts'
 import { saveToken } from '../credentials.ts'
 
+/**
+ * Every scope the CLI needs across all its commands. `login` probes a read endpoint to validate
+ * the token, so a write-only token cannot even sign in — the instruction and the probe have to
+ * agree or onboarding dead-ends on a 403.
+ */
+const REQUIRED_SCOPES = ['artifacts:read', 'artifacts:write', 'shares:write'] as const
+
 /** readline echoes what it reads; sending that echo nowhere is what keeps the token off screen. */
 function readSecret(promptText: string): Promise<string> {
   const discardEcho = new Writable({
@@ -30,7 +37,8 @@ function readSecret(promptText: string): Promise<string> {
 
 export async function runLogin(host: string): Promise<number> {
   const baseUrl = baseUrlFor(host)
-  process.stdout.write(`Create a token with scope artifacts:write at ${baseUrl}/settings/tokens\n`)
+  process.stdout.write(`Create a token at ${baseUrl}/settings/tokens\n`)
+  process.stdout.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
 
   const token = await readSecret('Token: ')
   if (token === '') {
@@ -50,6 +58,12 @@ export async function runLogin(host: string): Promise<number> {
 
   if (response.status === 401) {
     process.stdout.write('that token was rejected\n')
+    return 1
+  }
+  // The probe reads, so a write-only token lands here rather than on 401. Naming the scope the
+  // server refused is the difference between a one-line fix and an unexplained failure.
+  if (response.status === 403) {
+    process.stdout.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
     return 1
   }
   if (response.status !== 200) {
