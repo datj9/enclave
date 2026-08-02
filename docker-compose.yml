@@ -15,6 +15,13 @@ services:
       # Overrides .env's host-side URL: inside the compose network Postgres answers on its
       # own service name and the container-internal port, not the published 5434.
       DATABASE_URL: postgresql://enclave:enclave@postgres:5432/enclave
+      # Same split for object storage. `.env`'s S3_ENDPOINT is the host-side value that tests and
+      # drizzle use; the container needs the service name. Unset means "use .env as-is", which is
+      # what you want when S3_ENDPOINT already points at real S3, R2 or B2.
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-${S3_ENDPOINT}}
+      # A presigned URL signs its own host and is followed by the *browser*, so it must be signed
+      # with the endpoint the browser can resolve — not the compose-internal one above.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-${S3_ENDPOINT}}
     depends_on:
       postgres:
         condition: service_healthy

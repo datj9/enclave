@@ -35,6 +35,10 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
 
   S3_ENDPOINT: z.url(),
+  // Only set when the browser cannot reach S3_ENDPOINT — bundled MinIO on a compose network, or a
+  // private VPC endpoint fronted by a public host. Presigned URLs sign their own host, so they are
+  // signed with this one. Defaults to S3_ENDPOINT.
+  S3_PUBLIC_ENDPOINT: z.url().optional(),
   S3_REGION: z.string().min(1),
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY_ID: z.string().min(1),

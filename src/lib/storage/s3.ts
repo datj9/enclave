@@ -33,6 +33,13 @@ const DELETE_BATCH_SIZE = 1000
 
 export interface S3StoreConfig {
   readonly endpoint: string
+  /**
+   * The endpoint a *browser* must use, which is not always the one this process uses. Under the
+   * bundled MinIO the app reaches storage at `http://minio:9000` on the compose network while the
+   * viewer resolves `http://localhost:9000` — and a presigned URL signs its own host, so it has to
+   * be signed with the browser's. Same shape for a private VPC endpoint behind a public CDN.
+   */
+  readonly publicEndpoint: string
   readonly region: string
   readonly bucket: string
   readonly accessKeyId: string
@@ -43,6 +50,7 @@ export interface S3StoreConfig {
 export function s3ConfigFromEnv(): S3StoreConfig {
   return {
     endpoint: env.S3_ENDPOINT,
+    publicEndpoint: env.S3_PUBLIC_ENDPOINT ?? env.S3_ENDPOINT,
     region: env.S3_REGION,
     bucket: env.S3_BUCKET,
     accessKeyId: env.S3_ACCESS_KEY_ID,
@@ -51,9 +59,9 @@ export function s3ConfigFromEnv(): S3StoreConfig {
   }
 }
 
-function createClient(config: S3StoreConfig): S3Client {
+function createClient(config: S3StoreConfig, endpoint: string = config.endpoint): S3Client {
   return new S3Client({
-    endpoint: config.endpoint,
+    endpoint,
     region: config.region,
     forcePathStyle: config.forcePathStyle,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
@@ -189,6 +197,14 @@ export function createS3ObjectStore(
 ): ObjectStore {
   const { bucket } = config
 
+  // Signing is the one operation whose result leaves the server, so it is the one operation that
+  // must use the browser's endpoint. Same client when the two endpoints agree, which is the case
+  // for every deployment that is not splitting internal and public storage hosts.
+  const signingClient =
+    config.publicEndpoint === config.endpoint
+      ? client
+      : createClient(config, config.publicEndpoint)
+
   return {
     ensureBucket: () => ensureBucket(client, bucket),
     putObject: (input: PutObjectInput) =>
@@ -208,7 +224,7 @@ export function createS3ObjectStore(
     // never logged, here or anywhere upstream (§8 log hygiene).
     presignGetUrl: (key: string, expiresInSeconds: number) =>
       withStorageErrors('presign', () =>
-        getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
+        getSignedUrl(signingClient, new GetObjectCommand({ Bucket: bucket, Key: key }), {
           expiresIn: expiresInSeconds,
         }),
       ),

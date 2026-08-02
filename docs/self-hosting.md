@@ -235,7 +235,8 @@ fails to start rather than half-working. `.env.example` is the committed templat
 
 | Variable | Required | Example | What it does |
 |---|---|---|---|
-| `S3_ENDPOINT` | yes | `https://s3.eu-west-1.amazonaws.com` | Storage API endpoint. Also the host that appears in presigned URLs, so it must be reachable from your users' browsers, not only from the server. |
+| `S3_ENDPOINT` | yes | `https://s3.eu-west-1.amazonaws.com` | Storage API endpoint the **server** dials. |
+| `S3_PUBLIC_ENDPOINT` | no | `http://localhost:9000` | The endpoint presigned URLs are signed with, i.e. the one **browsers** must reach. Defaults to `S3_ENDPOINT`; only set it when the two differ, such as the bundled MinIO profile. |
 | `S3_REGION` | yes | `eu-west-1` | Region. `auto` for R2, `us-east-1` for MinIO. |
 | `S3_BUCKET` | yes | `enclave-artifacts` | Bucket name. Created on boot if absent and permitted. |
 | `S3_ACCESS_KEY_ID` | yes | — | Access key. |
@@ -355,12 +356,21 @@ to your own registry and replace the `build:` block with `image:`. There is a
 the maintainer tags a release; until such a tag exists, building from source is the only option and
 `docker-compose.yml` reflects that.
 
-**One constraint on this shape:** `S3_ENDPOINT` is a single value used both by the app server-side
-and inside the presigned URLs handed to browsers, so it must resolve to the same storage from both.
-That is normally free — AWS S3, R2, B2 and GCS all have one public endpoint. It does **not** hold
-for the bundled MinIO profile, where the app container would need `http://minio:9000` while the
-browser needs `http://localhost:9000`. Combine the app container with real object storage, or use
-shape A for a MinIO trial.
+**Two endpoints, when the browser cannot reach the one the server uses.** The app dials storage at
+`S3_ENDPOINT`, but a presigned URL is followed by the *browser* and signs its own host, so it cannot
+simply be rewritten afterwards. With AWS S3, R2, B2 and GCS this never comes up — one public
+endpoint serves both. It does come up with the bundled MinIO profile, where the app container
+resolves `http://minio:9000` on the compose network while the browser resolves
+`http://localhost:9000`. Set `S3_PUBLIC_ENDPOINT` to the browser's value and presigning uses it:
+
+```
+S3_ENDPOINT=http://minio:9000            # what the app container dials
+S3_PUBLIC_ENDPOINT=http://localhost:9000 # what a presigned URL is signed with
+```
+
+`docker-compose.yml` already wires both from `.env` (`S3_ENDPOINT_INTERNAL` and
+`S3_PUBLIC_ENDPOINT`). Leave `S3_PUBLIC_ENDPOINT` unset for any provider with a single endpoint —
+it defaults to `S3_ENDPOINT`. The same split covers a private VPC endpoint fronted by a public host.
 
 ### Health checks
 

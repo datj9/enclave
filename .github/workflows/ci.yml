@@ -1,8 +1,9 @@
 name: ci
 
 on:
+  # Every branch, not just the default one. Pinning this to a single branch name means the checks
+  # silently never run on a repo whose default branch is called something else.
   push:
-    branches: [master]
   pull_request:
 
 env:
