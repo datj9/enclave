@@ -57,6 +57,78 @@ For a real deployment — wildcard DNS, wildcard TLS, bucket CORS, every environ
 the backup story — read [docs/self-hosting.md](docs/self-hosting.md). Do not put this on the
 internet from the quick start above.
 
+## Publishing from the command line
+
+Everything except generating from a prompt is reachable from a terminal. The client is on npm:
+
+```bash
+npm install -g enclave-artifacts     # the command is `enclave`
+enclave login --host enclave.example.com
+enclave push ./dist --title "Kanban board"
+```
+
+`login` prints where to mint a token and reads it without echoing. The token needs all three
+scopes — `artifacts:read`, `artifacts:write`, `shares:write` — and is stored per host in
+`~/.config/enclave/credentials.json` at mode `0600`; the CLI refuses to read it if that mode has
+loosened. `ENCLAVE_TOKEN` overrides the file, which is what CI wants.
+
+`push` writes `.enclave.json` beside the directory it published, recording which artifact that
+directory maps to. **Commit it.** It holds no secret, and it is what lets a second machine or a CI
+job push a new *version* of the same artifact instead of a duplicate. `--new` forces a fresh
+artifact when you do want one.
+
+A bundle is validated as a unit, so a single disallowed file would reject the whole upload. Rather
+than let that happen, `push` drops what the server would refuse and names everything it skipped:
+
+```
+$ enclave push ./dist
+skipped 3 files:
+  app.js.map        unsupported (.map)
+  favicon.ico       unsupported (.ico)
+  fonts/Inter.ttf   unsupported (.ttf)
+✓ 2 files, 40 KB
+✓ created 3f2a91c4  v1
+→ https://3f2a91c4-….artifacts.example.com
+```
+
+`--dry-run` shows that split without uploading; `.enclaveignore` (gitignore syntax) drops more.
+The client's copy of these rules is a convenience, not the gate — the server enforces them
+regardless.
+
+The rest of the surface:
+
+```
+enclave logout   [--host <host>]
+
+enclave push     <dir> [--title <t>] [--visibility private|org]
+                       [--new] [--dry-run] [--json]
+enclave list     [--limit <n>] [--cursor <c>] [--json]
+enclave show     <id> [--json]
+enclave rename   <id> <title>
+enclave privacy  <id> private|org
+enclave rm       <id>
+enclave restore  <id>
+
+enclave share create <id> [--version <versionId>] [--expires <7d|ISO>] [--json]
+enclave share list   <id> [--json]
+enclave share revoke <shareId>
+```
+
+`<id>` accepts a full artifact uuid or any unambiguous prefix of eight characters or more. The
+host resolves from `--host`, then `ENCLAVE_HOST`, and for `push` also from `.enclave.json`.
+
+Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
+diagnostics and errors always go to stderr, so `| jq` is safe on every path. Exit `1` means the
+command ran and the answer was no (not found, refused, unreachable, token rejected); exit `2`
+means the invocation was malformed and the command never ran.
+
+There is no `enclave token create`, deliberately: the server refuses to let an API token mint
+another token, so a leaked token cannot outlive its own revocation. Mint tokens in the browser.
+Generating from a prompt, and administering users, invites and the audit log, are browser-only.
+
+Full client documentation, including `.enclaveignore` and every flag, is in
+[packages/cli/README.md](packages/cli/README.md).
+
 ## What v1 does
 
 - **Generate** a multi-file bundle from one prompt, streamed as it arrives. Anthropic or any
@@ -68,8 +140,9 @@ internet from the quick start above.
   newer ones.
 - **Share** with revocable capability links: 32 bytes of entropy, stored only as a hash, optional
   expiry, per-link revocation.
-- **Push** bundles from anything that speaks HTTP: `POST /api/v1/artifacts` with a scoped API
-  token (`artifacts:read`, `artifacts:write`, `shares:write`).
+- **Push** bundles from the [`enclave` CLI](#publishing-from-the-command-line), or from anything
+  that speaks HTTP: `POST /api/v1/artifacts` with a scoped API token (`artifacts:read`,
+  `artifacts:write`, `shares:write`).
 - **Audit** every privacy change, share creation and revocation, and every non-private view,
   including anonymous ones, with a viewer for administrators. Prompts are never written to the
   audit log.
@@ -108,6 +181,7 @@ passes on a machine with nothing started. Start the compose services to actually
 | File | What is in it |
 |---|---|
 | [docs/self-hosting.md](docs/self-hosting.md) | The operator's guide: DNS, TLS, CORS, every env var, storage backends, cron jobs, backup |
+| [packages/cli/README.md](packages/cli/README.md) | The `enclave` CLI: install, login, push, shares, `.enclaveignore`, exit codes |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability, and exactly how artifact isolation works |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Test commands, coverage floor, TDD order, the binding design references |
 | [design.md](design.md) | The locked design system — colour, type, space, depth |
