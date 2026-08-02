@@ -13,7 +13,11 @@ export default defineConfig({
     // tests/integration/** needs Postgres on 5434 and S3-compatible storage on S3_ENDPOINT.
     // Each of those files skips itself when the service is unreachable, so `vitest run` still
     // passes on a machine with nothing started.
-    include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
+    include: [
+      'tests/unit/**/*.test.ts',
+      'tests/integration/**/*.test.ts',
+      'packages/**/*.test.ts',
+    ],
     setupFiles: ['./tests/unit/setup-env.ts'],
     coverage: {
       provider: 'v8',
