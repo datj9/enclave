@@ -1,5 +1,5 @@
 {
-  "name": "@datj9/enclave",
+  "name": "enclave-artifacts",
   "version": "0.1.0",
   "description": "Publish and manage artifacts on a self-hosted enclave instance",
   "keywords": [
@@ -28,8 +28,5 @@
   ],
   "engines": {
     "node": ">=20"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
