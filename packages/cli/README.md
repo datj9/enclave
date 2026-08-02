@@ -1,118 +1,113 @@
-# enclave
+# enclave-artifacts
 
-Self-hostable artifact generation and hosting. Describe what you want, a model writes a
-multi-file HTML bundle, and the result is hosted with an audience you choose and can take back.
+Command-line client for [enclave](https://github.com/datj9/enclave) — self-hostable artifact
+generation and hosting. Publish a local directory to your instance and manage what you have
+published, without opening a browser.
 
-> **Early software.** This is v1 — the first release, tagged from a repo that has never been run
-> anywhere but its author's machine and CI. The privacy model is covered by tests (see
-> [Testing](#testing)) but nothing here has production mileage. Read
-> [SECURITY.md](SECURITY.md) before you host anything you care about, and expect to read the
-> code when something surprises you.
+This is the client. It talks to an enclave server you run yourself; it is not useful on its own.
 
-## The three privacy levels
+> **Early software.** First release. The server it talks to has never run anywhere but its
+> author's machine and CI.
 
-Every artifact starts at the first level. The third is additive — a link is a capability you hand
-out, not a switch you flip.
-
-| Level | Who can read it | How it is revoked |
-|---|---|---|
-| **Only me** | The owner. Nobody else, including administrators. | It is the default. |
-| **Organization** | Every active account on this instance, read-only. The owner stays the sole editor. | Set the artifact back to *Only me*. |
-| **Anyone with the link** | Whoever holds a share link. No account, no sign-in. | Revoke the link. Each link is separate, pinned to one version, and can carry an expiry. |
-
-Revocation is not eventually-consistent theatre. The entry document is proxied through the app on
-every request, so revoking is immediate for the document; assets are served by presigned URLs with
-a 60-second lifetime, so a link already in someone's hands stops working within a minute.
-Administrators can manage users, quotas and the audit log, and cannot read a private artifact —
-that is enforced in the one read gate every path goes through, not by convention.
-
-## Quick start
-
-Postgres and object storage run in containers; the app runs on your machine. Five commands:
+## Install
 
 ```bash
-git clone https://github.com/datj9/enclave.git && cd enclave
-cp .env.example .env
-docker compose --profile minio up -d postgres minio
-pnpm install && pnpm db:migrate && pnpm build
-pnpm start        # then open http://localhost:3000/setup
+npm install -g enclave-artifacts
 ```
 
-`/setup` creates the single administrator account and then stops existing. Everything works from
-there **except generating from a prompt**, which needs a model provider API key — add
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` and restart. You can push bundles through
-`POST /api/v1/artifacts` without any key at all.
-
-To check the whole path end to end, including the origin isolation and the share-then-revoke
-journey, run the demo:
+Or run it without installing:
 
 ```bash
-bash scripts/fresh-clone-demo.sh
+npx enclave-artifacts push ./dist
 ```
 
-It drives all ten steps against a throwaway database and fails loudly on the first broken one.
-Without a provider key it reports the generation step as skipped and continues.
+The command is `enclave` either way.
 
-For a real deployment — wildcard DNS, wildcard TLS, bucket CORS, every environment variable, and
-the backup story — read [docs/self-hosting.md](docs/self-hosting.md). Do not put this on the
-internet from the quick start above.
-
-## What v1 does
-
-- **Generate** a multi-file bundle from one prompt, streamed as it arrives. Anthropic or any
-  OpenAI-compatible endpoint. Instance key by default, or bring your own per account.
-- **Host** each artifact on its own origin (`{id}.artifacts.<domain>`) inside a sandboxed iframe
-  with a strict Content-Security-Policy, so one artifact cannot reach another's storage or the
-  app's session.
-- **Version** append-only. A share link pins one version and keeps showing it after you publish
-  newer ones.
-- **Share** with revocable capability links: 32 bytes of entropy, stored only as a hash, optional
-  expiry, per-link revocation.
-- **Push** bundles from anything that speaks HTTP: `POST /api/v1/artifacts` with a scoped API
-  token (`artifacts:read`, `artifacts:write`, `shares:write`).
-- **Audit** every privacy change, share creation and revocation, and every non-private view,
-  including anonymous ones, with a viewer for administrators. Prompts are never written to the
-  audit log.
-- **Limit** abuse with a per-user hourly rate limit and a daily generation quota, both configurable,
-  with a larger quota for accounts using their own provider key.
-- **Delete** softly: a 30-day trash window that kills every share link immediately, then a purge
-  job that removes the database rows and the storage objects while the audit trail survives.
-- **Invite** rather than accept open signups, unless you set `ALLOW_OPEN_REGISTRATION=true`.
-  Email and password (argon2id), or OIDC.
-
-## What v1 does not do
-
-Named explicitly so you can stop looking: multi-turn chat, iterating on an existing artifact,
-diffing versions, forking or remixing, multiple organizations in one deployment, collaborative
-editing, per-artifact editor permissions, comments, an embed-on-other-sites mode, templates,
-full-text search, webhooks, usage billing, and SCIM provisioning. None of these are present.
-
-## Stack
-
-Next.js (App Router) · Postgres via Drizzle · any S3-compatible object storage · Docker Compose.
-Vitest for unit and integration tests, Playwright for browser journeys.
-
-## Testing
+## Getting started
 
 ```bash
-pnpm test          # 745 unit + integration tests
-pnpm test:e2e      # 95 Playwright specs across 9 journeys
-pnpm test:coverage # 80% floor repo-wide; 100% branches on the bundle parser and the read gate
+enclave login --host enclave.example.com
+enclave push ./dist --title "Kanban board"
 ```
 
-Integration tests skip themselves when Postgres or object storage is unreachable, so `pnpm test`
-passes on a machine with nothing started. Start the compose services to actually run them.
+`login` prints where to mint a token and reads it without echoing. The token needs three scopes —
+`artifacts:read`, `artifacts:write` and `shares:write` — and is stored per host in
+`~/.config/enclave/credentials.json` with mode `0600`. `ENCLAVE_TOKEN` overrides the file, which is
+what you want in CI.
 
-## Docs
+`push` writes `.enclave.json` next to the directory it published, recording which artifact the
+directory maps to. **Commit that file** — it holds no secret, and committing it is what lets a
+second machine or a CI job target the same artifact.
 
-| File | What is in it |
+## Commands
+
+```
+enclave login    [--host <host>]
+enclave logout   [--host <host>]
+
+enclave push     <dir> [--title <t>] [--visibility private|org]
+                       [--new] [--dry-run] [--json]
+enclave list     [--limit <n>] [--cursor <c>] [--json]
+enclave show     <id> [--json]
+enclave rename   <id> <title>
+enclave privacy  <id> private|org
+enclave rm       <id>
+enclave restore  <id>
+
+enclave share create <id> [--version <versionId>] [--expires <7d|ISO>] [--json]
+enclave share list   <id> [--json]
+enclave share revoke <shareId>
+```
+
+`<id>` takes a full artifact uuid or any unambiguous prefix of eight characters or more.
+
+The host resolves from `--host`, then `ENCLAVE_HOST`. `push` also falls back to `.enclave.json`.
+
+## What gets uploaded
+
+The server accepts thirteen file types — `html css js mjs json svg png jpg jpeg webp woff2 txt md`
+— with paths matching `[a-zA-Z0-9._-/]` and no spaces. A bundle is validated as a unit, so one
+disallowed file rejects the whole upload.
+
+Rather than let that happen, `push` drops what the server would refuse and **prints every file it
+skipped, with the reason**. A typical `dist/` loses its sourcemaps and favicon and uploads fine:
+
+```
+$ enclave push ./dist
+skipped 3 files:
+  app.js.map        unsupported (.map)
+  favicon.ico       unsupported (.ico)
+  fonts/Inter.ttf   unsupported (.ttf)
+✓ 2 files, 40 KB
+✓ created 3f2a91c4  v1
+→ https://3f2a91c4-….artifacts.example.com
+```
+
+Use `.enclaveignore` (gitignore syntax) to drop more. `--dry-run` shows the split without
+uploading anything.
+
+The client's copy of these rules is a convenience so a push does not spend an upload learning a
+file was never going to be accepted. **The server is authoritative** and enforces them regardless.
+
+## Scripting
+
+Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
+errors and diagnostics always go to stderr, so `| jq` is safe on every path.
+
+| Exit code | Meaning |
 |---|---|
-| [docs/self-hosting.md](docs/self-hosting.md) | The operator's guide: DNS, TLS, CORS, every env var, storage backends, cron jobs, backup |
-| [SECURITY.md](SECURITY.md) | How to report a vulnerability, and exactly how artifact isolation works |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Test commands, coverage floor, TDD order, the binding design references |
-| [design.md](design.md) | The locked design system — colour, type, space, depth |
-| [docs/motion.md](docs/motion.md) | The in-app motion standard: durations, curves, what animates and what does not |
+| `0` | Success |
+| `1` | Ran, and the answer was no — not found, refused, unreachable, token rejected |
+| `2` | Malformed invocation; the command never ran |
 
-## License
+## Not included
 
-[Apache-2.0](LICENSE). Copyright 2026 Dat Nguyen.
+`enclave token create` does not exist, deliberately. The server refuses to let an API token mint
+another token, so a leaked token cannot outlive its own revocation. Mint tokens in the browser.
+
+Generating an artifact from a prompt, and administering users, invites and the audit log, are
+browser-only for now.
+
+## Licence
+
+Apache-2.0. Source: [github.com/datj9/enclave](https://github.com/datj9/enclave)
