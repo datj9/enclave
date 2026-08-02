@@ -28,19 +28,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      # tests/integration/** writes real bundles to object storage. Credentials and the port
-      # match .env.example so nothing differs between CI and a local `--profile minio` stack.
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: enclave-dev-access-key
-          MINIO_ROOT_PASSWORD: enclave-dev-secret-key
-        ports: ['9000:9000']
-        options: >-
-          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+      # MinIO is NOT a service container. A service container cannot override the image's command,
+      # and the official minio image needs `server /data`; the bitnami image that starts on its own
+      # no longer publishes a `latest` tag. It is started as a step below instead.
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +43,22 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+
+      # Same image, credentials and port as the `minio` profile in docker-compose.yml, so nothing
+      # differs between CI and a local stack. tests/integration/** writes real bundles to it.
+      - name: start minio
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=enclave-dev-access-key \
+            -e MINIO_ROOT_PASSWORD=enclave-dev-secret-key \
+            minio/minio:latest server /data
+          for i in $(seq 1 40); do
+            curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "minio did not become healthy" >&2
+          docker logs minio >&2
+          exit 1
 
       - run: pnpm install --frozen-lockfile
 
