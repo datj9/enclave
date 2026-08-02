@@ -2,6 +2,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import { normaliseHost } from '../../push-core/src/index.ts'
+
 export interface HostCredential {
   readonly token: string
 }
@@ -27,10 +29,29 @@ export function readCredentials(): Record<string, HostCredential> {
   return JSON.parse(readFileSync(path, 'utf8')) as Record<string, HostCredential>
 }
 
+/**
+ * A stored key only matches if it canonicalises to the same origin as `host` — a bare legacy key
+ * (minted back when the CLI always forced https for a non-loopback host) canonicalises to https,
+ * so it can never satisfy an http lookup and hand a token to an origin over cleartext.
+ */
+function storedKeyFor(store: Record<string, HostCredential>, host: string): string | null {
+  if (store[host] !== undefined) return host
+  for (const key of Object.keys(store)) {
+    try {
+      if (normaliseHost(key) === host) return key
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
 export function tokenFor(host: string): string | null {
   const fromEnvironment = process.env['ENCLAVE_TOKEN']
   if (fromEnvironment !== undefined && fromEnvironment !== '') return fromEnvironment
-  return readCredentials()[host]?.token ?? null
+  const store = readCredentials()
+  const key = storedKeyFor(store, host)
+  return key === null ? null : (store[key]?.token ?? null)
 }
 
 export function saveToken(host: string, token: string): void {
@@ -41,11 +62,22 @@ export function saveToken(host: string, token: string): void {
   chmodSync(path, 0o600)
 }
 
+/** Deletes the canonical key AND every legacy key that canonicalises to the same origin, so
+ *  logout fully revokes rather than leaving a second live credential behind. */
 export function forgetToken(host: string): boolean {
   const current = readCredentials()
-  if (current[host] === undefined) return false
+  const matchingKeys = Object.keys(current).filter((key) => {
+    if (key === host) return true
+    try {
+      return normaliseHost(key) === host
+    } catch {
+      return false
+    }
+  })
+  if (matchingKeys.length === 0) return false
+
   const next = { ...current }
-  delete next[host]
+  for (const key of matchingKeys) delete next[key]
   writeFileSync(credentialsPath(), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
   return true
 }

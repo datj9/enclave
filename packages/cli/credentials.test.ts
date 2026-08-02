@@ -86,4 +86,51 @@ describe('credentials', () => {
 
     expect(forgetToken('other.example.com')).toBe(false)
   })
+
+  it('tokenFor finds a legacy entry keyed on the bare host', () => {
+    saveToken('enclave.example.com', 'legacy-secret')
+
+    expect(tokenFor('https://enclave.example.com')).toBe('legacy-secret')
+  })
+
+  it('tokenFor prefers the canonical key over a legacy one', () => {
+    saveToken('enclave.example.com', 'legacy-secret')
+    saveToken('https://enclave.example.com', 'canonical-secret')
+
+    expect(tokenFor('https://enclave.example.com')).toBe('canonical-secret')
+  })
+
+  it('forgetToken clears a legacy entry keyed on the bare host', () => {
+    saveToken('enclave.example.com', 'legacy-secret')
+
+    expect(forgetToken('https://enclave.example.com')).toBe(true)
+    expect(readCredentials()).toEqual({})
+  })
+
+  it('tokenFor never returns a legacy https-minted token for an http lookup', () => {
+    saveToken('enclave.example.com', 'legacy-secret')
+
+    expect(tokenFor('http://enclave.example.com')).toBeNull()
+    expect(tokenFor('https://enclave.example.com')).toBe('legacy-secret')
+  })
+
+  it('forgetToken clears both the canonical and a coexisting legacy entry', () => {
+    saveToken('enclave.example.com', 'legacy-secret')
+    saveToken('https://enclave.example.com', 'canonical-secret')
+
+    expect(forgetToken('https://enclave.example.com')).toBe(true)
+    expect(readCredentials()).toEqual({})
+  })
+
+  it('tokenFor resolves every legacy key spelling to the same canonical host', () => {
+    for (const legacyKey of [
+      'enclave.example.com/',
+      'Enclave.Example.COM',
+      'enclave.example.com:443',
+    ]) {
+      saveToken(legacyKey, 'legacy-secret')
+      expect(tokenFor('https://enclave.example.com')).toBe('legacy-secret')
+      forgetToken('https://enclave.example.com')
+    }
+  })
 })

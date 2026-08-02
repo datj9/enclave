@@ -1,8 +1,7 @@
 import { collectBundle, ENTRY_PATH } from './collect.ts'
 import { PushError } from './errors.ts'
+import { normaliseHost } from './host.ts'
 import type { BundleFile, PushOptions, PushResult } from './types.ts'
-
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '::1'])
 
 interface WireFile {
   readonly path: string
@@ -23,15 +22,8 @@ function toWireFile(file: BundleFile): WireFile {
   return { path: file.path, contentBase64: file.content.toString('base64') }
 }
 
-export function baseUrlFor(host: string): string {
-  const scheme = LOOPBACK_HOSTS.has(host.split(':')[0] ?? '') ? 'http' : 'https'
-  return `${scheme}://${host}`
-}
-
-function assertHostIsSafe(host: string): void {
-  if (host.startsWith('http://') || host.startsWith('https://')) {
-    throw new PushError('INSECURE_HOST', 'Pass a hostname without a scheme', { host })
-  }
+export function baseUrlFor(host: string, isInsecureAllowed = false): string {
+  return normaliseHost(host, isInsecureAllowed)
 }
 
 async function errorFrom(response: Response): Promise<PushError> {
@@ -60,8 +52,6 @@ async function errorFrom(response: Response): Promise<PushError> {
 }
 
 export async function push(options: PushOptions): Promise<PushResult> {
-  assertHostIsSafe(options.host)
-
   const { files, skipped } = collectBundle(options.directory)
   if (files.length === 0) {
     throw new PushError('NOTHING_TO_UPLOAD', 'No file in that directory can be uploaded', {
@@ -80,9 +70,10 @@ export async function push(options: PushOptions): Promise<PushResult> {
     files: files.map(toWireFile),
   })
 
+  const url = baseUrlFor(options.host, options.isInsecureAllowed ?? false)
   let response: Response
   try {
-    response = await fetch(`${baseUrlFor(options.host)}/api/v1/artifacts`, {
+    response = await fetch(`${url}/api/v1/artifacts`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${options.token}`,

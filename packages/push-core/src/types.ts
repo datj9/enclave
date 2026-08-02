@@ -19,6 +19,7 @@ export interface PushOptions {
   readonly token: string
   readonly title?: string
   readonly visibility?: Visibility
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface PushResult {

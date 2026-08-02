@@ -169,8 +169,10 @@ describe('push command', () => {
     const written = JSON.parse(
       readFileSync(join(workspace, '.enclave.json'), 'utf8'),
     ) as ProjectState
+    // Persists the canonical form (scheme included), not the raw --host value — otherwise a
+    // later mismatch check compares two spellings of the same host and misreports.
     expect(written).toEqual({
-      host: HOST,
+      host: `https://${HOST}`,
       artifactId: SUCCESS_RESULT.artifactId,
       lastPushedVersionNo: 1,
     })
@@ -208,6 +210,46 @@ describe('push command', () => {
     expect(exitCode).toBe(1)
     expect(stdout).toContain('other.example.com')
     expect(stdout).toContain(HOST)
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('reports INVALID_STATE with exit 1 for a corrupt state host, not a stack trace', async () => {
+    writeStateFile({
+      host: 'not a host',
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_STATE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('treats a scheme change against a bare legacy state host as a mismatch, not a match', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: 'http://enclave.example.com',
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+      isInsecureAllowed: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stdout).toContain('http://enclave.example.com')
+    expect(stdout).toContain('https://enclave.example.com')
     expect(push).not.toHaveBeenCalled()
   })
 })

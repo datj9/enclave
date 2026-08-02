@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util'
 
+import { InvalidHostError, normaliseHost } from '../../push-core/src/index.ts'
+
 import {
   runList,
   runPrivacy,
@@ -16,7 +18,7 @@ import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
 
-  enclave login    [--host <host>]
+  enclave login    [--host <host>] [--token <token>]
   enclave logout   [--host <host>]
 
   enclave push     <dir> [--title <t>] [--visibility private|org]
@@ -34,10 +36,14 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
 
 Host resolution: --host, else ENCLAVE_HOST. \`push\` also falls back to .enclave.json.
 Credentials: ENCLAVE_TOKEN, else ~/.config/enclave/credentials.json.
+
+--insecure allows an explicit http:// host that isn't loopback (localhost, 127.0.0.1, [::1]).
+Without it, a non-loopback http host is refused rather than sending a token in cleartext.
 `
 
 const OPTION_CONFIG = {
   host: { type: 'string' },
+  token: { type: 'string' },
   title: { type: 'string' },
   visibility: { type: 'string' },
   limit: { type: 'string' },
@@ -48,10 +54,12 @@ const OPTION_CONFIG = {
   'dry-run': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
   help: { type: 'boolean', default: false },
+  insecure: { type: 'boolean', default: false },
 } as const
 
 interface ParsedValues {
   readonly host?: string
+  readonly token?: string
   readonly title?: string
   readonly visibility?: string
   readonly limit?: string
@@ -62,6 +70,7 @@ interface ParsedValues {
   readonly 'dry-run': boolean
   readonly json: boolean
   readonly help: boolean
+  readonly insecure: boolean
 }
 
 type CommandHandler = (
@@ -86,12 +95,17 @@ function usage(message?: string): number {
 }
 
 /** `push` is the exception: it recovers a host from .enclave.json, so it resolves its own. */
-function requireHost(flag: string | undefined): string {
+function requireHost(flag: string | undefined, isInsecureAllowed: boolean): string {
   const host = flag ?? process.env['ENCLAVE_HOST']
   if (host === undefined || host === '') {
     throw new UsageError('no host — pass --host or set ENCLAVE_HOST')
   }
-  return host
+  try {
+    return normaliseHost(host, isInsecureAllowed)
+  } catch (error) {
+    if (error instanceof InvalidHostError) throw new UsageError(error.message)
+    throw error
+  }
 }
 
 function requirePositional(positionals: readonly string[], index: number, name: string): string {
@@ -112,7 +126,7 @@ function parseLimit(raw: string | undefined): number | undefined {
 const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   create: (positionals, values) =>
     runShareCreate({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
       ...(values.version === undefined ? {} : { versionId: values.version }),
@@ -120,22 +134,23 @@ const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
     }),
   list: (positionals, values) =>
     runShareList({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
     }),
   revoke: (positionals, values) =>
     runShareRevoke({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       shareId: requirePositional(positionals, 2, 'shareId'),
     }),
 }
 
 /** Every command takes the same two arguments, which is what lets this be a table and not a switch. */
 const COMMANDS: Readonly<Record<string, CommandHandler>> = {
-  login: (_positionals, values) => runLogin(requireHost(values.host)),
+  login: (_positionals, values) =>
+    runLogin(requireHost(values.host, values.insecure), values.token, values.insecure),
 
-  logout: (_positionals, values) => runLogout(requireHost(values.host)),
+  logout: (_positionals, values) => runLogout(requireHost(values.host, values.insecure)),
 
   push: (positionals, values) =>
     runPush({
@@ -143,6 +158,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       isNew: values.new,
       isDryRun: values['dry-run'],
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
       ...(values.host === undefined ? {} : { host: values.host }),
       ...(values.title === undefined ? {} : { title: values.title }),
       ...(values.visibility === undefined
@@ -153,7 +169,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
   list: (_positionals, values) => {
     const limit = parseLimit(values.limit)
     return runList({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       isJson: values.json,
       ...(limit === undefined ? {} : { limit }),
       ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
@@ -162,14 +178,14 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
 
   show: (positionals, values) =>
     runShow({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
     }),
 
   rename: (positionals, values) =>
     runRename({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       title: requirePositional(positionals, 2, 'title'),
       isJson: values.json,
@@ -177,7 +193,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
 
   privacy: (positionals, values) =>
     runPrivacy({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       visibility: requirePositional(positionals, 2, 'visibility'),
       isJson: values.json,
@@ -185,14 +201,14 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
 
   rm: (positionals, values) =>
     runRemove({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
     }),
 
   restore: (positionals, values) =>
     runRestore({
-      host: requireHost(values.host),
+      host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
     }),

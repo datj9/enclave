@@ -1,7 +1,13 @@
 import { statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
-import { collectBundle, push, PushError } from '../../../push-core/src/index.ts'
+import {
+  collectBundle,
+  InvalidHostError,
+  normaliseHost,
+  push,
+  PushError,
+} from '../../../push-core/src/index.ts'
 import type { PushResult, SkippedFile } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
@@ -16,6 +22,7 @@ export interface PushCommandOptions {
   readonly isNew: boolean
   readonly isDryRun: boolean
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 const SKIP_COLUMN_WIDTH = 18
@@ -74,8 +81,17 @@ function refuseExistingState(
 ): number | null {
   if (state === null || options.isNew) return null
 
-  if (state.host !== host) {
-    const text = `state file targets ${state.host}, not ${host}`
+  let stateHost: string
+  try {
+    stateHost = normaliseHost(state.host, options.isInsecureAllowed ?? false)
+  } catch (error) {
+    const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
+    reportError(options.isJson, 'INVALID_STATE', text, text)
+    return 1
+  }
+
+  if (stateHost !== host) {
+    const text = `state file targets ${stateHost}, not ${host}`
     reportError(options.isJson, 'HOST_MISMATCH', text, text)
     return 1
   }
@@ -90,6 +106,28 @@ function refuseExistingState(
       '  use --new to create a separate artifact',
   )
   return 1
+}
+
+type HostResolution =
+  | { readonly canonicalHost: string; readonly failureExitCode: null }
+  | { readonly failureExitCode: number }
+
+function resolveHost(state: ProjectState | null, options: PushCommandOptions): HostResolution {
+  const host = options.host ?? process.env['ENCLAVE_HOST'] ?? state?.host ?? ''
+  if (host === '') {
+    const text = 'no host: pass --host or set ENCLAVE_HOST'
+    reportError(options.isJson, 'NO_HOST', text, text)
+    return { failureExitCode: 2 }
+  }
+
+  try {
+    const canonicalHost = normaliseHost(host, options.isInsecureAllowed ?? false)
+    return { canonicalHost, failureExitCode: null }
+  } catch (error) {
+    const text = error instanceof InvalidHostError ? error.message : 'invalid host'
+    reportError(options.isJson, 'INVALID_HOST', text, text)
+    return { failureExitCode: 2 }
+  }
 }
 
 function reportDryRun(options: PushCommandOptions): number {
@@ -122,19 +160,17 @@ function reportPushed(options: PushCommandOptions, result: PushResult): void {
 
 export async function runPush(options: PushCommandOptions): Promise<number> {
   const state = readState(options.directory)
-  const host = options.host ?? process.env['ENCLAVE_HOST'] ?? state?.host ?? ''
-  if (host === '') {
-    const text = 'no host: pass --host or set ENCLAVE_HOST'
-    reportError(options.isJson, 'NO_HOST', text, text)
-    return 2
-  }
 
-  const refusal = refuseExistingState(state, host, options)
+  const hostResolution = resolveHost(state, options)
+  if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
+  const { canonicalHost } = hostResolution
+
+  const refusal = refuseExistingState(state, canonicalHost, options)
   if (refusal !== null) return refusal
 
-  const token = tokenFor(host)
+  const token = tokenFor(canonicalHost)
   if (token === null) {
-    const text = `run: enclave login --host ${host}`
+    const text = `run: enclave login --host ${canonicalHost}`
     reportError(options.isJson, 'NOT_AUTHENTICATED', text, text)
     return 1
   }
@@ -145,10 +181,11 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   try {
     result = await push({
       directory: options.directory,
-      host,
+      host: canonicalHost,
       token,
       title: options.title ?? basename(resolve(options.directory)),
       visibility: options.visibility ?? 'private',
+      isInsecureAllowed: options.isInsecureAllowed ?? false,
     })
   } catch (error) {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
@@ -157,7 +194,11 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 1
   }
 
-  writeState(options.directory, { host, artifactId: result.artifactId, lastPushedVersionNo: 1 })
+  writeState(options.directory, {
+    host: canonicalHost,
+    artifactId: result.artifactId,
+    lastPushedVersionNo: 1,
+  })
 
   if (options.isJson) {
     process.stdout.write(`${JSON.stringify(result)}\n`)

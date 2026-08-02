@@ -141,13 +141,13 @@ describe('push', () => {
     expect(requestOf(0).url.startsWith('https://enclave.example.com')).toBe(true)
   })
 
-  it('throws INSECURE_HOST when the host carries a scheme', async () => {
+  it('accepts a host that already carries a scheme', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
 
-    const error = await rejectionOf(optionsFor({ host: 'https://enclave.example.com' }))
+    await push(optionsFor({ host: 'https://enclave.example.com' }))
 
-    expect(error.code).toBe('INSECURE_HOST')
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(requestOf(0).url).toBe('https://enclave.example.com/api/v1/artifacts')
   })
 
   it('throws NOTHING_TO_UPLOAD for an empty directory', async () => {
