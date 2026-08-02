@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    // The sources import each other with explicit `.ts` specifiers, which the root config needs
+    // for Node's type stripping. This rewrites them to `.js` on the way out so the emitted tree
+    // resolves at runtime.
+    "rewriteRelativeImportExtensions": true,
+    // Repo root, because push-core reaches into src/lib/bundle/rules.ts — the bundle rules are
+    // defined once and the server owns them. That is why the tarball carries one file from src/.
+    "rootDir": ".",
+    "outDir": "./packages/cli/dist",
+    "incremental": false,
+    "plugins": []
+  },
+  "include": ["packages/*/src/**/*.ts", "src/lib/bundle/rules.ts"]
+}

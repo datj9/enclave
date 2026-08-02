@@ -32,3 +32,7 @@ dist/
 # os / editor
 .DS_Store
 *.log
+
+# CLI build output and packed tarballs
+packages/*/dist/
+packages/*/*.tgz
