@@ -28,6 +28,9 @@ export default async function DashboardPage() {
           <a className="button-secondary" href="/trash">
             Trash
           </a>
+          <a className="button-secondary" href="/settings/keys">
+            Settings
+          </a>
           {sessionUser.role === 'admin' && (
             <a className="button-secondary" href="/admin/users">
               Admin

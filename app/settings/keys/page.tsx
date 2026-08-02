@@ -19,39 +19,30 @@ export default async function ProviderKeyPage() {
   const usage = await readQuotaUsage(sessionUser.id, storedKey !== null)
 
   return (
-    <div className={styles.shell}>
-      <header className={styles.bar}>
-        <p className={styles.wordmark}>enclave</p>
-        <a className="button-secondary" href="/dashboard">
-          Back to artifacts
-        </a>
-      </header>
+    <>
+      <h1 className={styles.heading}>Provider key</h1>
+      <p className={styles.caption}>
+        Bring your own model key and generations run on your account, with a higher daily limit. The
+        key is encrypted before it is stored and is never shown again — only its last four
+        characters.
+      </p>
 
-      <main className={styles.main}>
-        <h1 className={styles.heading}>Provider key</h1>
-        <p className={styles.caption}>
-          Bring your own model key and generations run on your account, with a higher daily limit.
-          The key is encrypted before it is stored and is never shown again — only its last four
-          characters.
+      <section className={styles.usage} aria-label="Current usage">
+        <p className={styles.usageRow}>
+          <span>Today</span>
+          <span className={styles.usageValue}>
+            {usage.dailyCount} / {usage.dailyLimit} generations
+          </span>
         </p>
+        <p className={styles.usageRow}>
+          <span>This hour</span>
+          <span className={styles.usageValue}>
+            {usage.hourlyCount} / {usage.hourlyLimit} generations
+          </span>
+        </p>
+      </section>
 
-        <section className={styles.usage} aria-label="Current usage">
-          <p className={styles.usageRow}>
-            <span>Today</span>
-            <span className={styles.usageValue}>
-              {usage.dailyCount} / {usage.dailyLimit} generations
-            </span>
-          </p>
-          <p className={styles.usageRow}>
-            <span>This hour</span>
-            <span className={styles.usageValue}>
-              {usage.hourlyCount} / {usage.hourlyLimit} generations
-            </span>
-          </p>
-        </section>
-
-        <KeyManager initialKey={storedKey} />
-      </main>
-    </div>
+      <KeyManager initialKey={storedKey} />
+    </>
   )
 }

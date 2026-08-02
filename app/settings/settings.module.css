@@ -1,0 +1,58 @@
+/*
+ * The section nav is navigation chrome, present on every settings screen. `docs/motion.md`
+ * frequency rule puts it in "remove or drastically reduce": the current-page marker and the hover
+ * colour change instantly, with no transition.
+ */
+
+.shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.nav {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.navLink {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  text-decoration: none;
+  padding-bottom: var(--space-3xs);
+  border-bottom: 2px solid transparent;
+}
+
+.navLink:hover {
+  color: var(--color-ink);
+}
+
+.navLink[aria-current='page'] {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent);
+}
+
+.main {
+  padding: var(--space-2xl) var(--space-md);
+  max-width: 65ch;
+  margin-inline: auto;
+  width: 100%;
+}
