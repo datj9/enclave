@@ -1,0 +1,35 @@
+{
+  "name": "@datj9/enclave",
+  "version": "0.1.0",
+  "description": "Publish and manage artifacts on a self-hosted enclave instance",
+  "keywords": [
+    "enclave",
+    "artifacts",
+    "cli",
+    "self-hosted",
+    "static-hosting"
+  ],
+  "homepage": "https://github.com/datj9/enclave#readme",
+  "bugs": "https://github.com/datj9/enclave/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/datj9/enclave.git",
+    "directory": "packages/cli"
+  },
+  "license": "Apache-2.0",
+  "author": "datj9",
+  "type": "module",
+  "bin": {
+    "enclave": "./dist/packages/cli/src/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

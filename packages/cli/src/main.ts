@@ -71,10 +71,18 @@ type CommandHandler = (
 
 class UsageError extends Error {}
 
+/**
+ * `--help` is the answer to a question, so it goes to stdout. A usage error is a diagnostic and
+ * goes wholly to stderr — printing the banner on stdout would break `enclave … --json | jq` the
+ * same way a stray error line does.
+ */
 function usage(message?: string): number {
-  if (message !== undefined) process.stderr.write(`${message}\n\n`)
-  process.stdout.write(USAGE)
-  return message === undefined ? EXIT_OK : EXIT_USAGE
+  if (message === undefined) {
+    process.stdout.write(USAGE)
+    return EXIT_OK
+  }
+  process.stderr.write(`${message}\n\n${USAGE}`)
+  return EXIT_USAGE
 }
 
 /** `push` is the exception: it recovers a host from .enclave.json, so it resolves its own. */
