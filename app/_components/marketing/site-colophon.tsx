@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { REPOSITORY_URL } from './repository'
 import styles from './site-colophon.module.css'
 
 interface Fact {
@@ -32,6 +33,11 @@ export function SiteColophon() {
           <li>
             <a className={styles.link} href="#self-host">
               Run it yourself
+            </a>
+          </li>
+          <li>
+            <a className={styles.link} href={REPOSITORY_URL}>
+              Source code
             </a>
           </li>
         </ul>

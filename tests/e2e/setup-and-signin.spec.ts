@@ -149,6 +149,31 @@ test.describe('first run: setup then sign in', () => {
     expect(sessionCookie?.domain).toBe('localhost')
   })
 
+  test('settings is reachable from the dashboard and its sections link to each other', async ({
+    page,
+  }) => {
+    await page.goto('/signin')
+    await submitCredentials(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    await expect(page).toHaveURL(/\/dashboard$/)
+
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page).toHaveURL(/\/settings\/keys$/)
+    await expect(page.getByRole('heading', { name: 'Provider key' })).toBeVisible()
+
+    const sections = page.getByRole('navigation', { name: 'Settings sections' })
+    await expect(sections.getByRole('link', { name: 'Provider key' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+
+    await sections.getByRole('link', { name: 'API tokens' }).click()
+    await expect(page).toHaveURL(/\/settings\/tokens$/)
+    await expect(page.getByRole('heading', { name: 'API tokens' })).toBeVisible()
+
+    await page.getByRole('link', { name: 'Back to artifacts' }).click()
+    await expect(page).toHaveURL(/\/dashboard$/)
+  })
+
   test('a bad form sign-in returns to the form with a generic message', async ({ page }) => {
     await page.goto('/signin')
     await submitCredentials(page, ADMIN_EMAIL, 'wrong-horse-battery')

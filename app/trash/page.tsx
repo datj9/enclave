@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 
 import { env } from '@/env'
+import { MAX_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { listTrashedArtifacts } from '@/lib/artifacts/trash'
 import { getSessionUser } from '@/lib/auth/session'
 import { TrashList } from './trash-list'
@@ -20,7 +21,12 @@ export default async function TrashPage() {
   const sessionUser = await getSessionUser()
   if (sessionUser === null) redirect('/signin')
 
-  const items = await listTrashedArtifacts(sessionUser.id)
+  // Paging UI is a later slice; the page takes the largest single page the API allows so the
+  // list still shows everything a realistic trash holds, without the old unbounded query.
+  const { items } = await listTrashedArtifacts(sessionUser.id, {
+    limit: MAX_LIST_LIMIT,
+    cursor: undefined,
+  })
 
   return (
     <div className={styles.shell}>

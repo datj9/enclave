@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { REPOSITORY_URL } from '../../app/_components/marketing/repository'
 
 /** design.md § Marketing page structure — the four stages, in order. */
 const STAGE_HEADINGS = [
@@ -61,6 +62,18 @@ test.describe('marketing landing page', () => {
     expect(commands).toContain('docker compose up')
     // Postgres is published on 5434 (docker-compose.yml), so the page must not promise 5432.
     await expect(page.locator('#self-host')).toContainText('5434')
+  })
+
+  // Text links in the header and colophon, never `.button-primary` — the page still ships one CTA.
+  test('reaches the source repository from the chrome and the clone command', async ({ page }) => {
+    await page.goto('/')
+
+    const sourceLinks = page.getByRole('link', { name: 'Source code' })
+
+    await expect(sourceLinks).toHaveCount(2)
+    await expect(sourceLinks.first()).toHaveAttribute('href', REPOSITORY_URL)
+    await expect(sourceLinks.last()).toHaveAttribute('href', REPOSITORY_URL)
+    await expect(page.locator('#self-host pre code')).toContainText(`git clone ${REPOSITORY_URL}`)
   })
 
   test('does not scroll horizontally at 320 px', async ({ page }) => {

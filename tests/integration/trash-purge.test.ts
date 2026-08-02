@@ -385,7 +385,11 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       const created = await createOwnedArtifact('Fresh in the trash')
       await softDeleteArtifact({ artifactId: created.id, viewerRef: userViewerRef(aliceId) })
 
-      const listed = await listTrashedArtifacts(aliceId, RETENTION_DAYS)
+      const { items: listed } = await listTrashedArtifacts(
+        aliceId,
+        { limit: DEFAULT_LIST_LIMIT, cursor: undefined },
+        RETENTION_DAYS,
+      )
       const row = listed.find((item) => item.id === created.id)
 
       expect(row?.title).toBe('Fresh in the trash')
@@ -400,7 +404,11 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       await ageDeletion(nearlyGone.id, WITHIN_WINDOW_DAYS)
       await ageDeletion(overdue.id, PAST_WINDOW_DAYS)
 
-      const listed = await listTrashedArtifacts(aliceId, RETENTION_DAYS)
+      const { items: listed } = await listTrashedArtifacts(
+        aliceId,
+        { limit: DEFAULT_LIST_LIMIT, cursor: undefined },
+        RETENTION_DAYS,
+      )
 
       expect(listed.find((item) => item.id === nearlyGone.id)?.daysRemaining).toBe(
         RETENTION_DAYS - WITHIN_WINDOW_DAYS,
@@ -413,8 +421,16 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       const deleted = await createOwnedArtifact('In the trash')
       await softDeleteArtifact({ artifactId: deleted.id, viewerRef: userViewerRef(aliceId) })
 
-      const mine = await listTrashedArtifacts(aliceId, RETENTION_DAYS)
-      const bobs = await listTrashedArtifacts(bobId, RETENTION_DAYS)
+      const { items: mine } = await listTrashedArtifacts(
+        aliceId,
+        { limit: DEFAULT_LIST_LIMIT, cursor: undefined },
+        RETENTION_DAYS,
+      )
+      const { items: bobs } = await listTrashedArtifacts(
+        bobId,
+        { limit: DEFAULT_LIST_LIMIT, cursor: undefined },
+        RETENTION_DAYS,
+      )
 
       expect(mine.map((item) => item.id)).toContain(deleted.id)
       expect(mine.map((item) => item.id)).not.toContain(live.id)
