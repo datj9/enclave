@@ -11,7 +11,15 @@ import { saveToken } from '../credentials.ts'
  */
 const REQUIRED_SCOPES = ['artifacts:read', 'artifacts:write', 'shares:write'] as const
 
-/** readline echoes what it reads; sending that echo nowhere is what keeps the token off screen. */
+const ESCAPE = '\x1b'
+
+/**
+ * `terminal: true` puts stdin in raw mode, which disables the terminal's own echo — drawing
+ * nothing back reads as a hung CLI, so this redraws a `*` mask on every keypress instead. The mask
+ * width is read from readline's own `.line`, which is already updated by the time `keypress`
+ * fires (verified against Node's readline implementation) — tracking keystrokes independently
+ * drifts from the buffer on Ctrl-U, arrow keys, Home/End and Del.
+ */
 function readSecret(promptText: string): Promise<string> {
   const discardEcho = new Writable({
     write(_chunk: unknown, _encoding: BufferEncoding, done: (error?: Error | null) => void): void {
@@ -20,28 +28,46 @@ function readSecret(promptText: string): Promise<string> {
   })
 
   process.stdout.write(promptText)
-  const reader = createInterface({
-    input: process.stdin,
-    output: discardEcho,
-    terminal: true,
-  })
+  const reader = createInterface({ input: process.stdin, output: discardEcho, terminal: true })
+
+  const redrawMask = (_character: string, key: { name?: string } | undefined): void => {
+    if (key?.name === 'return' || key?.name === 'enter') return
+    if (process.stdout.isTTY !== true) return
+    const width = (reader as unknown as { line: string }).line.length
+    process.stdout.write(`\r${promptText}${'*'.repeat(width)}${ESCAPE}[K`)
+  }
+  process.stdin.on('keypress', redrawMask)
 
   return new Promise<string>((resolve) => {
-    reader.question('', (answer) => {
+    let isSettled = false
+    const finish = (answer: string): void => {
+      if (isSettled) return
+      isSettled = true
+      process.stdin.off('keypress', redrawMask)
       reader.close()
       process.stdout.write('\n')
       resolve(answer.trim())
+    }
+    // Ctrl-D (stdin closed with no input) never fires `question`'s callback, so without this the
+    // promise never settles and the CLI exits 0 having logged nobody in.
+    reader.once('close', () => {
+      finish('')
     })
+    reader.question('', finish)
   })
 }
 
-export async function runLogin(host: string): Promise<number> {
-  const baseUrl = baseUrlFor(host)
+export async function runLogin(
+  host: string,
+  token?: string,
+  isInsecureAllowed = false,
+): Promise<number> {
+  const baseUrl = baseUrlFor(host, isInsecureAllowed)
   process.stdout.write(`Create a token at ${baseUrl}/settings/tokens\n`)
   process.stdout.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
 
-  const token = await readSecret('Token: ')
-  if (token === '') {
+  const resolvedToken = token ?? (await readSecret('Token: '))
+  if (resolvedToken === '') {
     process.stdout.write('no token was entered\n')
     return 1
   }
@@ -49,7 +75,7 @@ export async function runLogin(host: string): Promise<number> {
   let response: Response
   try {
     response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${resolvedToken}` },
     })
   } catch {
     process.stdout.write(`could not reach ${host}\n`)
@@ -71,7 +97,7 @@ export async function runLogin(host: string): Promise<number> {
     return 1
   }
 
-  saveToken(host, token)
+  saveToken(host, resolvedToken)
   process.stdout.write(`✓ logged in to ${host}\n`)
   return 0
 }

@@ -30,19 +30,31 @@ enclave login --host enclave.example.com
 enclave push ./dist --title "Kanban board"
 ```
 
-`login` prints where to mint a token and reads it without echoing. The token needs three scopes —
-`artifacts:read`, `artifacts:write` and `shares:write` — and is stored per host in
+`login` prints where to mint a token and reads it with the input masked (`*` per character,
+nothing echoed to the terminal). The token needs three scopes — `artifacts:read`,
+`artifacts:write` and `shares:write` — and is stored per host in
 `~/.config/enclave/credentials.json` with mode `0600`. `ENCLAVE_TOKEN` overrides the file, which is
-what you want in CI.
+what you want in CI. `--token <token>` skips the interactive prompt entirely — the other option
+for CI, or for a terminal that cannot mask input correctly.
 
 `push` writes `.enclave.json` next to the directory it published, recording which artifact the
 directory maps to. **Commit that file** — it holds no secret, and committing it is what lets a
 second machine or a CI job target the same artifact.
 
+`--host` accepts a bare authority (`enclave.example.com`, `127.0.0.1:3000`, `[::1]:3000`) or a
+full `http`/`https` origin, with or without a trailing slash. Only `scheme://host[:port]` is
+accepted — a path suffix (e.g. `enclave.example.com/settings/tokens`) is rejected rather than
+silently truncated, since that can retarget every authenticated request to the wrong origin. An
+explicit scheme is always honoured; otherwise `enclave` uses `http` for `localhost`, `127.0.0.1`
+and `[::1]`, and `https` everywhere else.
+
+An explicit `http://` origin that isn't loopback is refused, since it would send the bearer token
+in cleartext. Pass `--insecure` to opt in anyway.
+
 ## Commands
 
 ```
-enclave login    [--host <host>]
+enclave login    [--host <host>] [--token <token>]
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org]
@@ -94,11 +106,11 @@ file was never going to be accepted. **The server is authoritative** and enforce
 Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
 errors and diagnostics always go to stderr, so `| jq` is safe on every path.
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Success |
-| `1` | Ran, and the answer was no — not found, refused, unreachable, token rejected |
-| `2` | Malformed invocation; the command never ran |
+| Exit code | Meaning                                                                      |
+| --------- | ---------------------------------------------------------------------------- |
+| `0`       | Success                                                                      |
+| `1`       | Ran, and the answer was no — not found, refused, unreachable, token rejected |
+| `2`       | Malformed invocation; the command never ran                                  |
 
 ## Not included
 
