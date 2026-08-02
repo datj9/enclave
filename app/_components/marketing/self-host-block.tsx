@@ -1,3 +1,4 @@
+import { REPOSITORY_URL } from './repository'
 import styles from './self-host-block.module.css'
 
 /**
@@ -7,9 +8,10 @@ import styles from './self-host-block.module.css'
  *
  * No copy button: `proxy.ts` nonces its CSP per request, so a statically prerendered route gets
  * no nonce and its hydration scripts are refused. Keeping this page static is worth more than the
- * button — the block is five selectable lines.
+ * button — the block is six selectable lines.
  */
-const COMMANDS = `cp .env.example .env
+const COMMANDS = `git clone ${REPOSITORY_URL}.git && cd enclave
+cp .env.example .env
 openssl rand -base64 48          # paste into SESSION_SECRET
 openssl rand -base64 48          # paste into ENCRYPTION_KEY
 docker compose run --rm app pnpm db:migrate
