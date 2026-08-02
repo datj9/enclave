@@ -1,8 +1,9 @@
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, lt, or, sql, type SQL } from 'drizzle-orm'
 
 import { db } from '@/db'
 import { artifacts, type Visibility } from '@/db/schema/artifacts'
 import { env } from '@/env'
+import { encodeListCursor, type ListCursor, type ListQuery } from './list-query'
 
 /**
  * The owner's trash (US-10). `canRead` branch 1 hides a deleted artifact from every read path, so
@@ -17,6 +18,11 @@ export interface TrashedArtifact {
   readonly deletedAt: string
   /** Whole days until the purge job may take it. Floors at 0 for a row already past the window. */
   readonly daysRemaining: number
+}
+
+export interface TrashPage {
+  readonly items: readonly TrashedArtifact[]
+  readonly nextCursor: string | null
 }
 
 /**
@@ -36,10 +42,24 @@ function daysRemainingExpression(retentionDays: number) {
   )::int`
 }
 
+/**
+ * Keyset predicate matching the `(deleted_at desc, id desc)` order exactly. The shared cursor
+ * codec's timestamp slot carries `deleted_at` here — the cursor is opaque to callers and its
+ * shape is identical to the one `listOwnedArtifacts` issues.
+ */
+function afterCursor(cursor: ListCursor): SQL | undefined {
+  const deletedAt = new Date(cursor.createdAt)
+  return or(
+    lt(artifacts.deletedAt, deletedAt),
+    and(eq(artifacts.deletedAt, deletedAt), lt(artifacts.id, cursor.id)),
+  )
+}
+
 export async function listTrashedArtifacts(
   ownerId: string,
+  query: ListQuery,
   retentionDays: number = env.TRASH_RETENTION_DAYS,
-): Promise<readonly TrashedArtifact[]> {
+): Promise<TrashPage> {
   const rows = await db
     .select({
       id: artifacts.id,
@@ -49,16 +69,34 @@ export async function listTrashedArtifacts(
       daysRemaining: daysRemainingExpression(retentionDays),
     })
     .from(artifacts)
-    .where(and(eq(artifacts.ownerId, ownerId), isNotNull(artifacts.deletedAt)))
-    .orderBy(desc(artifacts.deletedAt))
+    .where(
+      and(
+        eq(artifacts.ownerId, ownerId),
+        isNotNull(artifacts.deletedAt),
+        query.cursor === undefined ? undefined : afterCursor(query.cursor),
+      ),
+    )
+    .orderBy(desc(artifacts.deletedAt), desc(artifacts.id))
+    // One extra row answers "is there a next page" without a second count query.
+    .limit(query.limit + 1)
 
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    visibility: row.visibility,
-    // `isNotNull` above already guarantees this; the fallback exists because the column's type
-    // stays nullable and the alternative would be a non-null assertion.
-    deletedAt: row.deletedAt?.toISOString() ?? '',
-    daysRemaining: row.daysRemaining,
-  }))
+  const page = rows.slice(0, query.limit)
+  const last = page.at(-1)
+  const hasMore = rows.length > query.limit
+
+  return {
+    items: page.map((row) => ({
+      id: row.id,
+      title: row.title,
+      visibility: row.visibility,
+      // `isNotNull` above already guarantees this; the fallback exists because the column's type
+      // stays nullable and the alternative would be a non-null assertion.
+      deletedAt: row.deletedAt?.toISOString() ?? '',
+      daysRemaining: row.daysRemaining,
+    })),
+    nextCursor:
+      hasMore && last !== undefined && last.deletedAt !== null
+        ? encodeListCursor({ createdAt: last.deletedAt.toISOString(), id: last.id })
+        : null,
+  }
 }
