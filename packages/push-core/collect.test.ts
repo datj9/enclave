@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { CONTENT_TYPE_BY_EXTENSION, ENTRY_PATH } from '../../src/lib/bundle/rules.ts'
 import { collectBundle } from './src/collect.ts'
 
 describe('collectBundle', () => {
@@ -47,7 +48,10 @@ describe('collectBundle', () => {
     directory = mkdtempSync(join(tmpdir(), 'collect-'))
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
     mkdirSync(join(directory, 'node_modules', 'left-pad'), { recursive: true })
-    writeFileSync(join(directory, 'node_modules', 'left-pad', 'index.js'), 'module.exports = () => {}')
+    writeFileSync(
+      join(directory, 'node_modules', 'left-pad', 'index.js'),
+      'module.exports = () => {}',
+    )
 
     const { files, skipped } = collectBundle(directory)
     expect(files.map((file) => file.path)).toEqual(['index.html'])
@@ -134,5 +138,47 @@ describe('collectBundle', () => {
     const logo = files.find((file) => file.path === 'logo.png')
     expect(logo?.content).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
     expect(skipped).toEqual([])
+  })
+})
+
+/**
+ * The CLI classifies files so a push does not waste an upload, but the server is authoritative.
+ * A client that accepted MORE than the server is the failure that matters, so these assert the
+ * two agree by construction — both now read `src/lib/bundle/rules.ts`. If someone reintroduces a
+ * local allowlist in collect.ts, the first test here fails.
+ */
+describe('the client allowlist is the server allowlist', () => {
+  it('accepts every extension the server has a content type for', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'enclave-parity-'))
+    try {
+      writeFileSync(join(directory, ENTRY_PATH), '<!doctype html>')
+      const extensions = Object.keys(CONTENT_TYPE_BY_EXTENSION)
+      for (const extension of extensions) writeFileSync(join(directory, `asset.${extension}`), 'x')
+
+      const { files, skipped } = collectBundle(directory)
+
+      expect(skipped).toEqual([])
+      expect(files).toHaveLength(extensions.length + 1)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an extension the server has no content type for', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'enclave-parity-'))
+    try {
+      writeFileSync(join(directory, ENTRY_PATH), '<!doctype html>')
+      for (const name of ['app.js.map', 'icon.ico', 'font.ttf', 'archive.zip']) {
+        writeFileSync(join(directory, name), 'x')
+      }
+
+      const { skipped } = collectBundle(directory)
+
+      expect(skipped.map((file) => file.reason)).toEqual(
+        Array.from({ length: 4 }, () => 'unsupported_extension'),
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

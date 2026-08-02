@@ -1,7 +1,16 @@
 import { createHash } from 'node:crypto'
 
 import { env } from '@/env'
+import {
+  CONTENT_TYPE_BY_EXTENSION,
+  ENTRY_PATH,
+  extensionOf,
+  isPathAllowed,
+} from '@/lib/bundle/rules'
 import type { ErrorCode } from '@/lib/http'
+
+// Re-exported so existing importers keep their current specifier; `rules.ts` is the definition.
+export { CONTENT_TYPE_BY_EXTENSION, ENTRY_PATH }
 
 /**
  * The bundle gate, per grill-result §5.5. Pure: no storage, no database, no environment unless
@@ -25,27 +34,6 @@ export type BundleValidation =
   | { readonly ok: true; readonly manifest: readonly ManifestEntry[] }
   | { readonly ok: false; readonly code: ErrorCode; readonly details: Record<string, unknown> }
 
-export const ENTRY_PATH = 'index.html'
-
-/** §4.4: the object's `Content-Type` comes from this map, never from sniffing the bytes. */
-export const CONTENT_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  html: 'text/html',
-  css: 'text/css',
-  js: 'text/javascript',
-  mjs: 'text/javascript',
-  json: 'application/json',
-  svg: 'image/svg+xml',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  woff2: 'font/woff2',
-  txt: 'text/plain',
-  md: 'text/markdown',
-}
-
-const PATH_PATTERN = /^[a-zA-Z0-9._\-/]{1,200}$/
-
 export interface BundleLimits {
   readonly maxFiles: number
   readonly maxFileBytes: number
@@ -58,25 +46,6 @@ export function bundleLimitsFromEnv(): BundleLimits {
     maxFileBytes: env.BUNDLE_MAX_FILE_BYTES,
     maxTotalBytes: env.BUNDLE_MAX_TOTAL_BYTES,
   }
-}
-
-/**
- * The character class already rejects `\` and null bytes. A leading `/`, `..` and `//` need
- * their own checks because each of those characters is legal on its own.
- */
-function isPathAllowed(path: string): boolean {
-  if (!PATH_PATTERN.test(path)) return false
-  if (path.startsWith('/')) return false
-  if (path.includes('..')) return false
-  return !path.includes('//')
-}
-
-function extensionOf(path: string): string | undefined {
-  const fileName = path.slice(path.lastIndexOf('/') + 1)
-  const dotIndex = fileName.lastIndexOf('.')
-  // -1 is "no extension"; 0 is a dotfile, which has no extension either.
-  if (dotIndex <= 0) return undefined
-  return fileName.slice(dotIndex + 1).toLowerCase()
 }
 
 type FileOutcome =
@@ -96,7 +65,11 @@ function validateFile(file: BundleFile, maxFileBytes: number): FileOutcome {
 
   const bytes = file.content.byteLength
   if (bytes > maxFileBytes) {
-    return { ok: false, code: 'BUNDLE_TOO_LARGE', details: { path: file.path, bytes, maxFileBytes } }
+    return {
+      ok: false,
+      code: 'BUNDLE_TOO_LARGE',
+      details: { path: file.path, bytes, maxFileBytes },
+    }
   }
 
   const sha256 = createHash('sha256').update(file.content).digest('hex')
