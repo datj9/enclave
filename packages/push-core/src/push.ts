@@ -86,6 +86,7 @@ export async function push(options: PushOptions): Promise<PushResult> {
       headers: {
         authorization: `Bearer ${options.token}`,
         'content-type': 'application/json',
+        ...(options.userAgent === undefined ? {} : { 'user-agent': options.userAgent }),
       },
       body,
     })

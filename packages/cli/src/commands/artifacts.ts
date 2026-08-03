@@ -113,6 +113,12 @@ function reportFailure(error: unknown, given?: string): number {
     error instanceof CliError
   ) {
     fail(`✗ ${error.message}`)
+    if (error instanceof ApiError && Object.keys(error.details).length > 0) {
+      const rendered = Object.entries(error.details)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(' ')
+      fail(`  ${rendered}`)
+    }
     return EXIT_FAILED
   }
   fail(`✗ ${error instanceof Error ? error.message : String(error)}`)

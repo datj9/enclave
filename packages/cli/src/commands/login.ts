@@ -3,6 +3,7 @@ import { Writable } from 'node:stream'
 
 import { baseUrlFor } from '../../../push-core/src/index.ts'
 import { saveToken } from '../credentials.ts'
+import { USER_AGENT } from '../version.ts'
 
 /**
  * Every scope the CLI needs across all its commands. `login` probes a read endpoint to validate
@@ -75,7 +76,7 @@ export async function runLogin(
   let response: Response
   try {
     response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
-      headers: { authorization: `Bearer ${resolvedToken}` },
+      headers: { authorization: `Bearer ${resolvedToken}`, 'user-agent': USER_AGENT },
     })
   } catch {
     process.stderr.write(`could not reach ${host}\n`)

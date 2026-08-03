@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { saveToken } from './src/credentials.ts'
+import { credentialsPath, saveToken } from './src/credentials.ts'
 import { runLogout } from './src/commands/logout.ts'
 
 const HOST = 'enclave.example.com'
@@ -58,6 +58,15 @@ describe('runLogout', () => {
   it('reports a missing credential on stderr, not stdout', () => {
     expect(runLogout(HOST)).toBe(0)
     expect(stderrOutput()).toContain(`no credential for ${HOST}`)
+    expect(stdout()).toBe('')
+  })
+
+  it('reports a corrupt credentials file on stderr instead of throwing a stack trace', () => {
+    saveToken(HOST, 'enc_a_valid_looking_token')
+    writeFileSync(credentialsPath(), '{ not json', { mode: 0o600 })
+
+    expect(runLogout(HOST)).toBe(1)
+    expect(stderrOutput()).toContain('remove it and log in again')
     expect(stdout()).toBe('')
   })
 })
