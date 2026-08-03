@@ -15,6 +15,22 @@ interface CreateArtifactResponse {
   readonly viewUrl: string
 }
 
+/** The server's envelope is `{data:…}` on success; anything else is a transport fault. */
+function unwrapCreateResponse(body: unknown): CreateArtifactResponse {
+  if (typeof body !== 'object' || body === null || !('data' in body)) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response is missing a data envelope', {})
+  }
+  const data = (body as { data: unknown }).data
+  if (typeof data !== 'object' || data === null) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response data is not an object', {})
+  }
+  const { id, versionId, viewUrl } = data as Record<string, unknown>
+  if (typeof id !== 'string' || typeof versionId !== 'string' || typeof viewUrl !== 'string') {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response is missing id, versionId or viewUrl', {})
+  }
+  return { id, versionId, viewUrl }
+}
+
 /** Send utf-8 when the bytes round-trip losslessly; the server rejects both fields at once. */
 function toWireFile(file: BundleFile): WireFile {
   const text = file.content.toString('utf8')
@@ -87,7 +103,7 @@ export async function push(options: PushOptions): Promise<PushResult> {
 
   if (!response.ok) throw await errorFrom(response)
 
-  const created = (await response.json()) as CreateArtifactResponse
+  const created = unwrapCreateResponse(await response.json())
   return {
     artifactId: created.id,
     versionId: created.versionId,

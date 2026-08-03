@@ -26,6 +26,16 @@ export interface ApiClient {
   remove(path: string): Promise<void>
 }
 
+/** The server's envelope is `{data:…}` on success; anything else is a transport fault. */
+function unwrapData<T>(body: unknown, path: string, status: number): T {
+  if (typeof body !== 'object' || body === null || !('data' in body)) {
+    throw new ApiError(status, 'UNEXPECTED_RESPONSE', `Response from ${path} is missing a data envelope`, {
+      path,
+    })
+  }
+  return (body as { data: T }).data
+}
+
 /** The server's envelope is `{error:{code,message,details}}`; anything else is a transport fault. */
 async function errorFrom(response: Response): Promise<ApiError> {
   let code = 'UNEXPECTED_RESPONSE'
@@ -78,13 +88,16 @@ export function apiClient(host: string, token: string): ApiClient {
 
   return {
     async get<T>(path: string): Promise<T> {
-      return (await (await send('GET', path)).json()) as T
+      const response = await send('GET', path)
+      return unwrapData<T>(await response.json(), path, response.status)
     },
     async post<T>(path: string, body: unknown): Promise<T> {
-      return (await (await send('POST', path, body)).json()) as T
+      const response = await send('POST', path, body)
+      return unwrapData<T>(await response.json(), path, response.status)
     },
     async patch<T>(path: string, body: unknown): Promise<T> {
-      return (await (await send('PATCH', path, body)).json()) as T
+      const response = await send('PATCH', path, body)
+      return unwrapData<T>(await response.json(), path, response.status)
     },
     async remove(path: string): Promise<void> {
       await send('DELETE', path)

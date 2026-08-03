@@ -85,10 +85,8 @@ describe('share commands', () => {
       patch: mocks.patch,
       remove: mocks.remove,
     })
-    mocks.post.mockResolvedValue({
-      data: { shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL },
-    })
-    mocks.get.mockResolvedValue({ data: { items: [] } })
+    mocks.post.mockResolvedValue({ shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL })
+    mocks.get.mockResolvedValue({ items: [] })
     mocks.remove.mockResolvedValue(undefined)
   })
 
@@ -277,7 +275,7 @@ describe('share commands', () => {
     })
 
     it('shows id, pinned version, expiry and state', async () => {
-      mocks.get.mockResolvedValue({ data: { items } })
+      mocks.get.mockResolvedValue({ items })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
 
@@ -290,7 +288,7 @@ describe('share commands', () => {
     })
 
     it('never prints a token, in either format', async () => {
-      mocks.get.mockResolvedValue({ data: { items } })
+      mocks.get.mockResolvedValue({ items })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
@@ -301,16 +299,14 @@ describe('share commands', () => {
 
     it('marks a lapsed expiry as expired', async () => {
       mocks.get.mockResolvedValue({
-        data: {
-          items: [
-            {
-              shareId: SHARE_ID,
-              versionId: VERSION_ID,
-              expiresAt: '2026-07-01T00:00:00.000Z',
-              revokedAt: null,
-            },
-          ],
-        },
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: '2026-07-01T00:00:00.000Z',
+            revokedAt: null,
+          },
+        ],
       })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })

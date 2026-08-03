@@ -36,6 +36,10 @@ function jsonResponse(status: number, payload: unknown): Response {
   } as unknown as Response
 }
 
+function envelope(data: unknown): unknown {
+  return { data }
+}
+
 describe('push', () => {
   const originalFetch = globalThis.fetch
   const fetchMock = vi.fn<(input: string, init: RequestInit) => Promise<Response>>()
@@ -83,7 +87,7 @@ describe('push', () => {
 
   it('posts title visibility and files to the create endpoint', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor({ host: 'h', title: 'My page', visibility: 'org' }))
 
@@ -102,7 +106,7 @@ describe('push', () => {
 
   it('sends utf8 content for a text file', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor())
 
@@ -114,7 +118,7 @@ describe('push', () => {
   it('sends base64 for a binary file', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
     writeFileSync(join(directory, 'logo.png'), PNG_BYTES)
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor())
 
@@ -125,7 +129,7 @@ describe('push', () => {
 
   it('uses http for localhost', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor({ host: 'localhost:3000' }))
 
@@ -134,7 +138,7 @@ describe('push', () => {
 
   it('uses https for a real host', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor())
 
@@ -143,7 +147,7 @@ describe('push', () => {
 
   it('accepts a host that already carries a scheme', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     await push(optionsFor({ host: 'https://enclave.example.com' }))
 
@@ -210,7 +214,7 @@ describe('push', () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
     writeFileSync(join(directory, 'app.js'), 'console.log(1)')
     writeFileSync(join(directory, 'app.js.map'), '{}')
-    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+    fetchMock.mockResolvedValue(jsonResponse(201, envelope(CREATED_ARTIFACT)))
 
     const result = await push(optionsFor())
 
@@ -218,5 +222,25 @@ describe('push', () => {
     expect(result.skipped).toEqual([{ path: 'app.js.map', reason: 'unsupported_extension' }])
     expect(result.versionNo).toBe(1)
     expect(result.artifactId).toBe(CREATED_ARTIFACT.id)
+  })
+
+  it('throws UNEXPECTED_RESPONSE when the response has no data envelope', async () => {
+    writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    fetchMock.mockResolvedValue(jsonResponse(201, CREATED_ARTIFACT))
+
+    const error = await rejectionOf(optionsFor())
+
+    expect(error.code).toBe('UNEXPECTED_RESPONSE')
+  })
+
+  it('throws UNEXPECTED_RESPONSE when the envelope data is missing a required field', async () => {
+    writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    fetchMock.mockResolvedValue(
+      jsonResponse(201, envelope({ id: CREATED_ARTIFACT.id, viewUrl: CREATED_ARTIFACT.viewUrl })),
+    )
+
+    const error = await rejectionOf(optionsFor())
+
+    expect(error.code).toBe('UNEXPECTED_RESPONSE')
   })
 })
