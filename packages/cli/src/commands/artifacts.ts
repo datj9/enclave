@@ -29,12 +29,14 @@ export interface ListOptions {
   readonly limit?: number
   readonly cursor?: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShowOptions {
   readonly host: string
   readonly id: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RenameOptions {
@@ -42,6 +44,7 @@ export interface RenameOptions {
   readonly id: string
   readonly title: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface PrivacyOptions {
@@ -49,18 +52,21 @@ export interface PrivacyOptions {
   readonly id: string
   readonly visibility: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RemoveOptions {
   readonly host: string
   readonly id: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RestoreOptions {
   readonly host: string
   readonly id: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 class CliError extends Error {}
@@ -82,12 +88,12 @@ function fail(line: string): void {
   process.stderr.write(`${line}\n`)
 }
 
-function requireClient(host: string): ApiClient {
+function requireClient(host: string, isInsecureAllowed = false): ApiClient {
   const token = tokenFor(host)
   if (token === null || token === '') {
     throw new CliError(`not logged in to ${host} — run: enclave login --host ${host}`)
   }
-  return apiClient(host, token)
+  return apiClient(host, token, isInsecureAllowed)
 }
 
 /**
@@ -168,7 +174,7 @@ function printArtifact(artifact: ArtifactView): void {
 
 export async function runList(options: ListOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const page = await readArtifacts(client, options)
 
     if (options.isJson) writeJson(page)
@@ -181,7 +187,7 @@ export async function runList(options: ListOptions): Promise<number> {
 
 export async function runShow(options: ShowOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const artifact = await client.get<ArtifactView>(`/api/v1/artifacts/${id}`)
 
@@ -201,7 +207,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
   }
 
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     // `{title}` alone. PATCH is the only writer of `artifact.visibility_change`, so echoing
     // visibility back would log a privacy change for a rename.
@@ -227,7 +233,7 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
   }
 
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const before = await client.get<ArtifactView>(`/api/v1/artifacts/${id}`)
     const after = await client.patch<ArtifactView>(`/api/v1/artifacts/${id}`, {
@@ -254,7 +260,7 @@ function printPrivacyChange(before: ArtifactView, after: ArtifactView): void {
 
 export async function runRemove(options: RemoveOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     await client.remove(`/api/v1/artifacts/${id}`)
 
@@ -274,7 +280,7 @@ export async function runRemove(options: RemoveOptions): Promise<number> {
 
 export async function runRestore(options: RestoreOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const artifact = await client.post<ArtifactView>(
       `/api/v1/artifacts/${id}/restore`,

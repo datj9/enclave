@@ -46,17 +46,20 @@ export interface ShareCreateOptions {
   readonly versionId?: string
   readonly expires?: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShareListOptions {
   readonly host: string
   readonly id: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShareRevokeOptions {
   readonly host: string
   readonly shareId: string
+  readonly isInsecureAllowed?: boolean
 }
 
 function fail(message: string): void {
@@ -92,13 +95,13 @@ function reportFailure(error: unknown): number {
   throw error
 }
 
-function clientFor(host: string): ApiClient | null {
+function clientFor(host: string, isInsecureAllowed = false): ApiClient | null {
   const token = tokenFor(host)
   if (token === null) {
     fail(`not logged in to ${host} — run: enclave login --host ${host}`)
     return null
   }
-  return apiClient(host, token)
+  return apiClient(host, token, isInsecureAllowed)
 }
 
 function requireUuid(given: string, label: string): string {
@@ -184,7 +187,7 @@ export async function runShareCreate(options: ShareCreateOptions): Promise<numbe
     return EXIT_USAGE
   }
 
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {
@@ -238,7 +241,7 @@ function printLinks(items: readonly ShareLinkSummary[], isJson: boolean): void {
 }
 
 export async function runShareList(options: ShareListOptions): Promise<number> {
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {
@@ -261,7 +264,7 @@ export async function runShareRevoke(options: ShareRevokeOptions): Promise<numbe
     return EXIT_USAGE
   }
 
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {

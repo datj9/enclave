@@ -64,8 +64,8 @@ async function errorFrom(response: Response): Promise<ApiError> {
  * The token is held in this closure and reaches exactly one place: the Authorization header.
  * It is never attached to an ApiError, so no caller can print it by echoing a failure.
  */
-export function apiClient(host: string, token: string): ApiClient {
-  const baseUrl = baseUrlFor(host)
+export function apiClient(host: string, token: string, isInsecureAllowed = false): ApiClient {
+  const baseUrl = baseUrlFor(host, isInsecureAllowed)
 
   async function send(method: string, path: string, body?: unknown): Promise<Response> {
     const headers: Record<string, string> = { authorization: `Bearer ${token}` }
