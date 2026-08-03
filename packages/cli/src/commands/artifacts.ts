@@ -8,6 +8,8 @@ const VISIBILITIES = ['private', 'org'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
 const VISIBILITY_COLUMN_WIDTH = 7
+const MAX_PAGES = 100
+const CONTROL_CHARACTERS = /[\x00-\x1f\x7f]/g
 
 export interface ArtifactView {
   readonly id: string
@@ -136,6 +138,8 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
   const isPageRequest = options.limit !== undefined || options.cursor !== undefined
   const items: ArtifactSummary[] = []
   let cursor: string | null = options.cursor ?? null
+  const seenCursors = new Set<string>()
+  let pages = 0
 
   for (;;) {
     const page = await client.get<ArtifactPage>(
@@ -143,9 +147,19 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
     )
     items.push(...page.items)
     if (isPageRequest) return { items, nextCursor: page.nextCursor }
-    if (page.nextCursor === null) return { items, nextCursor: null }
+    pages += 1
+    if (page.nextCursor === null || page.nextCursor === undefined) return { items, nextCursor: null }
+    if (pages >= MAX_PAGES || seenCursors.has(page.nextCursor)) {
+      throw new CliError('artifact list did not terminate — the server cursor may be stuck')
+    }
+    seenCursors.add(page.nextCursor)
     cursor = page.nextCursor
   }
+}
+
+/** Titles are free text from another user; a control character must never corrupt the column layout. */
+function displayTitle(title: string): string {
+  return title.replace(CONTROL_CHARACTERS, ' ')
 }
 
 function printArtifacts(page: ArtifactPage): void {
@@ -154,12 +168,13 @@ function printArtifacts(page: ArtifactPage): void {
     return
   }
 
-  const titleWidth = Math.max(...page.items.map((item) => item.title.length))
-  for (const item of page.items) {
-    const title = item.title.padEnd(titleWidth)
+  const titles = page.items.map((item) => displayTitle(item.title))
+  const titleWidth = Math.max(...titles.map((title) => title.length))
+  page.items.forEach((item, index) => {
+    const title = (titles[index] ?? '').padEnd(titleWidth)
     const visibility = item.visibility.padEnd(VISIBILITY_COLUMN_WIDTH)
     write(`${shortId(item.id)}  ${title}  ${visibility}  ${item.viewUrl}`)
-  }
+  })
 
   if (page.nextCursor !== null) write(`\nmore: enclave list --cursor ${page.nextCursor}`)
 }

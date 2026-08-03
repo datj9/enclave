@@ -224,6 +224,26 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
     expect(await runList({ host: HOST, isJson: false })).toBe(0)
     expect(output()).toContain('no artifacts')
   })
+
+  it('stops instead of looping forever when nextCursor never advances', async () => {
+    harness.setResponder(() => ({ items: [], nextCursor: 'stuck-cursor' }))
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(1)
+    expect(errorOutput()).toContain('did not terminate')
+  })
+
+  it('sanitizes control characters out of a title before it reaches the column layout', async () => {
+    respondWith({
+      'GET /api/v1/artifacts': {
+        items: [{ ...KANBAN, title: 'evil\x1b[31mtitle' }],
+        nextCursor: null,
+      },
+    })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(output()).not.toContain('\x1b')
+    expect(output()).toContain('evil')
+  })
 })
 
 describe('AC 2 — show', () => {
