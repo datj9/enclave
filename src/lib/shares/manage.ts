@@ -25,6 +25,7 @@ export interface CreatedShareLink {
   readonly shareId: string
   readonly token: string
   readonly url: string
+  readonly versionId: string
 }
 
 export interface ShareLinkSummary {
@@ -39,7 +40,8 @@ export interface ShareLinkSummary {
 
 export interface CreateShareLinkInput {
   readonly artifactId: string
-  readonly versionId: string
+  /** When omitted, the artifact's current ready version is pinned. */
+  readonly versionId?: string
   readonly viewerRef: string
   readonly expiresAt?: Date | null
   readonly actorIp?: string | null
@@ -75,9 +77,32 @@ async function loadPinnableVersion(
   return { versionId: row.id, databaseNow: epochToDate(row.databaseNow) }
 }
 
+/** Default pin target when the client omits `versionId`. */
+async function loadCurrentReadyVersion(
+  artifactId: string,
+): Promise<{ readonly versionId: string; readonly databaseNow: Date }> {
+  const [row] = await db
+    .select({ id: artifactVersions.id, databaseNow: databaseNowEpoch })
+    .from(artifacts)
+    .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+    .where(and(eq(artifacts.id, artifactId), eq(artifactVersions.status, 'ready')))
+    .limit(1)
+
+  if (row === undefined) {
+    throw new HttpError('VALIDATION_FAILED', 'This artifact has no ready version to share', {
+      details: { fields: ['versionId'] },
+    })
+  }
+
+  return { versionId: row.id, databaseNow: epochToDate(row.databaseNow) }
+}
+
 export async function createShareLink(input: CreateShareLinkInput): Promise<CreatedShareLink> {
   const owned = await requireOwnedArtifact(input.artifactId, input.viewerRef)
-  const version = await loadPinnableVersion(input.artifactId, input.versionId)
+  const version =
+    input.versionId === undefined
+      ? await loadCurrentReadyVersion(input.artifactId)
+      : await loadPinnableVersion(input.artifactId, input.versionId)
   const expiresAt = input.expiresAt ?? null
 
   // Compared against Postgres `now()` rather than `Date.now()`, like every other expiry check in
@@ -117,6 +142,7 @@ export async function createShareLink(input: CreateShareLinkInput): Promise<Crea
     shareId: row.id,
     token: plaintext,
     url: shareLinkUrl(env.APP_URL, plaintext),
+    versionId: version.versionId,
   }
 }
 

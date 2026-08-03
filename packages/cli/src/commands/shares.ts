@@ -13,8 +13,13 @@ const REQUIRED_SCOPE = 'shares:write'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
+const ISO_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+const ISO_DATETIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/
 const HOURS_PER_UNIT: Readonly<Record<string, number>> = { h: 1, d: 24, w: 168 }
 const MILLISECONDS_PER_HOUR = 3_600_000
+/** ECMAScript Date absolute range (±100_000_000 days from epoch). */
+const MAX_DATE_MILLISECONDS = 8.64e15
 
 const EXPIRES_COLUMN_WIDTH = 24
 const NEVER = 'never'
@@ -24,6 +29,7 @@ interface CreatedShareLink {
   readonly shareId: string
   readonly token: string
   readonly url: string
+  readonly versionId?: string
 }
 
 interface ShareLinkSummary {
@@ -109,26 +115,25 @@ function requireUuid(given: string, label: string): string {
   return given
 }
 
-/** Accepts `7d` / `12h` / `2w` or a bare ISO-8601 timestamp; always answers an absolute instant. */
+/** Accepts only `7d` / `12h` / `2w` or a documented ISO-8601 form — never engine-lenient Date parse. */
 function parseExpiry(given: string, now: Date): Date {
   const trimmed = given.trim()
   const relative = RELATIVE_EXPIRY_PATTERN.exec(trimmed)
 
-  const when =
-    relative === null
-      ? new Date(trimmed)
-      : new Date(
-          now.getTime() +
-            Number(relative[1]) *
-              (HOURS_PER_UNIT[(relative[2] ?? 'h').toLowerCase()] ?? 1) *
-              MILLISECONDS_PER_HOUR,
-        )
-
-  if (Number.isNaN(when.getTime())) {
-    throw new InvalidInputError(
-      `'${given}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
-    )
+  let when: Date
+  if (relative !== null) {
+    const amount = Number(relative[1])
+    const unit = (relative[2] ?? 'h').toLowerCase()
+    const hours = amount * (HOURS_PER_UNIT[unit] ?? 1)
+    const deltaMs = hours * MILLISECONDS_PER_HOUR
+    if (!Number.isFinite(deltaMs) || Math.abs(now.getTime() + deltaMs) > MAX_DATE_MILLISECONDS) {
+      throw new InvalidInputError(`--expires ${given} is out of range`)
+    }
+    when = new Date(now.getTime() + deltaMs)
+  } else {
+    when = parseAbsoluteExpiry(trimmed, given)
   }
+
   if (when.getTime() <= now.getTime()) {
     throw new InvalidInputError(
       `--expires ${given} resolves to ${when.toISOString()}, which is not in the future`,
@@ -137,26 +142,70 @@ function parseExpiry(given: string, now: Date): Date {
   return when
 }
 
+function parseAbsoluteExpiry(trimmed: string, original: string): Date {
+  const dateOnly = ISO_DATE_ONLY_PATTERN.exec(trimmed)
+  if (dateOnly !== null) {
+    const year = Number(dateOnly[1])
+    const month = Number(dateOnly[2])
+    const day = Number(dateOnly[3])
+    const when = new Date(Date.UTC(year, month - 1, day))
+    // Reject calendar overflow (2027-02-30 → March) by requiring a round-trip.
+    if (
+      when.getUTCFullYear() !== year ||
+      when.getUTCMonth() !== month - 1 ||
+      when.getUTCDate() !== day
+    ) {
+      throw new InvalidInputError(
+        `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
+      )
+    }
+    return when
+  }
+
+  if (!ISO_DATETIME_PATTERN.test(trimmed)) {
+    throw new InvalidInputError(
+      `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
+    )
+  }
+
+  const when = new Date(trimmed)
+  if (Number.isNaN(when.getTime())) {
+    throw new InvalidInputError(
+      `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
+    )
+  }
+  return when
+}
+
 function createRequestBody(
-  versionId: string,
+  versionId: string | undefined,
   expiresAt: Date | null,
 ): Readonly<Record<string, string>> {
-  return expiresAt === null ? { versionId } : { versionId, expiresAt: expiresAt.toISOString() }
+  const body: Record<string, string> = {}
+  if (versionId !== undefined) body['versionId'] = versionId
+  if (expiresAt !== null) body['expiresAt'] = expiresAt.toISOString()
+  return body
 }
 
 function printCreated(
   created: CreatedShareLink,
-  versionId: string,
+  versionId: string | undefined,
   expiresAt: Date | null,
   isJson: boolean,
 ): void {
   const expires = expiresAt === null ? null : expiresAt.toISOString()
+  const resolvedVersionId = created.versionId ?? versionId
 
   if (isJson) {
     // The warning goes to stderr so stdout stays parseable.
     fail('the share url is shown once and cannot be read again')
     process.stdout.write(
-      `${JSON.stringify({ shareId: created.shareId, url: created.url, expiresAt: expires })}\n`,
+      `${JSON.stringify({
+        shareId: created.shareId,
+        url: created.url,
+        expiresAt: expires,
+        ...(resolvedVersionId === undefined ? {} : { versionId: resolvedVersionId }),
+      })}\n`,
     )
     return
   }
@@ -165,21 +214,19 @@ function printCreated(
   process.stdout.write('This URL is shown once and can never be read again — copy it now.\n\n')
   process.stdout.write(`  ${created.url}\n\n`)
   process.stdout.write(`  share id  ${created.shareId}\n`)
-  process.stdout.write(`  version   ${shortId(versionId)}\n`)
+  if (resolvedVersionId !== undefined) {
+    process.stdout.write(`  version   ${resolvedVersionId}\n`)
+  }
   process.stdout.write(`  expires   ${expires ?? NEVER}\n`)
 }
 
 export async function runShareCreate(options: ShareCreateOptions): Promise<number> {
-  let versionId: string
+  let versionId: string | undefined
   let expiresAt: Date | null
 
   try {
-    if (options.versionId === undefined) {
-      // The route requires `versionId` and no bearer-reachable endpoint lists versions yet (S16),
-      // so there is nothing to default to.
-      throw new InvalidInputError('--version <versionId> is required')
-    }
-    versionId = requireUuid(options.versionId, 'version id')
+    versionId =
+      options.versionId === undefined ? undefined : requireUuid(options.versionId, 'version id')
     expiresAt = options.expires === undefined ? null : parseExpiry(options.expires, new Date())
   } catch (error) {
     if (!(error instanceof InvalidInputError)) throw error
@@ -231,11 +278,11 @@ function printLinks(items: readonly ShareLinkSummary[], isJson: boolean): void {
     return
   }
 
-  process.stdout.write(`SHARE ID  VERSION   ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
+  process.stdout.write(`SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
     process.stdout.write(
-      `${shortId(row.shareId)}  ${shortId(row.versionId)}  ${expires}  ${row.state}\n`,
+      `${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`,
     )
   }
 }
