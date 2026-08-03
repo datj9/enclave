@@ -433,6 +433,18 @@ describe('share commands', () => {
       expect(errorText()).toContain('enclave login')
       expect(mocks.get).not.toHaveBeenCalled()
     })
+
+    it('exits 1 on an empty stored token rather than sending a bare bearer header', async () => {
+      // `artifacts.ts` already rejected this locally; sending it puts an empty credential on the
+      // wire and answers with the server's scope error, which the user cannot act on.
+      process.env['ENCLAVE_TOKEN'] = ''
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+
+      expect(code).toBe(1)
+      expect(errorText()).toContain('enclave login')
+      expect(mocks.get).not.toHaveBeenCalled()
+    })
   })
 
   // AC 7 — `create` against another user's artifact returns 404.

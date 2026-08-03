@@ -295,7 +295,30 @@ describe('push command', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
-  it('reports INVALID_STATE with exit 1 for a corrupt state host, not a stack trace', async () => {
+  it('reports INVALID_STATE with exit 1 when a corrupt state host is the only host', async () => {
+    writeStateFile({
+      host: 'not a host',
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(2)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_HOST' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('reports a corrupt state host as a mismatch when --host supplied the target', async () => {
+    // The state file describes a different instance; --host won, so which host is in play is the
+    // useful thing to say — not that a file the push is no longer reading is malformed.
     writeStateFile({
       host: 'not a host',
       artifactId: SUCCESS_RESULT.artifactId,
@@ -312,7 +335,7 @@ describe('push command', () => {
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
-      error: { code: 'INVALID_STATE' },
+      error: { code: 'HOST_MISMATCH' },
     })
     expect(push).not.toHaveBeenCalled()
   })

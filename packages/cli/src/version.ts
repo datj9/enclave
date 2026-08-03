@@ -6,7 +6,11 @@ interface PackageManifest {
   readonly version?: unknown
 }
 
-const FALLBACK_VERSION = '0.0.0'
+/**
+ * Not `0.0.0`: a plausible-looking version is exactly the failure the `--version` issue was about,
+ * because a bug report then names a build that was never published. `unknown` is unmistakable.
+ */
+export const UNKNOWN_VERSION = 'unknown'
 const MAX_ANCESTORS = 8
 
 /**
@@ -29,13 +33,14 @@ function findPackageJson(startDirectory: string): string | null {
 
 export function cliVersion(): string {
   const path = findPackageJson(dirname(fileURLToPath(import.meta.url)))
-  if (path === null) return FALLBACK_VERSION
+  if (path === null) return UNKNOWN_VERSION
   try {
     const manifest = JSON.parse(readFileSync(path, 'utf8')) as PackageManifest
-    return typeof manifest.version === 'string' ? manifest.version : FALLBACK_VERSION
+    return typeof manifest.version === 'string' ? manifest.version : UNKNOWN_VERSION
   } catch {
-    return FALLBACK_VERSION
+    return UNKNOWN_VERSION
   }
 }
 
-export const USER_AGENT = `enclave-cli/${cliVersion()}`
+/** The published package name, not the binary name — server-side triage greps for what npm shows. */
+export const USER_AGENT = `enclave-artifacts/${cliVersion()}`

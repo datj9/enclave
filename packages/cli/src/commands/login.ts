@@ -67,7 +67,12 @@ export async function runLogin(
   process.stderr.write(`Create a token at ${baseUrl}/settings/tokens\n`)
   process.stderr.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
 
-  const resolvedToken = token ?? (await readSecret('Token: '))
+  // `--help` promises ENCLAVE_TOKEN works and `tokenFor` honours it; prompting anyway dead-ends
+  // every CI run, where there is no TTY to answer.
+  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  const givenToken =
+    token ?? (fromEnvironment !== undefined && fromEnvironment !== '' ? fromEnvironment : undefined)
+  const resolvedToken = givenToken ?? (await readSecret('Token: '))
   if (resolvedToken === '') {
     process.stderr.write('no token was entered\n')
     return 1

@@ -1,6 +1,13 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
-import { IdResolutionError, resolveArtifactId, shortId, type ArtifactSummary } from '../ids.ts'
+import { displayTitle } from '../display.ts'
+import {
+  IdResolutionError,
+  InvalidIdError,
+  resolveArtifactId,
+  shortId,
+  type ArtifactSummary,
+} from '../ids.ts'
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 const VISIBILITIES = ['private', 'org'] as const
@@ -9,7 +16,6 @@ export type Visibility = (typeof VISIBILITIES)[number]
 
 const VISIBILITY_COLUMN_WIDTH = 7
 const MAX_PAGES = 100
-const CONTROL_CHARACTERS = /[\x00-\x1f\x7f]/g
 
 export interface ArtifactView {
   readonly id: string
@@ -107,6 +113,12 @@ function reportFailure(error: unknown, given?: string): number {
     fail(given === undefined ? '✗ not found' : `✗ not found: ${given}`)
     return EXIT_FAILED
   }
+  // A prefix too short to resolve is a malformed argument, not a lookup that came back empty —
+  // callers distinguish those by exit code, so it exits 2 like every other unusable value.
+  if (error instanceof InvalidIdError) {
+    fail(`✗ ${error.message}`)
+    return EXIT_USAGE
+  }
   if (
     error instanceof ApiError ||
     error instanceof IdResolutionError ||
@@ -155,17 +167,17 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
     if (isPageRequest) return { items, nextCursor: page.nextCursor }
     pages += 1
     if (page.nextCursor === null || page.nextCursor === undefined) return { items, nextCursor: null }
-    if (pages >= MAX_PAGES || seenCursors.has(page.nextCursor)) {
-      throw new CliError('artifact list did not terminate — the server cursor may be stuck')
+    if (seenCursors.has(page.nextCursor)) {
+      throw new CliError('the server returned a cursor it had already given — stopping')
+    }
+    if (pages >= MAX_PAGES) {
+      throw new CliError(
+        `stopped after ${String(MAX_PAGES)} pages — pass --limit and --cursor to page through more`,
+      )
     }
     seenCursors.add(page.nextCursor)
     cursor = page.nextCursor
   }
-}
-
-/** Titles are free text from another user; a control character must never corrupt the column layout. */
-function displayTitle(title: string): string {
-  return title.replace(CONTROL_CHARACTERS, ' ')
 }
 
 function printArtifacts(page: ArtifactPage): void {
@@ -187,7 +199,7 @@ function printArtifacts(page: ArtifactPage): void {
 
 function printArtifact(artifact: ArtifactView): void {
   write(`id          ${artifact.id}`)
-  write(`title       ${artifact.title}`)
+  write(`title       ${displayTitle(artifact.title)}`)
   write(`visibility  ${artifact.visibility}`)
   write(`created     ${artifact.createdAt}`)
   write(`url         ${artifact.viewUrl}`)
@@ -235,7 +247,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
     const artifact = await client.patch<ArtifactView>(`/api/v1/artifacts/${id}`, { title })
 
     if (options.isJson === true) writeJson(artifact)
-    else write(`✓ ${shortId(artifact.id)} renamed to "${artifact.title}"`)
+    else write(`✓ ${shortId(artifact.id)} renamed to "${displayTitle(artifact.title)}"`)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error, options.id)
@@ -270,7 +282,7 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
 }
 
 function printPrivacyChange(before: ArtifactView, after: ArtifactView): void {
-  write(`  ${shortId(after.id)}  ${after.title}`)
+  write(`  ${shortId(after.id)}  ${displayTitle(after.title)}`)
   write(`  ${before.visibility} → ${after.visibility}`)
   write(
     after.visibility === 'org'
@@ -310,7 +322,7 @@ export async function runRestore(options: RestoreOptions): Promise<number> {
     )
 
     if (options.isJson === true) writeJson(artifact)
-    else write(`✓ restored ${shortId(artifact.id)}  ${artifact.title}`)
+    else write(`✓ restored ${shortId(artifact.id)}  ${displayTitle(artifact.title)}`)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error, options.id)

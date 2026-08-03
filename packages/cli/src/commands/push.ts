@@ -94,16 +94,25 @@ function messageOf(error: unknown): string {
 function refuseExistingState(
   state: ProjectState | null,
   host: string,
+  hostSource: HostSource,
   options: PushCommandOptions,
 ): number | null {
   if (state === null || options.isNew) return null
 
+  // An unnormalisable state host is only fatal when the push is relying on it. If --host or
+  // ENCLAVE_HOST supplied the target, the state file simply describes a different instance —
+  // that is a mismatch to report, not a corrupt-file error that hides which host won.
   let stateHost: string
   try {
     stateHost = normaliseHost(state.host, options.isInsecureAllowed ?? false)
   } catch (error) {
-    const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
-    reportError(options.isJson, 'INVALID_STATE', text, text)
+    if (hostSource === 'state') {
+      const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
+      reportError(options.isJson, 'INVALID_STATE', text, text)
+      return 1
+    }
+    const text = `state file targets '${state.host}', not ${host}`
+    reportError(options.isJson, 'HOST_MISMATCH', text, text)
     return 1
   }
 
@@ -125,21 +134,44 @@ function refuseExistingState(
   return 1
 }
 
+type HostSource = 'flag' | 'environment' | 'state'
+
+/** The single place push's host precedence is written down — `refuseExistingState` reads the
+ *  winning source from here rather than re-deriving it and drifting. */
+function hostCandidate(
+  state: ProjectState | null,
+  options: PushCommandOptions,
+): { readonly value: string; readonly source: HostSource } | null {
+  if (options.host !== undefined && options.host !== '') {
+    return { value: options.host, source: 'flag' }
+  }
+  const fromEnvironment = process.env['ENCLAVE_HOST']
+  if (fromEnvironment !== undefined && fromEnvironment !== '') {
+    return { value: fromEnvironment, source: 'environment' }
+  }
+  if (state !== null && state.host !== '') return { value: state.host, source: 'state' }
+  return null
+}
+
 type HostResolution =
-  | { readonly canonicalHost: string; readonly failureExitCode: null }
+  | {
+      readonly canonicalHost: string
+      readonly hostSource: HostSource
+      readonly failureExitCode: null
+    }
   | { readonly failureExitCode: number }
 
 function resolveHost(state: ProjectState | null, options: PushCommandOptions): HostResolution {
-  const host = options.host ?? process.env['ENCLAVE_HOST'] ?? state?.host ?? ''
-  if (host === '') {
+  const candidate = hostCandidate(state, options)
+  if (candidate === null) {
     const text = 'no host: pass --host or set ENCLAVE_HOST'
     reportError(options.isJson, 'NO_HOST', text, text)
     return { failureExitCode: 2 }
   }
 
   try {
-    const canonicalHost = normaliseHost(host, options.isInsecureAllowed ?? false)
-    return { canonicalHost, failureExitCode: null }
+    const canonicalHost = normaliseHost(candidate.value, options.isInsecureAllowed ?? false)
+    return { canonicalHost, hostSource: candidate.source, failureExitCode: null }
   } catch (error) {
     const text = error instanceof InvalidHostError ? error.message : 'invalid host'
     reportError(options.isJson, 'INVALID_HOST', text, text)
@@ -213,9 +245,9 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
 
   const hostResolution = resolveHost(state, options)
   if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
-  const { canonicalHost } = hostResolution
+  const { canonicalHost, hostSource } = hostResolution
 
-  const refusal = refuseExistingState(state, canonicalHost, options)
+  const refusal = refuseExistingState(state, canonicalHost, hostSource, options)
   if (refusal !== null) return refusal
 
   const token = tokenFor(canonicalHost)

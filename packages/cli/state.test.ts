@@ -50,6 +50,36 @@ describe('state', () => {
     ).toThrow(StateError)
   })
 
+  it('refuses to write an undefined artifactId, which JSON.stringify would drop silently', () => {
+    // This is the exact record that bricked a project directory: `{host, lastPushedVersionNo}`.
+    const withoutId = {
+      host: 'https://enclave.example.com',
+      lastPushedVersionNo: 1,
+    } as unknown as Parameters<typeof writeState>[1]
+
+    expect(() => writeState(directory, withoutId)).toThrow(StateError)
+    expect(readState(directory)).toBeNull()
+  })
+
+  it('refuses to write an artifactId that is not a uuid', () => {
+    expect(() =>
+      writeState(directory, {
+        host: 'https://enclave.example.com',
+        artifactId: 'not-a-uuid',
+        lastPushedVersionNo: 1,
+      }),
+    ).toThrow(StateError)
+  })
+
+  it('refuses to write a state whose host is missing', () => {
+    const withoutHost = {
+      artifactId: ARTIFACT_ID,
+      lastPushedVersionNo: 1,
+    } as unknown as Parameters<typeof writeState>[1]
+
+    expect(() => writeState(directory, withoutHost)).toThrow(StateError)
+  })
+
   it('throws StateError for malformed JSON, not a raw parse error', () => {
     writeFileSync(statePath(directory), '{ not json')
 

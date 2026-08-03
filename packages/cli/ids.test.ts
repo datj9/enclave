@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ApiClient } from './src/api-client.ts'
-import { IdResolutionError, resolveArtifactId } from './src/ids.ts'
+import { IdResolutionError, InvalidIdError, resolveArtifactId } from './src/ids.ts'
 
 interface Page {
   readonly items: readonly { readonly id: string; readonly title: string }[]
@@ -50,5 +50,45 @@ describe('resolveArtifactId', () => {
     const client = clientFromPages([{ items: [], nextCursor: 'stuck' }])
 
     await expect(resolveArtifactId(client, 'deadbeef')).rejects.toThrow(IdResolutionError)
+  })
+
+  it('marks a too-short prefix as an invalid argument, not a failed lookup', async () => {
+    const client = clientFromPages([])
+
+    await expect(resolveArtifactId(client, 'abc')).rejects.toThrow(InvalidIdError)
+  })
+
+  it('lists full ids on an ambiguous prefix so the user has something longer to retype', async () => {
+    const first = 'aaaaaaaa-1111-4000-8000-000000000000'
+    const second = 'aaaaaaaa-2222-4000-8000-000000000000'
+    const client = clientFromPages([
+      {
+        items: [
+          { id: first, title: 'first' },
+          { id: second, title: 'second' },
+        ],
+        nextCursor: null,
+      },
+    ])
+
+    await expect(resolveArtifactId(client, 'aaaaaaaa')).rejects.toThrow(
+      new RegExp(`${first}[\\s\\S]*${second}`),
+    )
+  })
+
+  it('sanitizes titles in the ambiguous list — they are free text from another user', async () => {
+    const client = clientFromPages([
+      {
+        items: [
+          { id: 'aaaaaaaa-1111-4000-8000-000000000000', title: 'one\u202etwo' },
+          { id: 'aaaaaaaa-2222-4000-8000-000000000000', title: 'three' },
+        ],
+        nextCursor: null,
+      },
+    ])
+
+    await expect(resolveArtifactId(client, 'aaaaaaaa')).rejects.toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('\u202e') as unknown }),
+    )
   })
 })
