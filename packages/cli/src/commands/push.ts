@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 import {
@@ -11,7 +11,7 @@ import {
 import type { PushResult, SkippedFile } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
-import { readState, writeState } from '../state.ts'
+import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
 import type { ProjectState } from '../state.ts'
 
 export interface PushCommandOptions {
@@ -158,8 +158,30 @@ function reportPushed(options: PushCommandOptions, result: PushResult): void {
   process.stdout.write(`→ ${result.viewUrl}\n`)
 }
 
+function reportLegacyState(options: PushCommandOptions): number {
+  const legacy = legacyStatePath(options.directory)
+  const inDir = statePath(options.directory)
+  const text =
+    `found a legacy .enclave.json at ${legacy} — state now lives inside the pushed directory, not beside it.\n` +
+    `  move it: mv ${legacy} ${inDir}\n` +
+    `  or, if this should be a new artifact: rm ${legacy}`
+  reportError(options.isJson, 'LEGACY_STATE', text, `✗ ${text}`)
+  return 1
+}
+
 export async function runPush(options: PushCommandOptions): Promise<number> {
-  const state = readState(options.directory)
+  let state: ProjectState | null
+  try {
+    state = readState(options.directory)
+  } catch (error) {
+    const text = error instanceof StateError ? error.message : messageOf(error)
+    reportError(options.isJson, 'INVALID_STATE', text, `✗ ${text}`)
+    return 1
+  }
+
+  if (state === null && existsSync(legacyStatePath(options.directory))) {
+    return reportLegacyState(options)
+  }
 
   const hostResolution = resolveHost(state, options)
   if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
