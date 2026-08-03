@@ -47,9 +47,9 @@ function stderrOutput(): string {
   return writtenToStderr.join('')
 }
 
-function respondWith(status: number): void {
+function respondWith(status: number, body = '{"data":{"items":[],"nextCursor":null}}'): void {
   globalThis.fetch = vi.fn(async () =>
-    Promise.resolve(new Response(status === 200 ? '{"items":[]}' : '{}', { status })),
+    Promise.resolve(new Response(status === 200 ? body : '{}', { status })),
   ) as typeof fetch
 }
 
@@ -184,6 +184,32 @@ describe('runLogin', () => {
     expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
       'Bearer enc_from_the_flag',
     )
+  })
+
+  it('refuses a redirected probe without saving the token', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      Promise.resolve(new Response('', { status: 302, headers: { location: '/sso' } })),
+    ) as typeof fetch
+
+    expect(await runLogin(HOST, 'enc_garbage')).toBe(1)
+    expect(stderrOutput()).toContain('redirected the API probe')
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('refuses a 200 that is not an enclave list envelope', async () => {
+    respondWith(200, '<html>login</html>')
+
+    expect(await runLogin(HOST, 'enc_garbage')).toBe(1)
+    expect(stderrOutput()).toContain('not an enclave artifacts list')
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('probes with redirect: manual so a proxy SSO bounce cannot fake success', async () => {
+    respondWith(200)
+    await runLogin(HOST, 'enc_x')
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(call?.[1]).toMatchObject({ redirect: 'manual' })
   })
 })
 

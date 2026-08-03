@@ -77,12 +77,17 @@ export async function runLogin(
   try {
     response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
       headers: { authorization: `Bearer ${resolvedToken}`, 'user-agent': USER_AGENT },
+      redirect: 'manual',
     })
   } catch {
     process.stderr.write(`could not reach ${host}\n`)
     return 1
   }
 
+  if (response.status >= 300 && response.status < 400) {
+    process.stderr.write(`${host} redirected the API probe — is that the right host?\n`)
+    return 1
+  }
   if (response.status === 401) {
     process.stderr.write('that token was rejected\n')
     return 1
@@ -98,7 +103,30 @@ export async function runLogin(
     return 1
   }
 
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    process.stderr.write(
+      'server response was not an enclave artifacts list — is that the right host?\n',
+    )
+    return 1
+  }
+  if (!isArtifactsListEnvelope(body)) {
+    process.stderr.write(
+      'server response was not an enclave artifacts list — is that the right host?\n',
+    )
+    return 1
+  }
+
   saveToken(host, resolvedToken)
   process.stdout.write(`✓ logged in to ${host}\n`)
   return 0
+}
+
+function isArtifactsListEnvelope(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null || !('data' in body)) return false
+  const data = (body as { data: unknown }).data
+  if (typeof data !== 'object' || data === null || !('items' in data)) return false
+  return Array.isArray((data as { items: unknown }).items)
 }
