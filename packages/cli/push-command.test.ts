@@ -37,6 +37,11 @@ describe('push command', () => {
   let originalHost: string | undefined
 
   function writeStateFile(state: ProjectState): void {
+    writeFileSync(join(projectDirectory, '.enclave.json'), `${JSON.stringify(state, null, 2)}\n`)
+  }
+
+  /** The pre-fix location: beside the pushed directory, not inside it. */
+  function writeLegacyStateFile(state: ProjectState): void {
     writeFileSync(join(workspace, '.enclave.json'), `${JSON.stringify(state, null, 2)}\n`)
   }
 
@@ -156,7 +161,7 @@ describe('push command', () => {
     expect(stdout).toContain('app.js.map        unsupported (.map)')
   })
 
-  it('writes the state file after a successful push', async () => {
+  it('writes the state file inside the pushed directory after a successful push', async () => {
     const exitCode = await runPush({
       directory: projectDirectory,
       host: HOST,
@@ -167,7 +172,7 @@ describe('push command', () => {
 
     expect(exitCode).toBe(0)
     const written = JSON.parse(
-      readFileSync(join(workspace, '.enclave.json'), 'utf8'),
+      readFileSync(join(projectDirectory, '.enclave.json'), 'utf8'),
     ) as ProjectState
     // Persists the canonical form (scheme included), not the raw --host value — otherwise a
     // later mismatch check compares two spellings of the same host and misreports.
@@ -250,6 +255,89 @@ describe('push command', () => {
     expect(exitCode).toBe(1)
     expect(stdout).toContain('http://enclave.example.com')
     expect(stdout).toContain('https://enclave.example.com')
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('sibling directories each keep their own state without colliding', async () => {
+    const siblingDirectory = join(workspace, 'dist-b')
+    mkdirSync(siblingDirectory)
+    writeFileSync(join(siblingDirectory, 'index.html'), '<!doctype html>')
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
+
+    const exitCode = await runPush({
+      directory: siblingDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(push).toHaveBeenCalledTimes(1)
+    const written = JSON.parse(
+      readFileSync(join(siblingDirectory, '.enclave.json'), 'utf8'),
+    ) as ProjectState
+    expect(written.artifactId).toBe(SUCCESS_RESULT.artifactId)
+  })
+
+  it('reports INVALID_STATE for malformed JSON instead of throwing a stack trace', async () => {
+    writeFileSync(join(projectDirectory, '.enclave.json'), '{ not json')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_STATE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('reports INVALID_STATE when artifactId is missing rather than treating it as no state', async () => {
+    writeFileSync(
+      join(projectDirectory, '.enclave.json'),
+      `${JSON.stringify({ host: HOST, lastPushedVersionNo: 1 })}\n`,
+    )
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_STATE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('stops with move/delete instructions when a legacy parent state file exists', async () => {
+    writeLegacyStateFile({
+      host: HOST,
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stdout).toContain('legacy')
+    expect(stdout).toContain('mv ')
+    expect(stdout).toContain('rm ')
     expect(push).not.toHaveBeenCalled()
   })
 })
