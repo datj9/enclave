@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 import {
+  assertBundlePushable,
   collectBundle,
   InvalidHostError,
   normaliseHost,
@@ -132,6 +133,16 @@ function resolveHost(state: ProjectState | null, options: PushCommandOptions): H
 
 function reportDryRun(options: PushCommandOptions): number {
   const bundle = collectBundle(options.directory)
+
+  try {
+    assertBundlePushable(bundle.files, bundle.skipped)
+  } catch (error) {
+    const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
+    const text = messageOf(error)
+    reportError(options.isJson, code, text, `✗ ${text}`)
+    return 1
+  }
+
   const uploaded = bundle.files.map((file) => file.path)
 
   if (options.isJson) {

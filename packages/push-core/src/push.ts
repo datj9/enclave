@@ -1,7 +1,8 @@
-import { collectBundle, ENTRY_PATH } from './collect.ts'
+import { collectBundle } from './collect.ts'
 import { PushError } from './errors.ts'
 import { normaliseHost } from './host.ts'
 import type { BundleFile, PushOptions, PushResult } from './types.ts'
+import { assertBundlePushable } from './validate-local.ts'
 
 interface WireFile {
   readonly path: string
@@ -69,16 +70,7 @@ async function errorFrom(response: Response): Promise<PushError> {
 
 export async function push(options: PushOptions): Promise<PushResult> {
   const { files, skipped } = collectBundle(options.directory)
-  if (files.length === 0) {
-    throw new PushError('NOTHING_TO_UPLOAD', 'No file in that directory can be uploaded', {
-      skipped,
-    })
-  }
-  if (!files.some((file) => file.path === ENTRY_PATH)) {
-    throw new PushError('ENTRY_MISSING', `The bundle needs an ${ENTRY_PATH} at its root`, {
-      skipped,
-    })
-  }
+  assertBundlePushable(files, skipped)
 
   const body = JSON.stringify({
     title: options.title ?? 'Untitled artifact',

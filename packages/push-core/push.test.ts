@@ -170,6 +170,34 @@ describe('push', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('throws BUNDLE_TOO_LARGE locally past the default file count, before any request', async () => {
+    writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    for (let index = 0; index < 51; index += 1) {
+      writeFileSync(join(directory, `page-${String(index)}.html`), '<!doctype html>')
+    }
+
+    const error = await rejectionOf(optionsFor())
+
+    expect(error.code).toBe('BUNDLE_TOO_LARGE')
+    expect(error.details['fileCount']).toBe(52)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('throws BUNDLE_TOO_LARGE locally past the default total byte count, before any request', async () => {
+    writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    // Each file stays under collectBundle's own 2MiB per-file cap; only their sum exceeds the
+    // 10MiB total, so this exercises the total-bytes branch and not the per-file one.
+    for (let index = 0; index < 6; index += 1) {
+      writeFileSync(join(directory, `big-${String(index)}.css`), Buffer.alloc(1_800_000, 'a'))
+    }
+
+    const error = await rejectionOf(optionsFor())
+
+    expect(error.code).toBe('BUNDLE_TOO_LARGE')
+    expect(error.details['totalBytes']).toBeGreaterThan(10_485_760)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('maps 401 to UNAUTHORIZED', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
     fetchMock.mockResolvedValue(
