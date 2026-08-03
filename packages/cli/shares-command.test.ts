@@ -32,7 +32,7 @@ const SHARE_URL = 'https://artifacts.example.com/s/pl41nt3xt-t0k3n'
 const NOW = new Date('2026-08-02T00:00:00.000Z')
 
 interface RequestBody {
-  readonly versionId: string
+  readonly versionId?: string
   readonly expiresAt?: string
 }
 
@@ -85,7 +85,12 @@ describe('share commands', () => {
       patch: mocks.patch,
       remove: mocks.remove,
     })
-    mocks.post.mockResolvedValue({ shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL })
+    mocks.post.mockResolvedValue({
+      shareId: SHARE_ID,
+      token: 'plaintext',
+      url: SHARE_URL,
+      versionId: VERSION_ID,
+    })
     mocks.get.mockResolvedValue({ items: [] })
     mocks.remove.mockResolvedValue(undefined)
   })
@@ -135,16 +140,21 @@ describe('share commands', () => {
       await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: true })
 
       const parsed: unknown = JSON.parse(outputText())
-      expect(parsed).toEqual({ shareId: SHARE_ID, url: SHARE_URL, expiresAt: null })
+      expect(parsed).toEqual({
+        shareId: SHARE_ID,
+        url: SHARE_URL,
+        expiresAt: null,
+        versionId: VERSION_ID,
+      })
       expect(errorText()).toContain('shown once')
     })
 
-    it('refuses to guess a version, before any request', async () => {
+    it('omits versionId so the server can default to the current ready version', async () => {
       const code = await runShareCreate({ host: HOST, id: ARTIFACT_ID, isJson: false })
 
-      expect(code).toBe(2)
-      expect(errorText()).toContain('--version <versionId> is required')
-      expect(mocks.post).not.toHaveBeenCalled()
+      expect(code).toBe(0)
+      expect(postCall().body).toEqual({})
+      expect(outputText()).toContain(VERSION_ID)
     })
   })
 
@@ -178,16 +188,43 @@ describe('share commands', () => {
       expect(postCall().body.expiresAt).toBe('2026-08-02T12:00:00.000Z')
     })
 
-    it('sends a bare ISO timestamp normalised to UTC', async () => {
+    it('sends a bare ISO timestamp only when it is UTC Zulu', async () => {
       await runShareCreate({
         host: HOST,
         id: ARTIFACT_ID,
         versionId: VERSION_ID,
-        expires: '2026-09-01T10:30:00+02:00',
+        expires: '2026-09-01T08:30:00.000Z',
         isJson: false,
       })
 
       expect(postCall().body.expiresAt).toBe('2026-09-01T08:30:00.000Z')
+    })
+
+    it('rejects engine-lenient calendar overflow such as 2027-02-30', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2027-02-30',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('neither an ISO-8601 timestamp nor a duration')
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+
+    it('rejects legacy Date strings that are not documented', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: 'Dec 25 2027',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.post).not.toHaveBeenCalled()
     })
 
     it('reports the absolute expiry it sent', async () => {
