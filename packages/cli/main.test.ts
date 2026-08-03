@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { main } from './src/main.ts'
+import { cliVersion } from './src/version.ts'
 
 /**
  * `parseArgs` applies every declared flag to every command unless something narrows it. These
@@ -130,18 +131,18 @@ describe('version', () => {
     for (const flag of ['--version', '-V', '-v']) {
       written = []
       expect(await main([flag])).toBe(0)
-      expect(stdout().trim()).toBe('0.2.0')
+      expect(stdout().trim()).toBe(cliVersion())
     }
   })
 
   it('prints parseable JSON for --json rather than a bare string', async () => {
     expect(await main(['version', '--json'])).toBe(0)
-    expect(JSON.parse(stdout()) as { version: string }).toEqual({ version: '0.2.0' })
+    expect(JSON.parse(stdout()) as { version: string }).toEqual({ version: cliVersion() })
   })
 
   it('prints parseable JSON for the flag form too', async () => {
     expect(await main(['--version', '--json'])).toBe(0)
-    expect(JSON.parse(stdout()) as { version: string }).toEqual({ version: '0.2.0' })
+    expect(JSON.parse(stdout()) as { version: string }).toEqual({ version: cliVersion() })
   })
 
   it('rejects trailing junk rather than reporting a version for it', async () => {
