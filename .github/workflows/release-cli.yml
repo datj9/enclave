@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # No credentials in the job that runs project code.
           persist-credentials: false
@@ -26,7 +26,7 @@ jobs:
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -68,7 +68,7 @@ jobs:
           test "$bytes" -eq 0 \
             || { echo "a usage error put $bytes bytes on stdout under --json" >&2; exit 1; }
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: npm-tarball
           path: packages/cli/enclave-artifacts-*.tgz
@@ -91,12 +91,12 @@ jobs:
       id-token: write # trusted publishing; no NPM_TOKEN is stored anywhere
 
     steps:
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           name: npm-tarball
 
