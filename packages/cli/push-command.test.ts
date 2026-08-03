@@ -161,6 +161,63 @@ describe('push command', () => {
     expect(stdout).toContain('app.js.map        unsupported (.map)')
   })
 
+  it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
+    const emptyDirectory = join(workspace, 'empty')
+    mkdirSync(emptyDirectory)
+    writeFileSync(join(emptyDirectory, 'app.js'), 'console.log(1)')
+
+    const exitCode = await runPush({
+      directory: emptyDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stdout).toContain('index.html')
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('--dry-run fails an empty directory rather than reporting success', async () => {
+    const emptyDirectory = join(workspace, 'empty')
+    mkdirSync(emptyDirectory)
+
+    const exitCode = await runPush({
+      directory: emptyDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+      error: { code: 'NOTHING_TO_UPLOAD' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('--dry-run fails a bundle over the default file count the same way a real push would', async () => {
+    for (let index = 0; index < 51; index += 1) {
+      writeFileSync(join(projectDirectory, `page-${String(index)}.html`), '<!doctype html>')
+    }
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+      error: { code: 'BUNDLE_TOO_LARGE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
   it('writes the state file inside the pushed directory after a successful push', async () => {
     const exitCode = await runPush({
       directory: projectDirectory,
