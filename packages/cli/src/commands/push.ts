@@ -62,12 +62,13 @@ function kilobytesOf(directory: string, paths: readonly string[]): number {
   return Math.round(totalBytes / BYTES_PER_KILOBYTE)
 }
 
+/** Errors, JSON or human, never land on stdout — `--json` promises stdout is nothing but the result. */
 function reportError(isJson: boolean, code: string, message: string, humanText: string): void {
   if (isJson) {
-    process.stdout.write(`${JSON.stringify({ error: { code, message } })}\n`)
+    process.stderr.write(`${JSON.stringify({ error: { code, message } })}\n`)
     return
   }
-  process.stdout.write(`${humanText}\n`)
+  process.stderr.write(`${humanText}\n`)
 }
 
 function messageOf(error: unknown): string {

@@ -32,6 +32,7 @@ describe('push command', () => {
   let projectDirectory: string
   let configHome: string
   let stdout: string
+  let stderr: string
   let originalConfigHome: string | undefined
   let originalEnvironmentToken: string | undefined
   let originalHost: string | undefined
@@ -62,8 +63,13 @@ describe('push command', () => {
     delete process.env['ENCLAVE_HOST']
 
     stdout = ''
+    stderr = ''
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
       stdout += String(chunk)
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown): boolean => {
+      stderr += String(chunk)
       return true
     })
     vi.mocked(push).mockResolvedValue(SUCCESS_RESULT)
@@ -98,8 +104,8 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('S15')
-    expect(stdout).toContain('.enclave.json exists (artifact 3f2a91c4)')
+    expect(stderr).toContain('S15')
+    expect(stderr).toContain('.enclave.json exists (artifact 3f2a91c4)')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -130,7 +136,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('enclave login')
+    expect(stderr).toContain('enclave login')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -175,7 +181,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('index.html')
+    expect(stderr).toContain('index.html')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -192,7 +198,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
       error: { code: 'NOTHING_TO_UPLOAD' },
     })
     expect(push).not.toHaveBeenCalled()
@@ -212,7 +218,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
       error: { code: 'BUNDLE_TOO_LARGE' },
     })
     expect(push).not.toHaveBeenCalled()
@@ -270,8 +276,8 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('other.example.com')
-    expect(stdout).toContain(HOST)
+    expect(stderr).toContain('other.example.com')
+    expect(stderr).toContain(HOST)
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -291,7 +297,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
       error: { code: 'INVALID_STATE' },
     })
     expect(push).not.toHaveBeenCalled()
@@ -310,8 +316,8 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('http://enclave.example.com')
-    expect(stdout).toContain('https://enclave.example.com')
+    expect(stderr).toContain('http://enclave.example.com')
+    expect(stderr).toContain('https://enclave.example.com')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -349,7 +355,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
       error: { code: 'INVALID_STATE' },
     })
     expect(push).not.toHaveBeenCalled()
@@ -370,7 +376,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
       error: { code: 'INVALID_STATE' },
     })
     expect(push).not.toHaveBeenCalled()
@@ -392,9 +398,9 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('legacy')
-    expect(stdout).toContain('mv ')
-    expect(stdout).toContain('rm ')
+    expect(stderr).toContain('legacy')
+    expect(stderr).toContain('mv ')
+    expect(stderr).toContain('rm ')
     expect(push).not.toHaveBeenCalled()
   })
 })

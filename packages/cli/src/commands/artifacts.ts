@@ -217,7 +217,7 @@ export async function runShow(options: ShowOptions): Promise<number> {
 export async function runRename(options: RenameOptions): Promise<number> {
   const title = options.title.trim()
   if (title === '') {
-    write('✗ a title is required')
+    fail('✗ a title is required')
     return EXIT_USAGE
   }
 
@@ -240,9 +240,9 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
   // Refused before the id is resolved: resolving a prefix costs a request, and there is nothing to
   // send — VISIBILITIES is ['private','org'] and the third privacy level is a share link.
   if (!isVisibility(options.visibility)) {
-    write(`✗ visibility must be private or org, not '${options.visibility}'`)
+    fail(`✗ visibility must be private or org, not '${options.visibility}'`)
     if (options.visibility === 'public') {
-      write('  a share link is how you publish beyond this instance')
+      fail('  a share link is how you publish beyond this instance')
     }
     return EXIT_USAGE
   }

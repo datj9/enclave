@@ -301,15 +301,15 @@ describe('AC 4 — there is no public visibility', () => {
     expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'public' })).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
-    expect(output()).toContain('must be private or org')
-    expect(output()).toContain('share link')
+    expect(errorOutput()).toContain('must be private or org')
+    expect(errorOutput()).toContain('share link')
   })
 
   it('any other unknown visibility exits 2 before any HTTP call', async () => {
     expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'unlisted' })).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
-    expect(output()).toContain("not 'unlisted'")
+    expect(errorOutput()).toContain("not 'unlisted'")
   })
 })
 
@@ -333,7 +333,7 @@ describe('AC 5 — rename sends the title only', () => {
     expect(await runRename({ host: HOST, id: FULL_ID, title: '   ' })).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
-    expect(output()).toContain('a title is required')
+    expect(errorOutput()).toContain('a title is required')
   })
 })
 
