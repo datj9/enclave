@@ -15,11 +15,11 @@ import { runLogout } from './commands/logout.ts'
 import { runPush } from './commands/push.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './commands/shares.ts'
 import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
-import { cliVersion } from './version.ts'
+import { cliVersion, UNKNOWN_VERSION } from './version.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
 
-  enclave version
+  enclave version  [--json]              (also -v, -V, --version)
   enclave login    [--host <host>] [--token <token>]
   enclave logout   [--host <host>]
 
@@ -79,6 +79,21 @@ type CommandHandler = (
   positionals: readonly string[],
   values: ParsedValues,
 ) => Promise<number> | number
+
+/**
+ * `options` is the closed set of flags a command accepts, `--help` aside. Without it `parseArgs`
+ * applies every declared flag to every command, so `rm <id> --dry-run` deletes the artifact while
+ * reading to the user as a rehearsal.
+ */
+interface CommandSpec {
+  readonly options: readonly string[]
+  readonly run: CommandHandler
+}
+
+const ALWAYS_ALLOWED_OPTION = 'help'
+
+/** Every command that reaches the network resolves a host and may need to allow plain http. */
+const NETWORK_OPTIONS = ['host', 'insecure'] as const
 
 class UsageError extends Error {}
 
@@ -140,181 +155,276 @@ function parseVisibility(raw: string | undefined): 'private' | 'org' | undefined
   throw new UsageError(`--visibility must be private or org, got '${raw}'`)
 }
 
-/**
- * Global version only in unambiguous positions — never `argv.includes('--version')`, which would
- * steal `share create --version <id>`.
- */
-function isGlobalVersionRequest(argv: readonly string[]): boolean {
-  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-V')) return true
-  if (argv.length === 1 && argv[0] === 'version') return true
-  if (argv.length === 2 && argv[0] === 'version' && (argv[1] === '--json' || argv[1] === '-V')) {
-    return true
+/** `--json` has a consumer, so the version has to be an object there and a bare line otherwise. */
+function writeVersion(isJson: boolean): number {
+  const version = cliVersion()
+  if (version === UNKNOWN_VERSION) {
+    process.stderr.write(
+      'could not read the CLI package.json — reporting an unknown version\n',
+    )
   }
-  return false
+  process.stdout.write(isJson ? `${JSON.stringify({ version })}\n` : `${version}\n`)
+  return EXIT_OK
 }
 
-const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
-  create: (positionals, values) => {
-    requireArity(positionals, 2)
-    return runShareCreate({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 2, 'id'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-      ...(values.version === undefined ? {} : { versionId: values.version }),
-      ...(values.expires === undefined ? {} : { expires: values.expires }),
-    })
+const VERSION_FLAGS = new Set(['--version', '-V', '-v'])
+
+/**
+ * The version *flags* are handled before `parseArgs` because they are not declared options — but
+ * only in unambiguous leading positions. Never `argv.includes('--version')`, which would steal
+ * `share create <id> --version <uuid>`. Bare `enclave version` is an ordinary command.
+ */
+function globalVersionRequest(argv: readonly string[]): { readonly isJson: boolean } | null {
+  const [first, second, ...rest] = argv
+  if (first === undefined || !VERSION_FLAGS.has(first)) return null
+  if (second === undefined) return { isJson: false }
+  if (second === '--json' && rest.length === 0) return { isJson: true }
+  return null
+}
+
+const SHARE_COMMANDS: Readonly<Record<string, CommandSpec>> = {
+  create: {
+    options: [...NETWORK_OPTIONS, 'version', 'expires', 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 2)
+      return runShareCreate({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 2, 'id'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+        ...(values.version === undefined ? {} : { versionId: values.version }),
+        ...(values.expires === undefined ? {} : { expires: values.expires }),
+      })
+    },
   },
-  list: (positionals, values) => {
-    requireArity(positionals, 2)
-    return runShareList({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 2, 'id'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
+  list: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 2)
+      return runShareList({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 2, 'id'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
-  revoke: (positionals, values) => {
-    requireArity(positionals, 2)
-    return runShareRevoke({
-      host: requireHost(values.host, values.insecure),
-      shareId: requirePositional(positionals, 2, 'shareId'),
-      isInsecureAllowed: values.insecure,
-    })
+  revoke: {
+    options: [...NETWORK_OPTIONS],
+    run: (positionals, values) => {
+      requireArity(positionals, 2)
+      return runShareRevoke({
+        host: requireHost(values.host, values.insecure),
+        shareId: requirePositional(positionals, 2, 'shareId'),
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 }
 
 /** Every command takes the same two arguments, which is what lets this be a table and not a switch. */
-const COMMANDS: Readonly<Record<string, CommandHandler>> = {
-  version: (positionals) => {
-    requireArity(positionals, 0)
-    process.stdout.write(`${cliVersion()}\n`)
-    return EXIT_OK
+const COMMANDS: Readonly<Record<string, CommandSpec>> = {
+  version: {
+    options: ['json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 0)
+      return writeVersion(values.json)
+    },
   },
 
-  login: (positionals, values) => {
-    requireArity(positionals, 0)
-    return runLogin(requireHost(values.host, values.insecure), values.token, values.insecure)
+  login: {
+    options: [...NETWORK_OPTIONS, 'token'],
+    run: (positionals, values) => {
+      requireArity(positionals, 0)
+      return runLogin(requireHost(values.host, values.insecure), values.token, values.insecure)
+    },
   },
 
-  logout: (positionals, values) => {
-    requireArity(positionals, 0)
-    return runLogout(requireHost(values.host, values.insecure))
+  logout: {
+    options: [...NETWORK_OPTIONS],
+    run: (positionals, values) => {
+      requireArity(positionals, 0)
+      return runLogout(requireHost(values.host, values.insecure))
+    },
   },
 
-  push: (positionals, values) => {
-    requireArity(positionals, 1)
-    const visibility = parseVisibility(values.visibility)
-    return runPush({
-      directory: requirePositional(positionals, 1, 'dir'),
-      isNew: values.new,
-      isDryRun: values['dry-run'],
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-      ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
-      ...(values.title === undefined ? {} : { title: values.title }),
-      ...(visibility === undefined ? {} : { visibility }),
-    })
+  push: {
+    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'new', 'dry-run', 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 1)
+      const visibility = parseVisibility(values.visibility)
+      return runPush({
+        directory: requirePositional(positionals, 1, 'dir'),
+        isNew: values.new,
+        isDryRun: values['dry-run'],
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+        ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
+        ...(values.title === undefined ? {} : { title: values.title }),
+        ...(visibility === undefined ? {} : { visibility }),
+      })
+    },
   },
 
-  list: (positionals, values) => {
-    requireArity(positionals, 0)
-    const limit = parseLimit(values.limit)
-    return runList({
-      host: requireHost(values.host, values.insecure),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-      ...(limit === undefined ? {} : { limit }),
-      ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
-    })
+  list: {
+    options: [...NETWORK_OPTIONS, 'limit', 'cursor', 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 0)
+      const limit = parseLimit(values.limit)
+      return runList({
+        host: requireHost(values.host, values.insecure),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+        ...(limit === undefined ? {} : { limit }),
+        ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
+      })
+    },
   },
 
-  show: (positionals, values) => {
-    requireArity(positionals, 1)
-    return runShow({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 1, 'id'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
+  show: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 1)
+      return runShow({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 1, 'id'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 
-  rename: (positionals, values) => {
-    requireArity(positionals, 2)
-    return runRename({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 1, 'id'),
-      title: requirePositional(positionals, 2, 'title'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
+  rename: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 2)
+      return runRename({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 1, 'id'),
+        title: requirePositional(positionals, 2, 'title'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 
-  privacy: (positionals, values) => {
-    requireArity(positionals, 2)
-    return runPrivacy({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 1, 'id'),
-      visibility: requirePositional(positionals, 2, 'visibility'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
+  privacy: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 2)
+      return runPrivacy({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 1, 'id'),
+        visibility: requirePositional(positionals, 2, 'visibility'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 
-  rm: (positionals, values) => {
-    requireArity(positionals, 1)
-    return runRemove({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 1, 'id'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
+  rm: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 1)
+      return runRemove({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 1, 'id'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 
-  restore: (positionals, values) => {
-    requireArity(positionals, 1)
-    return runRestore({
-      host: requireHost(values.host, values.insecure),
-      id: requirePositional(positionals, 1, 'id'),
-      isJson: values.json,
-      isInsecureAllowed: values.insecure,
-    })
-  },
-
-  share: (positionals, values) => {
-    const subcommand = positionals[1] ?? ''
-    const handler = SHARE_HANDLERS[subcommand]
-    if (handler === undefined) {
-      throw new UsageError(
-        `unknown share subcommand '${subcommand}' — expected create, list or revoke`,
-      )
-    }
-    return handler(positionals, values)
+  restore: {
+    options: [...NETWORK_OPTIONS, 'json'],
+    run: (positionals, values) => {
+      requireArity(positionals, 1)
+      return runRestore({
+        host: requireHost(values.host, values.insecure),
+        id: requirePositional(positionals, 1, 'id'),
+        isJson: values.json,
+        isInsecureAllowed: values.insecure,
+      })
+    },
   },
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
-  if (isGlobalVersionRequest(argv)) {
-    process.stdout.write(`${cliVersion()}\n`)
-    return EXIT_OK
+/** `share` is the only two-word command, so the label doubles as the option-table key. */
+function commandLabel(positionals: readonly string[]): string {
+  const command = positionals[0] ?? ''
+  return command === 'share' ? `share ${positionals[1] ?? ''}`.trim() : command
+}
+
+/** Own-property lookups only: inherited members like `toString` are not commands. */
+function specFor(positionals: readonly string[]): CommandSpec | undefined {
+  const command = positionals[0]
+  if (command === undefined) return undefined
+  if (command !== 'share') {
+    return Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined
   }
 
-  let parsed: { values: ParsedValues; positionals: string[] }
+  const subcommand = positionals[1] ?? ''
+  if (!Object.hasOwn(SHARE_COMMANDS, subcommand)) {
+    throw new UsageError(
+      `unknown share subcommand '${subcommand}' — expected create, list or revoke`,
+    )
+  }
+  return SHARE_COMMANDS[subcommand]
+}
+
+interface OptionToken {
+  readonly kind: string
+  readonly name?: string
+}
+
+function suppliedOptions(tokens: readonly OptionToken[]): readonly string[] {
+  return tokens.flatMap((token) =>
+    token.kind === 'option' && token.name !== undefined ? [token.name] : [],
+  )
+}
+
+function rejectForeignOptions(
+  supplied: readonly string[],
+  spec: CommandSpec,
+  label: string,
+): void {
+  const permitted = new Set<string>([...spec.options, ALWAYS_ALLOWED_OPTION])
+  for (const name of supplied) {
+    if (!permitted.has(name)) {
+      throw new UsageError(`--${name} is not an option for '${label}'`)
+    }
+  }
+}
+
+export async function main(argv: readonly string[]): Promise<number> {
+  const versionRequest = globalVersionRequest(argv)
+  if (versionRequest !== null) return writeVersion(versionRequest.isJson)
+
+  let parsed: {
+    values: ParsedValues
+    positionals: readonly string[]
+    tokens: readonly OptionToken[]
+  }
   try {
-    parsed = parseArgs({ args: [...argv], options: OPTION_CONFIG, allowPositionals: true })
+    parsed = parseArgs({
+      args: [...argv],
+      options: OPTION_CONFIG,
+      allowPositionals: true,
+      tokens: true,
+    })
   } catch (error) {
     return usage(error instanceof Error ? error.message : 'could not parse the arguments')
   }
 
-  const { values, positionals } = parsed
+  const { values, positionals, tokens } = parsed
   const command = positionals[0]
   if (values.help || command === undefined) return usage()
 
-  const handler = COMMANDS[command]
-  if (handler === undefined) return usage(`unknown command '${command}'`)
-
   try {
-    return await handler(positionals, values)
+    const spec = specFor(positionals)
+    if (spec === undefined) return usage(`unknown command '${command}'`)
+    rejectForeignOptions(suppliedOptions(tokens), spec, commandLabel(positionals))
+    return await spec.run(positionals, values)
   } catch (error) {
     if (error instanceof UsageError) return usage(error.message)
     throw error

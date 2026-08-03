@@ -35,6 +35,7 @@ const HOST = 'enclave.example.com'
 
 let configDirectory: string
 let originalConfigHome: string | undefined
+let originalEnvironmentToken: string | undefined
 let written: string[]
 let writtenToStderr: string[]
 
@@ -57,6 +58,9 @@ beforeEach(() => {
   configDirectory = mkdtempSync(join(tmpdir(), 'enclave-login-'))
   originalConfigHome = process.env['XDG_CONFIG_HOME']
   process.env['XDG_CONFIG_HOME'] = configDirectory
+  // `login` now reads ENCLAVE_TOKEN, so a developer's own shell must not leak into these cases.
+  originalEnvironmentToken = process.env['ENCLAVE_TOKEN']
+  delete process.env['ENCLAVE_TOKEN']
 
   answer = 'enc_a_valid_looking_token'
   written = []
@@ -76,6 +80,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
   else process.env['XDG_CONFIG_HOME'] = originalConfigHome
+  if (originalEnvironmentToken === undefined) delete process.env['ENCLAVE_TOKEN']
+  else process.env['ENCLAVE_TOKEN'] = originalEnvironmentToken
   rmSync(configDirectory, { recursive: true, force: true })
 })
 
@@ -184,6 +190,32 @@ describe('runLogin', () => {
     expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
       'Bearer enc_from_the_flag',
     )
+  })
+
+  it('skips the prompt and uses ENCLAVE_TOKEN when no --token is supplied', async () => {
+    // CI has no TTY to answer the prompt, and --help already promises ENCLAVE_TOKEN works.
+    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    respondWith(200)
+
+    expect(await runLogin(HOST)).toBe(0)
+    expect(createInterfaceMock).not.toHaveBeenCalled()
+    expect(readCredentials()[HOST]?.token).toBe('enc_from_the_environment')
+  })
+
+  it('prefers --token over ENCLAVE_TOKEN', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    respondWith(200)
+
+    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(0)
+    expect(readCredentials()[HOST]?.token).toBe('enc_from_the_flag')
+  })
+
+  it('falls back to the prompt when ENCLAVE_TOKEN is set but empty', async () => {
+    process.env['ENCLAVE_TOKEN'] = '   '
+    respondWith(200)
+
+    expect(await runLogin(HOST)).toBe(0)
+    expect(readCredentials()[HOST]?.token).toBe('enc_a_valid_looking_token')
   })
 
   it('refuses a redirected probe without saving the token', async () => {

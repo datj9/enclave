@@ -54,6 +54,7 @@ in cleartext. Pass `--insecure` to opt in anyway.
 ## Commands
 
 ```
+enclave version  [--json]              (also -v, -V, --version)
 enclave login    [--host <host>] [--token <token>]
 enclave logout   [--host <host>]
 
@@ -74,6 +75,11 @@ enclave share revoke <shareId>
 `<id>` takes a full artifact uuid or any unambiguous prefix of eight characters or more.
 
 The host resolves from `--host`, then `ENCLAVE_HOST`. `push` also falls back to `.enclave.json`.
+The token resolves from `--token`, then `ENCLAVE_TOKEN`, then the stored credentials — `login`
+included, so it runs unattended in CI.
+
+Flags are scoped to the command that declares them. A flag a command does not take exits `2`
+rather than being silently discarded — `enclave rm <id> --dry-run` refuses instead of deleting.
 
 ## What gets uploaded
 

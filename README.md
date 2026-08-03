@@ -98,6 +98,7 @@ regardless.
 The rest of the surface:
 
 ```
+enclave version  [--json]              (also -v, -V, --version)
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org]
@@ -117,10 +118,14 @@ enclave share revoke <shareId>
 `<id>` accepts a full artifact uuid or any unambiguous prefix of eight characters or more. The
 host resolves from `--host`, then `ENCLAVE_HOST`, and for `push` also from `.enclave.json`.
 
-Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
-diagnostics and errors always go to stderr, so `| jq` is safe on every path. Exit `1` means the
-command ran and the answer was no (not found, refused, unreachable, token rejected); exit `2`
-means the invocation was malformed and the command never ran.
+Every command that returns something takes `--json`, which puts the raw API object on stdout and
+**nothing else** — diagnostics and errors always go to stderr, so `| jq` is safe on every path.
+Exit `1` means the command ran and the answer was no (not found, refused, unreachable, token
+rejected); exit `2` means the invocation was malformed and the command never ran.
+
+Flags are scoped to the command that declares them, as listed above. A flag a command does not
+take exits `2` rather than being silently discarded — `enclave rm <id> --dry-run` refuses instead
+of deleting.
 
 There is no `enclave token create`, deliberately: the server refuses to let an API token mint
 another token, so a leaked token cannot outlive its own revocation. Mint tokens in the browser.

@@ -229,7 +229,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
     harness.setResponder(() => ({ items: [], nextCursor: 'stuck-cursor' }))
 
     expect(await runList({ host: HOST, isJson: false })).toBe(1)
-    expect(errorOutput()).toContain('did not terminate')
+    expect(errorOutput()).toContain('cursor it had already given')
   })
 
   it('sanitizes control characters out of a title before it reaches the column layout', async () => {
@@ -243,6 +243,46 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
     expect(await runList({ host: HOST, isJson: false })).toBe(0)
     expect(output()).not.toContain('\x1b')
     expect(output()).toContain('evil')
+  })
+
+  it('sanitizes bidi overrides, which reorder a rendered row without any control byte', async () => {
+    respondWith({
+      'GET /api/v1/artifacts': {
+        items: [{ ...KANBAN, title: 'invoice\u202egnp.xcod' }],
+        nextCursor: null,
+      },
+    })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(output()).not.toContain('\u202e')
+    expect(output()).toContain('invoice')
+  })
+
+  it('sanitizes zero-width characters that pad a title past its apparent width', async () => {
+    respondWith({
+      'GET /api/v1/artifacts': {
+        items: [{ ...KANBAN, title: 'quiet\u200btitle\ufeff' }],
+        nextCursor: null,
+      },
+    })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(output()).not.toContain('\u200b')
+    expect(output()).not.toContain('\ufeff')
+  })
+})
+
+describe('exit codes distinguish a bad argument from a failed lookup', () => {
+  it('exits 2 for a prefix too short to resolve, like every other unusable value', async () => {
+    expect(await runShow({ host: HOST, id: 'abc', isJson: false })).toBe(2)
+    expect(errorOutput()).toContain('at least 8')
+    expect(harness.calls).toHaveLength(0)
+  })
+
+  it('still exits 1 when a well-formed prefix matches nothing', async () => {
+    respondWith({ 'GET /api/v1/artifacts': { items: [], nextCursor: null } })
+
+    expect(await runShow({ host: HOST, id: 'deadbeef', isJson: false })).toBe(1)
   })
 })
 

@@ -103,7 +103,9 @@ function reportFailure(error: unknown): number {
 
 function clientFor(host: string, isInsecureAllowed = false): ApiClient | null {
   const token = tokenFor(host)
-  if (token === null) {
+  // An empty stored token is not a credential. Sending `Authorization: Bearer ` puts it on the
+  // wire and surfaces the server's scope error instead of the local one the user can act on.
+  if (token === null || token === '') {
     fail(`not logged in to ${host} — run: enclave login --host ${host}`)
     return null
   }

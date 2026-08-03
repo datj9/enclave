@@ -24,29 +24,31 @@ export function legacyStatePath(directory: string): string {
   return join(dirname(resolve(directory)), '.enclave.json')
 }
 
-function parseState(raw: unknown, path: string): ProjectState {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new StateError(`${path} is not a valid state file — delete it or fix it by hand`)
-  }
+/** One validator for both directions, so a record that cannot be read back can never be written. */
+function invalidReason(raw: unknown): string | null {
+  if (typeof raw !== 'object' || raw === null) return 'it is not a JSON object'
   const { host, artifactId, lastPushedVersionNo } = raw as Record<string, unknown>
 
-  if (typeof host !== 'string' || host === '') {
-    throw new StateError(`${path} has an invalid or missing host — delete it or fix it by hand`)
-  }
+  if (typeof host !== 'string' || host === '') return 'the host is missing or invalid'
   if (typeof artifactId !== 'string' || !UUID_PATTERN.test(artifactId)) {
-    throw new StateError(
-      `${path} has an invalid or missing artifactId — delete it or fix it by hand`,
-    )
+    return 'the artifactId is missing or is not a uuid'
   }
   if (
     typeof lastPushedVersionNo !== 'number' ||
     !Number.isInteger(lastPushedVersionNo) ||
     lastPushedVersionNo < 1
   ) {
-    throw new StateError(
-      `${path} has an invalid or missing lastPushedVersionNo — delete it or fix it by hand`,
-    )
+    return 'the lastPushedVersionNo is missing or is not a positive integer'
   }
+  return null
+}
+
+function parseState(raw: unknown, path: string): ProjectState {
+  const reason = invalidReason(raw)
+  if (reason !== null) {
+    throw new StateError(`${path} is unusable — ${reason}. Delete it or fix it by hand`)
+  }
+  const { host, artifactId, lastPushedVersionNo } = raw as ProjectState
   return { host, artifactId, lastPushedVersionNo }
 }
 
@@ -63,9 +65,14 @@ export function readState(directory: string): ProjectState | null {
   return parseState(raw, path)
 }
 
+/**
+ * The bricked state file that motivated this guard had `artifactId: undefined`, which
+ * `JSON.stringify` drops silently — so an `=== ''` test would have written it through unchanged.
+ * Validating the whole record is what makes this defence hold the next time a response shape shifts.
+ */
 export function writeState(directory: string, state: ProjectState): void {
-  if (state.artifactId === '') {
-    throw new StateError('refusing to write .enclave.json without an artifactId')
-  }
-  writeFileSync(statePath(directory), `${JSON.stringify(state, null, 2)}\n`)
+  const path = statePath(directory)
+  const reason = invalidReason(state)
+  if (reason !== null) throw new StateError(`refusing to write ${path} — ${reason}`)
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`)
 }
