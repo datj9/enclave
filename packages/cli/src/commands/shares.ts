@@ -19,11 +19,6 @@ const MILLISECONDS_PER_HOUR = 3_600_000
 const EXPIRES_COLUMN_WIDTH = 24
 const NEVER = 'never'
 
-/** Every route wraps its payload (`jsonData` in `src/lib/http.ts`); the client returns it verbatim. */
-interface DataEnvelope<TData> {
-  readonly data: TData
-}
-
 /** `token` is readable exactly once — `src/lib/shares/manage.ts` never selects `token_hash` again. */
 interface CreatedShareLink {
   readonly shareId: string
@@ -194,11 +189,11 @@ export async function runShareCreate(options: ShareCreateOptions): Promise<numbe
 
   try {
     const artifactId = await resolveArtifactId(client, options.id)
-    const response = await client.post<DataEnvelope<CreatedShareLink>>(
+    const response = await client.post<CreatedShareLink>(
       `/api/v1/artifacts/${artifactId}/shares`,
       createRequestBody(versionId, expiresAt),
     )
-    printCreated(response.data, versionId, expiresAt, options.isJson)
+    printCreated(response, versionId, expiresAt, options.isJson)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error)
@@ -248,10 +243,8 @@ export async function runShareList(options: ShareListOptions): Promise<number> {
 
   try {
     const artifactId = await resolveArtifactId(client, options.id)
-    const response = await client.get<DataEnvelope<ShareLinkList>>(
-      `/api/v1/artifacts/${artifactId}/shares`,
-    )
-    printLinks(response.data.items, options.isJson)
+    const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
+    printLinks(response.items, options.isJson)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error)
