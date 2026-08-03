@@ -10,6 +10,7 @@ import { push } from '../push-core/src/index.ts'
 import type { PushResult } from '../push-core/src/index.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
+import { USER_AGENT } from './src/version.ts'
 
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
@@ -122,6 +123,19 @@ describe('push command', () => {
 
     expect(exitCode).toBe(0)
     expect(push).toHaveBeenCalledTimes(1)
+  })
+
+  it('identifies itself with a User-Agent naming the CLI and its version', async () => {
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(vi.mocked(push).mock.calls[0]?.[0]).toMatchObject({ userAgent: USER_AGENT })
   })
 
   it('exits 1 when no token is available', async () => {

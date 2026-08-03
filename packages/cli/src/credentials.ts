@@ -22,11 +22,32 @@ function assertPrivate(path: string): void {
   }
 }
 
+function assertShape(path: string, parsed: unknown): asserts parsed is Record<string, HostCredential> {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new CredentialError(`${path} does not contain a credentials object — remove it and log in again`)
+  }
+  for (const [host, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value !== 'object' || value === null || typeof (value as { token?: unknown }).token !== 'string') {
+      throw new CredentialError(
+        `${path} has a malformed entry for '${host}' — remove it and log in again`,
+      )
+    }
+  }
+}
+
 export function readCredentials(): Record<string, HostCredential> {
   const path = credentialsPath()
   if (!existsSync(path)) return {}
   assertPrivate(path)
-  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, HostCredential>
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    throw new CredentialError(`${path} is not valid JSON — remove it and log in again`)
+  }
+  assertShape(path, parsed)
+  return parsed
 }
 
 /**

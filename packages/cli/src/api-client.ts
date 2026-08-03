@@ -1,4 +1,5 @@
 import { baseUrlFor } from '../../push-core/src/index.ts'
+import { USER_AGENT } from './version.ts'
 
 export class ApiError extends Error {
   readonly status: number
@@ -68,7 +69,10 @@ export function apiClient(host: string, token: string, isInsecureAllowed = false
   const baseUrl = baseUrlFor(host, isInsecureAllowed)
 
   async function send(method: string, path: string, body?: unknown): Promise<Response> {
-    const headers: Record<string, string> = { authorization: `Bearer ${token}` }
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${token}`,
+      'user-agent': USER_AGENT,
+    }
     if (body !== undefined) headers['content-type'] = 'application/json'
 
     let response: Response

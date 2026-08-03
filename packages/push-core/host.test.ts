@@ -21,6 +21,8 @@ describe('normaliseHost', () => {
     ['Enclave.Example.COM', 'https://enclave.example.com'],
     ['enclave.example.com:443', 'https://enclave.example.com'],
     ['example.com.', 'https://example.com'],
+    ['http://127.0.0.2:3000', 'http://127.0.0.2:3000'],
+    ['http://127.9.9.9', 'http://127.9.9.9'],
   ]
 
   it.each(acceptedCases)('normalises %s to %s', (input, expected) => {
@@ -36,6 +38,8 @@ describe('normaliseHost', () => {
     'http://',
     'http://enclave.example.com',
     'http://localhost:3000/settings/tokens',
+    'enclave.example.com?token=abc',
+    'https://enclave.example.com#fragment',
   ]
 
   it.each(rejectedCases)('throws InvalidHostError for %j', (input) => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, apiClient } from './src/api-client.ts'
+import { USER_AGENT } from './src/version.ts'
 
 function jsonResponse(status: number, payload: unknown): Response {
   return {
@@ -82,6 +83,16 @@ describe('apiClient envelope handling', () => {
     await client.get('/api/v1/artifacts')
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://192.168.1.5:3000/api/v1/artifacts')
+  })
+
+  it('identifies itself with a User-Agent naming the CLI and its version', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], nextCursor: null } }))
+
+    const client = apiClient('https://enclave.example.com', 'token')
+    await client.get('/api/v1/artifacts')
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>
+    expect(headers['user-agent']).toBe(USER_AGENT)
   })
 
   it('remove sends DELETE and reads no body', async () => {

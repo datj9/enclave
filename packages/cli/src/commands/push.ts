@@ -14,6 +14,7 @@ import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
 import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
 import type { ProjectState } from '../state.ts'
+import { USER_AGENT } from '../version.ts'
 
 export interface PushCommandOptions {
   readonly directory: string
@@ -63,12 +64,26 @@ function kilobytesOf(directory: string, paths: readonly string[]): number {
 }
 
 /** Errors, JSON or human, never land on stdout — `--json` promises stdout is nothing but the result. */
-function reportError(isJson: boolean, code: string, message: string, humanText: string): void {
+function reportError(
+  isJson: boolean,
+  code: string,
+  message: string,
+  humanText: string,
+  details: Readonly<Record<string, unknown>> = {},
+): void {
   if (isJson) {
-    process.stderr.write(`${JSON.stringify({ error: { code, message } })}\n`)
+    const error =
+      Object.keys(details).length === 0 ? { code, message } : { code, message, details }
+    process.stderr.write(`${JSON.stringify({ error })}\n`)
     return
   }
   process.stderr.write(`${humanText}\n`)
+  if (Object.keys(details).length > 0) {
+    const rendered = Object.entries(details)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(' ')
+    process.stderr.write(`  ${rendered}\n`)
+  }
 }
 
 function messageOf(error: unknown): string {
@@ -140,7 +155,8 @@ function reportDryRun(options: PushCommandOptions): number {
   } catch (error) {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
     const text = messageOf(error)
-    reportError(options.isJson, code, text, `✗ ${text}`)
+    const details = error instanceof PushError ? error.details : {}
+    reportError(options.isJson, code, text, `✗ ${text}`, details)
     return 1
   }
 
@@ -220,11 +236,13 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
       title: options.title ?? basename(resolve(options.directory)),
       visibility: options.visibility ?? 'private',
       isInsecureAllowed: options.isInsecureAllowed ?? false,
+      userAgent: USER_AGENT,
     })
   } catch (error) {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
     const text = messageOf(error)
-    reportError(options.isJson, code, text, `✗ ${text}`)
+    const details = error instanceof PushError ? error.details : {}
+    reportError(options.isJson, code, text, `✗ ${text}`, details)
     return 1
   }
 

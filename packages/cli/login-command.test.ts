@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { readCredentials } from './src/credentials.ts'
 import { runLogin } from './src/commands/login.ts'
+import { USER_AGENT } from './src/version.ts'
 
 /**
  * readline reads the token from a real stdin, which a test cannot supply. Faking the interface is
@@ -112,6 +113,14 @@ describe('runLogin', () => {
     expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
       'Bearer enc_a_valid_looking_token',
     )
+  })
+
+  it('identifies itself with a User-Agent naming the CLI and its version', async () => {
+    respondWith(200)
+    await runLogin(HOST)
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect((call?.[1]?.headers as Record<string, string>)['user-agent']).toBe(USER_AGENT)
   })
 
   it('explains which scopes are missing on 403 rather than printing a bare status', async () => {

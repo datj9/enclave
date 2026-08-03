@@ -15,9 +15,11 @@ import { runLogout } from './commands/logout.ts'
 import { runPush } from './commands/push.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './commands/shares.ts'
 import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
+import { cliVersion } from './version.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
 
+  enclave version
   enclave login    [--host <host>] [--token <token>]
   enclave logout   [--host <host>]
 
@@ -96,7 +98,9 @@ function usage(message?: string): number {
 
 /** `push` is the exception: it recovers a host from .enclave.json, so it resolves its own. */
 function requireHost(flag: string | undefined, isInsecureAllowed: boolean): string {
-  const host = flag ?? process.env['ENCLAVE_HOST']
+  const fromFlag = flag?.trim()
+  const fromEnv = process.env['ENCLAVE_HOST']?.trim()
+  const host = fromFlag !== undefined && fromFlag !== '' ? fromFlag : fromEnv
   if (host === undefined || host === '') {
     throw new UsageError('no host — pass --host or set ENCLAVE_HOST')
   }
@@ -114,6 +118,13 @@ function requirePositional(positionals: readonly string[], index: number, name: 
   return value
 }
 
+/** Reject trailing junk so `share create <id> EXTRA` cannot mint a credential while discarding input. */
+function requireArity(positionals: readonly string[], maxIndex: number): void {
+  if (positionals.length > maxIndex + 1) {
+    throw new UsageError(`unexpected argument '${positionals[maxIndex + 1] ?? ''}'`)
+  }
+}
+
 function parseLimit(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined
   const parsed = Number(raw)
@@ -123,53 +134,91 @@ function parseLimit(raw: string | undefined): number | undefined {
   return parsed
 }
 
+function parseVisibility(raw: string | undefined): 'private' | 'org' | undefined {
+  if (raw === undefined) return undefined
+  if (raw === 'private' || raw === 'org') return raw
+  throw new UsageError(`--visibility must be private or org, got '${raw}'`)
+}
+
+/**
+ * Global version only in unambiguous positions — never `argv.includes('--version')`, which would
+ * steal `share create --version <id>`.
+ */
+function isGlobalVersionRequest(argv: readonly string[]): boolean {
+  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-V')) return true
+  if (argv.length === 1 && argv[0] === 'version') return true
+  if (argv.length === 2 && argv[0] === 'version' && (argv[1] === '--json' || argv[1] === '-V')) {
+    return true
+  }
+  return false
+}
+
 const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
-  create: (positionals, values) =>
-    runShareCreate({
+  create: (positionals, values) => {
+    requireArity(positionals, 2)
+    return runShareCreate({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
       ...(values.version === undefined ? {} : { versionId: values.version }),
       ...(values.expires === undefined ? {} : { expires: values.expires }),
-    }),
-  list: (positionals, values) =>
-    runShareList({
+    })
+  },
+  list: (positionals, values) => {
+    requireArity(positionals, 2)
+    return runShareList({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
-  revoke: (positionals, values) =>
-    runShareRevoke({
+    })
+  },
+  revoke: (positionals, values) => {
+    requireArity(positionals, 2)
+    return runShareRevoke({
       host: requireHost(values.host, values.insecure),
       shareId: requirePositional(positionals, 2, 'shareId'),
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 }
 
 /** Every command takes the same two arguments, which is what lets this be a table and not a switch. */
 const COMMANDS: Readonly<Record<string, CommandHandler>> = {
-  login: (_positionals, values) =>
-    runLogin(requireHost(values.host, values.insecure), values.token, values.insecure),
+  version: (positionals) => {
+    requireArity(positionals, 0)
+    process.stdout.write(`${cliVersion()}\n`)
+    return EXIT_OK
+  },
 
-  logout: (_positionals, values) => runLogout(requireHost(values.host, values.insecure)),
+  login: (positionals, values) => {
+    requireArity(positionals, 0)
+    return runLogin(requireHost(values.host, values.insecure), values.token, values.insecure)
+  },
 
-  push: (positionals, values) =>
-    runPush({
+  logout: (positionals, values) => {
+    requireArity(positionals, 0)
+    return runLogout(requireHost(values.host, values.insecure))
+  },
+
+  push: (positionals, values) => {
+    requireArity(positionals, 1)
+    const visibility = parseVisibility(values.visibility)
+    return runPush({
       directory: requirePositional(positionals, 1, 'dir'),
       isNew: values.new,
       isDryRun: values['dry-run'],
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-      ...(values.host === undefined ? {} : { host: values.host }),
+      ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
       ...(values.title === undefined ? {} : { title: values.title }),
-      ...(values.visibility === undefined
-        ? {}
-        : { visibility: values.visibility as 'private' | 'org' }),
-    }),
+      ...(visibility === undefined ? {} : { visibility }),
+    })
+  },
 
-  list: (_positionals, values) => {
+  list: (positionals, values) => {
+    requireArity(positionals, 0)
     const limit = parseLimit(values.limit)
     return runList({
       host: requireHost(values.host, values.insecure),
@@ -180,47 +229,57 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
     })
   },
 
-  show: (positionals, values) =>
-    runShow({
+  show: (positionals, values) => {
+    requireArity(positionals, 1)
+    return runShow({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 
-  rename: (positionals, values) =>
-    runRename({
+  rename: (positionals, values) => {
+    requireArity(positionals, 2)
+    return runRename({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       title: requirePositional(positionals, 2, 'title'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 
-  privacy: (positionals, values) =>
-    runPrivacy({
+  privacy: (positionals, values) => {
+    requireArity(positionals, 2)
+    return runPrivacy({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       visibility: requirePositional(positionals, 2, 'visibility'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 
-  rm: (positionals, values) =>
-    runRemove({
+  rm: (positionals, values) => {
+    requireArity(positionals, 1)
+    return runRemove({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 
-  restore: (positionals, values) =>
-    runRestore({
+  restore: (positionals, values) => {
+    requireArity(positionals, 1)
+    return runRestore({
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
       isInsecureAllowed: values.insecure,
-    }),
+    })
+  },
 
   share: (positionals, values) => {
     const subcommand = positionals[1] ?? ''
@@ -235,6 +294,11 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
+  if (isGlobalVersionRequest(argv)) {
+    process.stdout.write(`${cliVersion()}\n`)
+    return EXIT_OK
+  }
+
   let parsed: { values: ParsedValues; positionals: string[] }
   try {
     parsed = parseArgs({ args: [...argv], options: OPTION_CONFIG, allowPositionals: true })
