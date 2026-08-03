@@ -118,7 +118,7 @@ describe('share commands', () => {
       })
 
       expect(code).toBe(0)
-      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN)
+      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, false)
       expect(postCall().path).toBe(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
       expect(postCall().body).toEqual({ versionId: VERSION_ID })
     })

@@ -73,6 +73,17 @@ describe('apiClient envelope handling', () => {
     await expect(client.get('/api/v1/artifacts')).rejects.toBeInstanceOf(ApiError)
   })
 
+  it('preserves isInsecureAllowed so a non-loopback http host is not refused a second time', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], nextCursor: null } }))
+
+    // 192.168.1.5 already passed normaliseHost(..., true) once when the CLI resolved --host; the
+    // client must not re-run that check without the flag and refuse it the second time.
+    const client = apiClient('http://192.168.1.5:3000', 'token', true)
+    await client.get('/api/v1/artifacts')
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://192.168.1.5:3000/api/v1/artifacts')
+  })
+
   it('remove sends DELETE and reads no body', async () => {
     fetchMock.mockResolvedValue(jsonResponse(204, undefined))
 

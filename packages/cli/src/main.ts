@@ -129,6 +129,7 @@ const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
       ...(values.version === undefined ? {} : { versionId: values.version }),
       ...(values.expires === undefined ? {} : { expires: values.expires }),
     }),
@@ -137,11 +138,13 @@ const SHARE_HANDLERS: Readonly<Record<string, CommandHandler>> = {
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 2, 'id'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
   revoke: (positionals, values) =>
     runShareRevoke({
       host: requireHost(values.host, values.insecure),
       shareId: requirePositional(positionals, 2, 'shareId'),
+      isInsecureAllowed: values.insecure,
     }),
 }
 
@@ -171,6 +174,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
     return runList({
       host: requireHost(values.host, values.insecure),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
       ...(limit === undefined ? {} : { limit }),
       ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
     })
@@ -181,6 +185,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
 
   rename: (positionals, values) =>
@@ -189,6 +194,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       id: requirePositional(positionals, 1, 'id'),
       title: requirePositional(positionals, 2, 'title'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
 
   privacy: (positionals, values) =>
@@ -197,6 +203,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       id: requirePositional(positionals, 1, 'id'),
       visibility: requirePositional(positionals, 2, 'visibility'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
 
   rm: (positionals, values) =>
@@ -204,6 +211,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
 
   restore: (positionals, values) =>
@@ -211,6 +219,7 @@ const COMMANDS: Readonly<Record<string, CommandHandler>> = {
       host: requireHost(values.host, values.insecure),
       id: requirePositional(positionals, 1, 'id'),
       isJson: values.json,
+      isInsecureAllowed: values.insecure,
     }),
 
   share: (positionals, values) => {
