@@ -5,6 +5,6 @@ export function runLogout(host: string): number {
     process.stdout.write(`✓ forgot ${host}\n`)
     return 0
   }
-  process.stdout.write(`no credential for ${host}\n`)
+  process.stderr.write(`no credential for ${host}\n`)
   return 0
 }

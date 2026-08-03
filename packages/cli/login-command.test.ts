@@ -35,9 +35,15 @@ const HOST = 'enclave.example.com'
 let configDirectory: string
 let originalConfigHome: string | undefined
 let written: string[]
+let writtenToStderr: string[]
 
 function stdout(): string {
   return written.join('')
+}
+
+/** Failures go to stderr, never stdout — the same contract every other command keeps. */
+function stderrOutput(): string {
+  return writtenToStderr.join('')
 }
 
 function respondWith(status: number): void {
@@ -53,9 +59,14 @@ beforeEach(() => {
 
   answer = 'enc_a_valid_looking_token'
   written = []
+  writtenToStderr = []
   createInterfaceMock.mockClear()
   vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
     written.push(String(chunk))
+    return true
+  })
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    writtenToStderr.push(String(chunk))
     return true
   })
 })
@@ -73,16 +84,16 @@ describe('runLogin', () => {
     await runLogin(HOST)
 
     // The probe reads, so an artifacts:write-only token 403s. Instruction and probe must agree.
-    expect(stdout()).toContain('artifacts:read')
-    expect(stdout()).toContain('artifacts:write')
-    expect(stdout()).toContain('shares:write')
+    expect(stderrOutput()).toContain('artifacts:read')
+    expect(stderrOutput()).toContain('artifacts:write')
+    expect(stderrOutput()).toContain('shares:write')
   })
 
   it('points at the token page on the resolved base url', async () => {
     respondWith(200)
     await runLogin(HOST)
 
-    expect(stdout()).toContain(`https://${HOST}/settings/tokens`)
+    expect(stderrOutput()).toContain(`https://${HOST}/settings/tokens`)
   })
 
   it('saves the token and returns 0 when the probe succeeds', async () => {
@@ -107,8 +118,8 @@ describe('runLogin', () => {
     respondWith(403)
 
     expect(await runLogin(HOST)).toBe(1)
-    expect(stdout()).toContain('missing a scope')
-    expect(stdout()).not.toContain('the server returned 403')
+    expect(stderrOutput()).toContain('missing a scope')
+    expect(stderrOutput()).not.toContain('the server returned 403')
     expect(readCredentials()[HOST]).toBeUndefined()
   })
 
@@ -116,7 +127,7 @@ describe('runLogin', () => {
     respondWith(401)
 
     expect(await runLogin(HOST)).toBe(1)
-    expect(stdout()).toContain('rejected')
+    expect(stderrOutput()).toContain('rejected')
     expect(readCredentials()[HOST]).toBeUndefined()
   })
 
@@ -124,7 +135,7 @@ describe('runLogin', () => {
     globalThis.fetch = vi.fn(async () => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch
 
     expect(await runLogin(HOST)).toBe(1)
-    expect(stdout()).toContain('could not reach')
+    expect(stderrOutput()).toContain('could not reach')
     expect(readCredentials()[HOST]).toBeUndefined()
   })
 
@@ -150,7 +161,7 @@ describe('runLogin', () => {
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[0]).toBe('http://127.0.0.1:3000/api/v1/artifacts?limit=1')
-    expect(stdout()).toContain('Create a token at http://127.0.0.1:3000/settings/tokens')
+    expect(stderrOutput()).toContain('Create a token at http://127.0.0.1:3000/settings/tokens')
   })
 
   it('skips the prompt and uses the given token when --token is supplied', async () => {
@@ -173,8 +184,13 @@ describe('runLogin with a real stdin close', () => {
   beforeEach(() => {
     originalStdin = process.stdin
     written = []
+    writtenToStderr = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
       written.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      writtenToStderr.push(String(chunk))
       return true
     })
   })
@@ -202,7 +218,7 @@ describe('runLogin with a real stdin close', () => {
     fakeStdin.end()
 
     await expect(resultPromise).resolves.toBe(1)
-    expect(stdout()).toContain('no token was entered')
+    expect(stderrOutput()).toContain('no token was entered')
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })
@@ -213,10 +229,15 @@ describe('runLogin masking a real stdin', () => {
 
   beforeEach(() => {
     originalStdin = process.stdin
-    originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+    originalIsTTY = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY')
     written = []
+    writtenToStderr = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
       written.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      writtenToStderr.push(String(chunk))
       return true
     })
   })
@@ -224,8 +245,8 @@ describe('runLogin masking a real stdin', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true })
-    if (originalIsTTY === undefined) delete (process.stdout as { isTTY?: boolean }).isTTY
-    else Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    if (originalIsTTY === undefined) delete (process.stderr as { isTTY?: boolean }).isTTY
+    else Object.defineProperty(process.stderr, 'isTTY', originalIsTTY)
   })
 
   async function loginTyping(keystrokes: string): Promise<number> {
@@ -244,31 +265,31 @@ describe('runLogin masking a real stdin', () => {
   }
 
   it('emits a real ESC byte before [K rather than the literal characters', async () => {
-    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
+    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
 
     await loginTyping('abc')
 
-    expect(stdout()).toContain('\x1b[K')
+    expect(stderrOutput()).toContain('\x1b[K')
   })
 
   it('renders a mask width that tracks the real buffer, not a stale keypress count', async () => {
-    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
+    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
 
     // Ctrl-U clears the buffer entirely; the old code kept counting keypresses regardless.
     const result = await loginTyping('abcdef\x15xy')
 
     expect(result).toBe(0)
-    const maskFrames = written.filter((chunk) => chunk.startsWith('\rToken: '))
+    const maskFrames = writtenToStderr.filter((chunk) => chunk.startsWith('\rToken: '))
     expect(maskFrames).toContain('\rToken: \x1b[K')
     expect(maskFrames[maskFrames.length - 1]).toBe(`\rToken: ${'*'.repeat(2)}\x1b[K`)
   })
 
-  it('writes no mask and no escape codes when stdout is not a TTY', async () => {
-    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true })
+  it('writes no mask and no escape codes when stderr is not a TTY', async () => {
+    Object.defineProperty(process.stderr, 'isTTY', { value: false, configurable: true })
 
     await loginTyping('abc')
 
-    expect(written.some((chunk) => chunk.includes('*'))).toBe(false)
-    expect(written.some((chunk) => chunk.includes('\x1b'))).toBe(false)
+    expect(writtenToStderr.some((chunk) => chunk.includes('*'))).toBe(false)
+    expect(writtenToStderr.some((chunk) => chunk.includes('\x1b'))).toBe(false)
   })
 })
