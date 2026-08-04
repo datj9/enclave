@@ -82,6 +82,12 @@ export function dailyLimitFor(usingOwnKey: boolean): number {
   return usingOwnKey ? env.QUOTA_GENERATIONS_PER_DAY_OWN_KEY : env.QUOTA_GENERATIONS_PER_DAY
 }
 
+export function hourlyLimitFor(usingOwnKey: boolean): number {
+  return usingOwnKey
+    ? env.RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY
+    : env.RATE_LIMIT_GENERATIONS_PER_HOUR
+}
+
 async function countGenerationsSince(userId: string, since: Date): Promise<number> {
   const [row] = await db
     .select({ total: count() })
@@ -127,7 +133,7 @@ export async function readQuotaUsage(
   now: Date = new Date(),
 ): Promise<QuotaUsage> {
   const windowStart = new Date(now.getTime() - HOUR_SECONDS * MILLIS_PER_SECOND)
-  const hourlyLimit = env.RATE_LIMIT_GENERATIONS_PER_HOUR
+  const hourlyLimit = hourlyLimitFor(usingOwnKey)
   const hourlyCount = await countGenerationsSince(userId, windowStart)
 
   const hourlySlotFreesAt =

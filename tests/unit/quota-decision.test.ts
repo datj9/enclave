@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { decideQuota, utcWindowDate, type QuotaUsage } from '@/lib/quota'
+import { decideQuota, hourlyLimitFor, utcWindowDate, type QuotaUsage } from '@/lib/quota'
 
 /**
  * The decision half of §5.7, without a database. The counter arithmetic against real rows is
@@ -95,6 +95,16 @@ describe('decideQuota', () => {
     const ownKey = usageWith({ hourlyCount: 2, dailyLimit: 1000, dailyCount: 3 })
 
     expect(decideQuota(ownKey, NOW)).toMatchObject({ code: 'RATE_LIMITED' })
+  })
+})
+
+describe('hourlyLimitFor', () => {
+  it('returns the instance-key hourly limit by default', () => {
+    expect(hourlyLimitFor(false)).toBe(10)
+  })
+
+  it('returns the looser own-key hourly limit for a user on their own key', () => {
+    expect(hourlyLimitFor(true)).toBe(100)
   })
 })
 
