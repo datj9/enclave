@@ -55,9 +55,11 @@ async function* streamAnthropic(input: GenerateInput): AsyncGenerator<string> {
   } catch (error) {
     if (input.signal.aborted) throw error
     throw toProviderError(error)
+  } finally {
+    // Reported from `finally` so a throw or a consumer `return()` still accounts for the
+    // tokens the provider already charged for.
+    input.onUsage?.({ tokensIn, tokensOut })
   }
-
-  input.onUsage?.({ tokensIn, tokensOut })
 }
 
 export const anthropicProvider: ArtifactProvider = {
