@@ -32,6 +32,7 @@ describe('parseEnv', () => {
     const parsed = parseEnv(REQUIRED_ENV)
 
     expect(parsed.RATE_LIMIT_GENERATIONS_PER_HOUR).toBe(10)
+    expect(parsed.RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY).toBe(100)
     expect(parsed.QUOTA_GENERATIONS_PER_DAY).toBe(100)
     expect(parsed.QUOTA_GENERATIONS_PER_DAY_OWN_KEY).toBe(1000)
     expect(parsed.BUNDLE_MAX_FILES).toBe(50)
@@ -97,6 +98,12 @@ describe('parseEnv', () => {
       /RATE_LIMIT_GENERATIONS_PER_HOUR/,
     )
     expect(() => parseEnv(envWith({ BUNDLE_MAX_FILES: '-1' }))).toThrow(/BUNDLE_MAX_FILES/)
+  })
+
+  it('rejects a non-numeric RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY', () => {
+    expect(() =>
+      parseEnv(envWith({ RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY: 'not-a-number' })),
+    ).toThrow(/RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY/)
   })
 
   it('reports every offending variable at once, not just the first', () => {
