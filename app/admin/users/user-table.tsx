@@ -3,6 +3,11 @@
 import { useState } from 'react'
 
 import type { AdminUserSummary } from '@/lib/admin/users'
+import {
+  formatInstantLocal,
+  formatInstantStable,
+  useIsMountedForLocalTime,
+} from '@/lib/format/instant'
 import styles from '../admin.module.css'
 
 /**
@@ -21,10 +26,6 @@ interface ErrorResponse {
 }
 
 const GENERIC_FAILURE = 'That did not work. Reload and try again.'
-
-function formatMoment(iso: string | null): string {
-  return iso === null ? '—' : new Date(iso).toLocaleString()
-}
 
 async function failureMessage(response: Response): Promise<string> {
   try {
@@ -49,6 +50,11 @@ export function UserTable({
   const [people, setPeople] = useState(initialUsers)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
+
+  function formatMoment(iso: string | null): string {
+    return isMountedForLocalTime ? formatInstantLocal(iso) : formatInstantStable(iso)
+  }
 
   async function refresh(): Promise<void> {
     const response = await fetch('/api/v1/users')
