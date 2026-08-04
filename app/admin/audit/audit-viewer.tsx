@@ -22,11 +22,21 @@ export interface ActorOption {
 
 const GENERIC_FAILURE = 'That query did not work. Check the filters and try again.'
 
-function queryFrom(form: FormData, cursor: string | null): string {
+const MOMENT_PARAMETERS: ReadonlySet<string> = new Set(['from', 'to'])
+
+export function queryFrom(form: FormData, cursor: string | null): string {
   const parameters = new URLSearchParams()
   for (const name of ['action', 'actorUserId', 'artifactId', 'from', 'to']) {
     const value = String(form.get(name) ?? '').trim()
-    if (value !== '') parameters.set(name, value)
+    if (value === '') continue
+    if (!MOMENT_PARAMETERS.has(name)) {
+      parameters.set(name, value)
+      continue
+    }
+    // `datetime-local` has no zone; the API contract is an absolute instant.
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) continue
+    parameters.set(name, parsed.toISOString())
   }
   if (cursor !== null) parameters.set('cursor', cursor)
   return parameters.toString()

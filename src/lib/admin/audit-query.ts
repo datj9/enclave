@@ -14,6 +14,7 @@ export const MAX_AUDIT_LIMIT = 200
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CURSOR_SEPARATOR = '|'
+const ZONED_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/
 
 export interface AuditCursor {
   readonly at: string
@@ -64,8 +65,11 @@ function parseLimit(rawLimit: string | undefined): number | undefined {
   return limit < 1 || limit > MAX_AUDIT_LIMIT ? undefined : limit
 }
 
+/** Zone-less and date-only values are refused: `Date.parse` would read them in the server's own
+ *  offset (date-time) or as UTC (date-only), so the same field would change reference frame. */
 function parseMoment(rawMoment: string | undefined): Date | undefined | 'invalid' {
   if (rawMoment === undefined) return undefined
+  if (!ZONED_ISO_PATTERN.test(rawMoment)) return 'invalid'
   const parsed = Date.parse(rawMoment)
   return Number.isNaN(parsed) ? 'invalid' : new Date(parsed)
 }
