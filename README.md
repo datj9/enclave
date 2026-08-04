@@ -109,13 +109,19 @@ enclave privacy  <id> private|org
 enclave rm       <id>
 enclave restore  <id>
 
-enclave share create <id> [--version <versionId>] [--expires <7d|ISO>] [--json]
+enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
 enclave share list   <id> [--json]
 enclave share revoke <shareId>
 ```
 
 `<id>` accepts a full artifact uuid or any unambiguous prefix of eight characters or more. The
 host resolves from `--host`, then `ENCLAVE_HOST`, and for `push` also from `.enclave.json`.
+
+`--expires` takes a duration (`7d`, `12h`, `2w`); a date (`2026-08-10`) or a date-time
+(`2026-08-10T14:30`), both resolved in this machine's local timezone; or an ISO-8601 instant with
+an explicit zone (`2026-08-10T23:59:00+07:00`, `2026-08-10T16:59:00Z`), taken exactly as given.
+Anything else is refused. The resolved instant, in both frames, is printed to stderr before the
+share link is created.
 
 Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
 diagnostics and errors always go to stderr, so `| jq` is safe on every path. Exit `1` means the
