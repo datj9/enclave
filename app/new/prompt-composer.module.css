@@ -22,6 +22,36 @@
   gap: var(--space-sm);
 }
 
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+/* motion.md frequency rule — seen on every visit, so no entrance animation on mount. */
+.starter {
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .starter:hover {
+    border-color: var(--color-ink-2);
+  }
+}
+
+.cancelledNotice {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
 /* motion.md § live generation stream — one functional indicator, and it keeps running under
    prefers-reduced-motion because it reports state rather than decorating it. */
 .indicator {
