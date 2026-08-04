@@ -153,6 +153,23 @@ async function generationRowsFor(userId: string) {
   return db.select().from(generations).where(eq(generations.userId, userId))
 }
 
+/**
+ * Reading and cancelling the body reader doesn't stop `pumpStream` — nothing wires the
+ * cancellation to it — so the row keeps updating in the background after `POST` returns.
+ */
+async function waitForGenerationToSettle(
+  userId: string,
+  timeoutMs = 3000,
+): Promise<Awaited<ReturnType<typeof generationRowsFor>>[number]> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const [generation] = await generationRowsFor(userId)
+    if (generation !== undefined && generation.status !== 'streaming') return generation
+    if (Date.now() > deadline) throw new Error('generation row did not settle before the timeout')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
 describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
   let ownerId = ''
   let store: ObjectStore
@@ -415,6 +432,60 @@ describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
       status: 'failed',
       errorCode: 'CLIENT_ABORTED',
     })
+  })
+
+  it('records success, not failure, when the reader is cancelled after persistence completes', async () => {
+    const response = await POST(generateRequest({ prompt: 'a countdown timer' }))
+    const reader = response.body?.getReader()
+    if (reader === undefined) throw new Error('the response has no readable body')
+
+    // The parser loop over these two short deltas finishes long before `persistArtifact`'s real
+    // Postgres/S3 round trips do, so by the time this single read resolves and cancels, only the
+    // (now guarded) `done` enqueue is left to fail — persistence has already committed.
+    await reader.read()
+    await reader.cancel()
+
+    const generation = await waitForGenerationToSettle(ownerId)
+    expect(generation).toMatchObject({
+      status: 'succeeded',
+      errorCode: null,
+      tokensIn: TOKENS_IN,
+      tokensOut: TOKENS_OUT,
+    })
+    expect(generation.artifactId).not.toBeNull()
+
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.ownerId, ownerId))
+    expect(artifact?.id).toBe(generation.artifactId)
+  })
+
+  it('finalizes the provider generator when a mid-stream reader cancel aborts the pump', async () => {
+    const providerState = { hasFinalized: false }
+    const slowSecondDeltaProvider: ArtifactProvider = {
+      id: 'anthropic',
+      async *generate() {
+        try {
+          yield WELL_FORMED[0] ?? ''
+          // Long enough that the reader cancel below always lands before this resumes, so the
+          // loop's next enqueue throws mid-stream and the generator is left suspended, not
+          // naturally completed — the only way `iterator.return` actually does anything.
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          yield WELL_FORMED[1] ?? ''
+        } finally {
+          providerState.hasFinalized = true
+        }
+      },
+    }
+    mocks.selection = selectionWith({ provider: slowSecondDeltaProvider })
+
+    const response = await POST(generateRequest({ prompt: 'a countdown timer' }))
+    const reader = response.body?.getReader()
+    if (reader === undefined) throw new Error('the response has no readable body')
+
+    await reader.read()
+    await reader.cancel()
+
+    await waitForGenerationToSettle(ownerId)
+    expect(providerState.hasFinalized).toBe(true)
   })
 
   it('never writes the prompt anywhere but the generations row', async () => {
