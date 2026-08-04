@@ -38,8 +38,9 @@ export async function purgeTrashedArtifacts(
     .where(
       and(
         isNotNull(artifacts.deletedAt),
-        // Postgres `now()`, never app-server time (§7 clock skew).
-        lt(artifacts.deletedAt, sql`now() - make_interval(days => ${retentionDays})`),
+        // Postgres `now()`, never app-server time (§7 clock skew). `hours`, not `days`: `days` is
+        // a calendar field on a timestamptz and drifts across a DST transition (TASK-6).
+        lt(artifacts.deletedAt, sql`now() - make_interval(hours => ${retentionDays * 24})`),
       ),
     )
 

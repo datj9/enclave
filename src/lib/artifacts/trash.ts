@@ -28,14 +28,16 @@ export interface TrashPage {
 /**
  * Counted in Postgres, never from `Date.now()`: the retention window is judged on the database
  * clock everywhere else (§7), and a trash view that disagreed with the purge job by an hour of
- * clock skew would promise time the artifact does not have.
+ * clock skew would promise time the artifact does not have. `hours`, not `days`: `days` is a
+ * calendar field on a timestamptz and drifts across a DST transition (TASK-6) — the purge
+ * predicate must stay textually identical to this one apart from `lt` vs `gte`.
  */
 function daysRemainingExpression(retentionDays: number) {
   return sql<number>`greatest(
     ceil(
       extract(
         epoch from
-          ${artifacts.deletedAt} + make_interval(days => ${retentionDays}) - now()
+          ${artifacts.deletedAt} + make_interval(hours => ${retentionDays * 24}) - now()
       ) / 86400
     ),
     0

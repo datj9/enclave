@@ -318,6 +318,15 @@ list and the served type cannot drift apart.
 | `TRASH_RETENTION_DAYS` | no | `30` | How long a deleted artifact can be restored. After this, the purge job removes rows and objects. Share links are killed at delete time, not at purge time. |
 | `AUDIT_RETENTION_DAYS` | no | `365` | How long audit rows are kept. Audit rows survive artifact purge, keeping `artifact_id` — that is deliberate, so a deletion is still accountable. |
 
+### Retention windows are exact hours, not calendar days
+
+Every deadline is stored as `timestamp with time zone`, so Postgres always holds an absolute
+instant. The app pins its own process `TZ` and its Postgres session `TimeZone` to UTC, so
+`TRASH_RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` are enforced as exact N x 24 h windows — not
+calendar days — and are unaffected by the database server's `timezone` setting or by daylight
+saving transitions. A `TRASH_RETENTION_DAYS=30` window is 720 hours on every deployment, regardless
+of what your Postgres provider's parameter group sets `timezone` to.
+
 ## Running it
 
 The app is one Next.js process. Two shapes work:

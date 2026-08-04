@@ -531,4 +531,59 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       expect(await authorizeArtifactRead(created.id, shareViewerRef(share.shareId))).toBeNull()
     })
   })
+
+  describe('the retention window is an exact duration, not calendar days (TASK-6)', () => {
+    it('an hour-field interval stays exact across a DST transition; a day-field interval does not', async () => {
+      // Literal instants rather than `now()`, so the result never depends on the date the suite
+      // runs on. Confirmed by hand with `psql` before this fix (`set local timezone =
+      // 'America/New_York'` then the same two expressions): withDays read 2026-11-24T21:00:00.000Z
+      // (an hour late, across the Nov 1 DST fall-back) and withHours read 2026-11-24T20:00:00.000Z.
+      const [row] = await db.transaction(async (transaction) => {
+        await transaction.execute(sql`set local timezone = 'America/New_York'`)
+        // The driver hands a transaction-scoped `execute` back the Postgres text form (no `T`, a
+        // two-digit offset — the same caveat src/lib/shares/clock.ts documents), not a parsed Date.
+        return await transaction.execute<{ withDays: string; withHours: string }>(sql`
+          select
+            (timestamptz '2026-10-25T20:00:00Z' + make_interval(days => 30)) as "withDays",
+            (timestamptz '2026-10-25T20:00:00Z' + make_interval(hours => 720)) as "withHours"
+        `)
+      })
+
+      expect(row === undefined ? undefined : new Date(row.withDays).toISOString()).toBe(
+        '2026-11-24T21:00:00.000Z',
+      )
+      expect(row === undefined ? undefined : new Date(row.withHours).toISOString()).toBe(
+        '2026-11-24T20:00:00.000Z',
+      )
+    })
+
+    it('purges past the exact 720-hour boundary and leaves the row alone one hour short, even under a foreign session timezone', async () => {
+      const due = await createOwnedArtifact('Exactly past the 720-hour window')
+      const notDue = await createOwnedArtifact('One hour inside the 720-hour window')
+      await softDeleteArtifact({ artifactId: due.id, viewerRef: userViewerRef(aliceId) })
+      await softDeleteArtifact({ artifactId: notDue.id, viewerRef: userViewerRef(aliceId) })
+
+      await db.transaction(async (transaction) => {
+        await transaction.execute(sql`set local timezone = 'America/New_York'`)
+        await transaction
+          .update(artifacts)
+          .set({ deletedAt: sql`now() - interval '720 hours' - interval '1 second'` })
+          .where(eq(artifacts.id, due.id))
+        await transaction
+          .update(artifacts)
+          .set({ deletedAt: sql`now() - interval '719 hours'` })
+          .where(eq(artifacts.id, notDue.id))
+      })
+
+      await purgeTrashedArtifacts(store, RETENTION_DAYS)
+
+      expect(await artifactRow(due.id)).toBeUndefined()
+      expect(await artifactRow(notDue.id)).toBeDefined()
+    })
+
+    it('pins the pooled session TimeZone to UTC', async () => {
+      const [row] = await db.execute<{ timezone: string }>(sql`select current_setting('timezone') as "timezone"`)
+      expect(row?.timezone).toBe('UTC')
+    })
+  })
 })
