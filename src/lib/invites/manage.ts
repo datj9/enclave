@@ -13,8 +13,6 @@ import { inviteUrl, mintInviteToken } from './tokens'
  * Never log an invite token and never put one in an audit row or an error message (§8).
  */
 
-const MILLIS_PER_HOUR = 3_600_000
-
 export interface CreateInviteInput {
   readonly createdBy: string
   readonly email: string | null
@@ -46,14 +44,19 @@ export interface InviteSummary {
 
 export async function createInvite(input: CreateInviteInput): Promise<CreatedInvite> {
   const { plaintext, tokenHash } = mintInviteToken()
-  const expiresAt = new Date(Date.now() + input.expiresInHours * MILLIS_PER_HOUR)
 
   const [row] = await db
     .insert(invites)
-    .values({ email: input.email, tokenHash, createdBy: input.createdBy, expiresAt })
-    .returning({ id: invites.id })
+    .values({
+      email: input.email,
+      tokenHash,
+      createdBy: input.createdBy,
+      expiresAt: raw`now() + make_interval(hours => ${input.expiresInHours})`,
+    })
+    .returning({ id: invites.id, expiresAt: invites.expiresAt })
 
   if (row === undefined) throw new HttpError('INTERNAL_ERROR', 'Could not create the invite')
+  const expiresAt = row.expiresAt
 
   await recordAuditEvent({
     action: 'user.invite',
@@ -70,14 +73,15 @@ export async function createInvite(input: CreateInviteInput): Promise<CreatedInv
   }
 }
 
+/** `expiresAt` is compared on the database clock, mirroring src/lib/invites/redeem.ts:52. */
 function statusOf(row: {
   readonly usedAt: Date | null
   readonly revokedAt: Date | null
-  readonly expiresAt: Date
+  readonly isExpired: boolean
 }): InviteStatus {
   if (row.usedAt !== null) return 'used'
   if (row.revokedAt !== null) return 'revoked'
-  return row.expiresAt.getTime() <= Date.now() ? 'expired' : 'outstanding'
+  return row.isExpired ? 'expired' : 'outstanding'
 }
 
 /** Never selects `token_hash`: the list must not expose anything derived from the secret. */
@@ -87,6 +91,7 @@ export async function listInvites(): Promise<readonly InviteSummary[]> {
       id: invites.id,
       email: invites.email,
       expiresAt: invites.expiresAt,
+      isExpired: raw<boolean>`${invites.expiresAt} <= now()`,
       usedAt: invites.usedAt,
       usedBy: invites.usedBy,
       revokedAt: invites.revokedAt,
