@@ -62,6 +62,16 @@ interface ShareListBody {
       readonly lastViewedAt: string | null
       readonly revokedAt: string | null
     }[]
+    readonly databaseNow: string
+  }
+}
+
+interface ValidationErrorBody {
+  readonly error: {
+    readonly code: string
+    readonly details: {
+      readonly issues: readonly { readonly field: string; readonly message: string }[]
+    }
   }
 }
 
@@ -182,6 +192,7 @@ async function shareRow(shareId: string) {
       revokedAt: shareLinks.revokedAt,
       tokenHash: shareLinks.tokenHash,
       versionId: shareLinks.versionId,
+      expiresAt: shareLinks.expiresAt,
     })
     .from(shareLinks)
     .where(eq(shareLinks.id, shareId))
@@ -292,6 +303,49 @@ describe.skipIf(!database)('S5 share links', () => {
       expect(response.status).toBe(422)
     })
 
+    it('accepts an explicit +07:00 offset and stores the equivalent UTC instant', async () => {
+      const response = await createShareRoute(
+        createShareRequest(aliceToken, {
+          versionId: versionIds[0],
+          expiresAt: '2030-08-10T07:00:00+07:00',
+        }),
+        routeContext({ id: artifactId }),
+      )
+      const body = (await response.json()) as CreatedShareBody
+
+      expect(response.status).toBe(201)
+      const row = await shareRow(body.data.shareId)
+      expect(row.expiresAt?.toISOString()).toBe('2030-08-10T00:00:00.000Z')
+    })
+
+    it('accepts a bare Z offset unchanged', async () => {
+      const response = await createShareRoute(
+        createShareRequest(aliceToken, {
+          versionId: versionIds[0],
+          expiresAt: '2030-08-10T00:00:00Z',
+        }),
+        routeContext({ id: artifactId }),
+      )
+
+      expect(response.status).toBe(201)
+    })
+
+    it('422s a zone-less expiresAt and names the reason in details.issues', async () => {
+      const response = await createShareRoute(
+        createShareRequest(aliceToken, {
+          versionId: versionIds[0],
+          expiresAt: '2030-08-10T07:00:00',
+        }),
+        routeContext({ id: artifactId }),
+      )
+      const body = (await response.json()) as ValidationErrorBody
+
+      expect(response.status).toBe(422)
+      expect(body.error.details.issues.length).toBeGreaterThan(0)
+      expect(body.error.details.issues[0]).toMatchObject({ field: 'expiresAt' })
+      expect(body.error.details.issues[0]?.message.length).toBeGreaterThan(0)
+    })
+
     it("404s another member on a private artifact, so nothing confirms it exists", async () => {
       const response = await createShareRoute(
         createShareRequest(bobToken, { versionId: versionIds[0] }),
@@ -336,6 +390,36 @@ describe.skipIf(!database)('S5 share links', () => {
       expect(body.data.items.map((item) => item.shareId)).toContain(created.shareId)
       expect(raw).not.toContain(created.token)
       expect(raw).not.toContain('"token"')
+    })
+
+    it('carries the database clock alongside the items', async () => {
+      await share(versionIds[1] ?? '')
+
+      const response = await listSharesRoute(
+        new Request(`${SHARES_URL}/${artifactId}/shares`, {
+          headers: { authorization: `Bearer ${aliceToken}` },
+        }),
+        routeContext({ id: artifactId }),
+      )
+      const body = (await response.json()) as ShareListBody
+
+      expect(Number.isNaN(Date.parse(body.data.databaseNow))).toBe(false)
+    })
+
+    it('still returns a databaseNow when the artifact has zero share links', async () => {
+      const empty = await createArtifactWithVersions(aliceId, 1)
+
+      const response = await listSharesRoute(
+        new Request(`${SHARES_URL}/${empty.id}/shares`, {
+          headers: { authorization: `Bearer ${aliceToken}` },
+        }),
+        routeContext({ id: empty.id }),
+      )
+      const body = (await response.json()) as ShareListBody
+
+      expect(response.status).toBe(200)
+      expect(body.data.items).toEqual([])
+      expect(Number.isNaN(Date.parse(body.data.databaseNow))).toBe(false)
     })
 
     it('offers every ready version to pin, newest first, flagging the current one', async () => {
@@ -518,7 +602,7 @@ describe.skipIf(!database)('S5 share links', () => {
       expect(row.viewCount).toBe(2)
       expect(row.lastViewedAt).not.toBeNull()
 
-      const summary = (await listShareLinks(artifactId, `user:${aliceId}`)).find(
+      const summary = (await listShareLinks(artifactId, `user:${aliceId}`)).items.find(
         (item) => item.shareId === created.shareId,
       )
       expect(summary?.viewCount).toBe(2)

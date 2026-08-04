@@ -18,19 +18,20 @@ const MAX_TOKEN_NAME_LENGTH = 100
 const createTokenBodySchema = z.object({
   name: z.string().trim().min(1).max(MAX_TOKEN_NAME_LENGTH),
   scopes: z.array(z.enum(API_TOKEN_SCOPES)).min(1),
-  expiresAt: z.iso
-    .datetime()
-    .optional()
-    .refine((value) => value === undefined || new Date(value) > new Date(), {
-      message: 'expiresAt must be in the future',
-    }),
+  expiresAt: z.iso.datetime({ offset: true }).optional(),
 })
 
 function parseCreateTokenBody(body: unknown) {
   const parsed = createTokenBodySchema.safeParse(body)
   if (!parsed.success) {
     throw new HttpError('VALIDATION_FAILED', 'The request body is not valid', {
-      details: { fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)') },
+      details: {
+        fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)'),
+        issues: parsed.error.issues.map((issue) => ({
+          field: issue.path.join('.') || '(root)',
+          message: issue.message,
+        })),
+      },
     })
   }
   return parsed.data

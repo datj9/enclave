@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
 const createShareBodySchema = z
   .object({
     versionId: z.uuid(),
-    expiresAt: z.iso.datetime().optional(),
+    expiresAt: z.iso.datetime({ offset: true }).optional(),
   })
   // Refused rather than ignored: a misspelled `expiresAt` must not silently create a link that
   // never expires.
@@ -40,7 +40,13 @@ function parseCreateShareBody(body: unknown) {
   const parsed = createShareBodySchema.safeParse(body)
   if (!parsed.success) {
     throw new HttpError('VALIDATION_FAILED', 'The request body is not valid', {
-      details: { fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)') },
+      details: {
+        fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)'),
+        issues: parsed.error.issues.map((issue) => ({
+          field: issue.path.join('.') || '(root)',
+          message: issue.message,
+        })),
+      },
     })
   }
   return parsed.data
@@ -73,7 +79,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     const principal = await requireApiPrincipal(request, 'shares:write')
     const { id } = await context.params
 
-    return jsonData({ items: await listShareLinks(id, viewerRefOf(principal)) })
+    return jsonData(await listShareLinks(id, viewerRefOf(principal)))
   } catch (error) {
     return toErrorResponse(error)
   }

@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { and, eq, sql } from 'drizzle-orm'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GET as listArtifactsRoute, POST as createArtifactRoute } from '@app/api/v1/artifacts/route'
 import { db } from '@/db'
@@ -17,6 +17,7 @@ import {
   revokeApiToken,
 } from '@/lib/auth/bearer'
 import { resetRateLimits } from '@/lib/rate-limit'
+import { databaseNowEpoch, epochToDate } from '@/lib/shares/clock'
 import { createTestStore, probeServices } from './services'
 
 /**
@@ -34,6 +35,16 @@ if (!servicesReady) {
   )
 }
 
+const mocks = vi.hoisted(() => ({
+  sessionUser: null as { id: string; email: string; role: string; isActive: boolean } | null,
+}))
+
+vi.mock('@/lib/auth/session', () => ({
+  getSessionUser: () => Promise.resolve(mocks.sessionUser),
+}))
+
+const { POST: createTokenRoute } = await import('@app/api/v1/tokens/route')
+
 const ALICE_EMAIL = 'api-token-alice@example.test'
 const BOB_EMAIL = 'api-token-bob@example.test'
 
@@ -50,6 +61,15 @@ interface ListBody {
 
 interface ErrorBody {
   readonly error: { readonly code: string; readonly message: string }
+}
+
+interface ValidationErrorBody {
+  readonly error: {
+    readonly code: string
+    readonly details: {
+      readonly issues: readonly { readonly field: string; readonly message: string }[]
+    }
+  }
 }
 
 let aliceId = ''
@@ -119,6 +139,38 @@ async function errorCodeOf(response: Response): Promise<string> {
   return ((await response.json()) as ErrorBody).error.code
 }
 
+const TOKENS_URL = 'http://app.example.com/api/v1/tokens'
+
+function createTokenRequest(body: unknown): Request {
+  return new Request(TOKENS_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+/** Reads Postgres's own clock, the way `assertFutureExpiry` does (§7 clock skew). */
+async function currentDatabaseNow(): Promise<Date> {
+  const [row] = await db.execute<{ databaseNow: string | number }>(
+    sql`select ${databaseNowEpoch} as "databaseNow"`,
+  )
+  if (row === undefined) throw new Error('could not read the database clock')
+  return epochToDate(row.databaseNow)
+}
+
+async function tokenNamesFor(userId: string): Promise<readonly string[]> {
+  const rows = await db.select({ name: apiTokens.name }).from(apiTokens).where(eq(apiTokens.userId, userId))
+  return rows.map((row) => row.name)
+}
+
+async function tokenCreateAuditMetadataFor(userId: string): Promise<string> {
+  const rows = await db
+    .select({ metadata: auditLog.metadata })
+    .from(auditLog)
+    .where(and(eq(auditLog.actorUserId, userId), eq(auditLog.action, 'token.create')))
+  return JSON.stringify(rows)
+}
+
 describe.skipIf(!servicesReady)('scoped API tokens', () => {
   beforeAll(async () => {
     aliceId = await createUser(ALICE_EMAIL)
@@ -133,6 +185,7 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
   beforeEach(() => {
     // The per-IP limiter counts failed bearer attempts; every test starts with a full budget.
     resetRateLimits()
+    mocks.sessionUser = { id: aliceId, email: ALICE_EMAIL, role: 'member', isActive: true }
   })
 
   describe('scope matrix, every scope set against every guarded endpoint', () => {
@@ -433,6 +486,103 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
       const serialized = JSON.stringify(rows)
       expect(serialized).toContain(created.id)
       expect(serialized).not.toContain(created.plaintext)
+    })
+  })
+
+  describe('POST /api/v1/tokens expiresAt contract', () => {
+    it('accepts an explicit +00:00 offset and stores the same instant', async () => {
+      const response = await createTokenRoute(
+        createTokenRequest({
+          name: 'offset-token',
+          scopes: ['artifacts:read'],
+          expiresAt: '2030-08-10T00:00:00+00:00',
+        }),
+      )
+      const body = (await response.json()) as { readonly data: { readonly expiresAt: string } }
+
+      expect(response.status).toBe(201)
+      expect(body.data.expiresAt).toBe('2030-08-10T00:00:00.000Z')
+    })
+
+    it('422s a zone-less expiresAt and names the reason in details.issues', async () => {
+      const response = await createTokenRoute(
+        createTokenRequest({
+          name: 'zoneless-token',
+          scopes: ['artifacts:read'],
+          expiresAt: '2030-08-10T00:00:00',
+        }),
+      )
+      const body = (await response.json()) as ValidationErrorBody
+
+      expect(response.status).toBe(422)
+      expect(body.error.details.issues.length).toBeGreaterThan(0)
+      expect(body.error.details.issues[0]).toMatchObject({ field: 'expiresAt' })
+    })
+
+    it('422s an expiry already past on the database clock, leaving no row and no audit event', async () => {
+      const response = await createTokenRoute(
+        createTokenRequest({
+          name: 'dead-on-arrival',
+          scopes: ['artifacts:read'],
+          expiresAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+      )
+      const body = (await response.json()) as ErrorBody
+
+      expect(response.status).toBe(422)
+      expect(body.error.code).toBe('VALIDATION_FAILED')
+      expect(body.error.message).toBe('expiresAt must be in the future')
+      expect(await tokenNamesFor(aliceId)).not.toContain('dead-on-arrival')
+      expect(await tokenCreateAuditMetadataFor(aliceId)).not.toContain('dead-on-arrival')
+    })
+  })
+
+  /**
+   * §7 clock skew. The guard must read Postgres's clock, not Node's — a token whose deadline is
+   * only "future" because the app process is behind the database must still be refused.
+   */
+  describe('token expiry is judged on the database clock, not Node\'s', () => {
+    it('rejects an expiry that is future only by a Node clock running behind Postgres', async () => {
+      const databaseNow = await currentDatabaseNow()
+      const expiresAt = new Date(databaseNow.getTime() - 2 * 60_000)
+
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        // Node's clock reads 5 minutes behind the database's, so the old `new Date() > new
+        // Date()` guard would have read `expiresAt` (dbNow - 2m) as still ahead of "now".
+        vi.setSystemTime(new Date(databaseNow.getTime() - 5 * 60_000))
+        expect(expiresAt.getTime()).toBeGreaterThan(Date.now())
+
+        await expect(
+          createApiToken({
+            userId: aliceId,
+            name: 'skewed-token',
+            scopes: ['artifacts:read'],
+            expiresAt,
+          }),
+        ).rejects.toMatchObject({ code: 'VALIDATION_FAILED', message: 'expiresAt must be in the future' })
+      } finally {
+        vi.useRealTimers()
+      }
+
+      expect(await tokenNamesFor(aliceId)).not.toContain('skewed-token')
+    })
+
+    it('rejects an expiry equal to a database clock snapshot, matching the <= boundary', async () => {
+      // Time only moves forward, so by the time `assertFutureExpiry` re-reads the clock this
+      // snapshot is guaranteed to be at or before it — the exact `<=` boundary this exercises.
+      const snapshot = await currentDatabaseNow()
+
+      await expect(
+        createApiToken({
+          userId: aliceId,
+          name: 'boundary-token',
+          scopes: ['artifacts:read'],
+          expiresAt: snapshot,
+        }),
+      ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+
+      expect(await tokenNamesFor(aliceId)).not.toContain('boundary-token')
     })
   })
 })

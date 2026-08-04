@@ -8,6 +8,7 @@ import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
 import { requireSessionUser } from '@/lib/api/guards'
+import { databaseNowEpoch, epochToDate } from '@/lib/shares/clock'
 import { enforceAuthRateLimit } from './rate-limit-auth'
 
 /**
@@ -90,9 +91,29 @@ export function bearerTokenFromHeaders(headers: Headers): string | null {
   return credential === '' ? null : credential
 }
 
+/**
+ * §7 clock skew: an expiry judged against the Node clock can accept a deadline Postgres already
+ * considers past, so this reads the same clock `createShareLink` checks against (manage.ts:85).
+ * Skipped entirely for a never-expiring token so that shape never pays for a round trip.
+ */
+async function assertFutureExpiry(expiresAt: Date | null): Promise<void> {
+  if (expiresAt === null) return
+
+  const [row] = await db.execute<{ databaseNow: string | number }>(
+    sql`select ${databaseNowEpoch} as "databaseNow"`,
+  )
+  if (row !== undefined && expiresAt <= epochToDate(row.databaseNow)) {
+    throw new HttpError('VALIDATION_FAILED', 'expiresAt must be in the future', {
+      details: { fields: ['expiresAt'] },
+    })
+  }
+}
+
 export async function createApiToken(input: CreateApiTokenInput): Promise<CreatedApiToken> {
-  const { plaintext, tokenHash } = mintApiToken()
   const expiresAt = input.expiresAt ?? null
+  await assertFutureExpiry(expiresAt)
+
+  const { plaintext, tokenHash } = mintApiToken()
 
   const [row] = await db
     .insert(apiTokens)
