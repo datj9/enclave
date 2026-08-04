@@ -158,7 +158,7 @@ async function pumpStream(
     tokensOut: usage.tokensOut,
   })
 
-  controller.enqueue(encodeSseEvent('done', created))
+  tryEnqueue(controller, encodeSseEvent('done', created))
 }
 
 /** A disconnected client cannot be told anything, so enqueueing after a cancel is not an error. */
@@ -180,7 +180,13 @@ function buildEventStream(context: StreamContext): ReadableStream<Uint8Array> {
         await pumpStream(context, controller)
       } catch (error) {
         const code = failureCodeOf(error, context.input.signal)
-        await finishGeneration(context.generationId, { status: 'failed', errorCode: code })
+        const usage = context.usage()
+        await finishGeneration(context.generationId, {
+          status: 'failed',
+          errorCode: code,
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+        })
 
         if (code !== CLIENT_ABORTED) {
           const message =
@@ -188,7 +194,13 @@ function buildEventStream(context: StreamContext): ReadableStream<Uint8Array> {
           tryEnqueue(controller, encodeSseEvent('error', { code, message }))
         }
       } finally {
-        controller.close()
+        // A cancelled reader has already closed the stream; closing again throws and would
+        // skip finalizing the provider generator, which is the one thing that must still run.
+        try {
+          controller.close()
+        } catch {
+          // Already closed by the client.
+        }
         await context.iterator.return?.(undefined)
       }
     },
