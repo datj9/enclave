@@ -25,6 +25,9 @@ export default async function DashboardPage() {
         <p className={styles.wordmark}>enclave</p>
         <div className={styles.identity}>
           <span className={styles.email}>{sessionUser.email}</span>
+          <a className="button-primary" href="/new">
+            New artifact
+          </a>
           <a className="button-secondary" href="/trash">
             Trash
           </a>
@@ -59,6 +62,9 @@ function EmptyState() {
         Describe what you want and enclave generates it, then you choose who can see it — only you,
         everyone on this instance, or anyone holding a share link.
       </p>
+      <a className={`button-primary ${styles.cta}`} href="/new">
+        Describe your first artifact
+      </a>
     </div>
   )
 }
