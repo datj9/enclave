@@ -185,7 +185,10 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
   beforeEach(() => {
     // The per-IP limiter counts failed bearer attempts; every test starts with a full budget.
     resetRateLimits()
-    mocks.sessionUser = { id: aliceId, email: ALICE_EMAIL, role: 'member', isActive: true }
+    // Default null: requireApiPrincipal falls back to the session cookie when there is no bearer.
+    // Token-creation describes set a live session; scope-matrix cases must not authenticate as Alice
+    // if a future test forgets the Authorization header.
+    mocks.sessionUser = null
   })
 
   describe('scope matrix, every scope set against every guarded endpoint', () => {
@@ -490,6 +493,10 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
   })
 
   describe('POST /api/v1/tokens expiresAt contract', () => {
+    beforeEach(() => {
+      mocks.sessionUser = { id: aliceId, email: ALICE_EMAIL, role: 'member', isActive: true }
+    })
+
     it('accepts an explicit +00:00 offset and stores the same instant', async () => {
       const response = await createTokenRoute(
         createTokenRequest({
@@ -516,7 +523,24 @@ describe.skipIf(!servicesReady)('scoped API tokens', () => {
 
       expect(response.status).toBe(422)
       expect(body.error.details.issues.length).toBeGreaterThan(0)
-      expect(body.error.details.issues[0]).toMatchObject({ field: 'expiresAt' })
+      expect(body.error.details.issues[0]).toMatchObject({
+        field: 'expiresAt',
+        message: expect.stringContaining('explicit zone'),
+      })
+    })
+
+    it('accepts lowercase z as an explicit zone (RFC 3339 §5.6)', async () => {
+      const response = await createTokenRoute(
+        createTokenRequest({
+          name: 'lower-z-token',
+          scopes: ['artifacts:read'],
+          expiresAt: '2030-08-10T00:00:00z',
+        }),
+      )
+      const body = (await response.json()) as { readonly data: { readonly expiresAt: string } }
+
+      expect(response.status).toBe(201)
+      expect(body.data.expiresAt).toBe('2030-08-10T00:00:00.000Z')
     })
 
     it('422s an expiry already past on the database clock, leaving no row and no audit event', async () => {

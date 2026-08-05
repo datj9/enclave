@@ -17,6 +17,7 @@ import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { listTrashedArtifacts } from '@/lib/artifacts/trash'
 import { restoreArtifact, softDeleteArtifact } from '@/lib/artifacts/update'
 import { createApiToken } from '@/lib/auth/bearer'
+import { epochToDate } from '@/lib/shares/clock'
 import { createShareLink, revokeShareLink } from '@/lib/shares/manage'
 import { artifactPrefix, type ObjectStore } from '@/lib/storage/object-store'
 import type { BundleFile } from '@/lib/bundle/validate'
@@ -540,19 +541,21 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       // (an hour late, across the Nov 1 DST fall-back) and withHours read 2026-11-24T20:00:00.000Z.
       const [row] = await db.transaction(async (transaction) => {
         await transaction.execute(sql`set local timezone = 'America/New_York'`)
-        // The driver hands a transaction-scoped `execute` back the Postgres text form (no `T`, a
-        // two-digit offset — the same caveat src/lib/shares/clock.ts documents), not a parsed Date.
-        return await transaction.execute<{ withDays: string; withHours: string }>(sql`
+        // Epoch, not the driver's text form of timestamptz: `new Date(pg text)` accepting
+        // `2026-11-24 16:00:00-05` is luck, not a contract (src/lib/shares/clock.ts:7-10).
+        return await transaction.execute<{ withDays: string | number; withHours: string | number }>(
+          sql`
           select
-            (timestamptz '2026-10-25T20:00:00Z' + make_interval(days => 30)) as "withDays",
-            (timestamptz '2026-10-25T20:00:00Z' + make_interval(hours => 720)) as "withHours"
-        `)
+            extract(epoch from (timestamptz '2026-10-25T20:00:00Z' + make_interval(days => 30))) as "withDays",
+            extract(epoch from (timestamptz '2026-10-25T20:00:00Z' + make_interval(hours => 720))) as "withHours"
+        `,
+        )
       })
 
-      expect(row === undefined ? undefined : new Date(row.withDays).toISOString()).toBe(
+      expect(row === undefined ? undefined : epochToDate(row.withDays).toISOString()).toBe(
         '2026-11-24T21:00:00.000Z',
       )
-      expect(row === undefined ? undefined : new Date(row.withHours).toISOString()).toBe(
+      expect(row === undefined ? undefined : epochToDate(row.withHours).toISOString()).toBe(
         '2026-11-24T20:00:00.000Z',
       )
     })

@@ -14,7 +14,9 @@ export const MAX_AUDIT_LIMIT = 200
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CURSOR_SEPARATOR = '|'
-const ZONED_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/
+// Fractional digits unlimited (Zod/RFC 3339); `z` accepted (RFC 3339 §5.6).
+const ZONED_ISO_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:\d{2})$/
 
 export interface AuditCursor {
   readonly at: string
@@ -78,8 +80,14 @@ function isAuditAction(candidate: string): candidate is AuditAction {
   return (AUDIT_ACTIONS as readonly string[]).includes(candidate)
 }
 
-function rejected(parameter: string): AuditFilterParse {
-  return { ok: false, details: { parameter } }
+const MOMENT_REASON =
+  'must be an RFC 3339 instant with an explicit zone, e.g. 2026-08-01T00:00:00Z or 2026-08-01T07:00:00+07:00'
+
+function rejected(parameter: string, reason?: string): AuditFilterParse {
+  return {
+    ok: false,
+    details: reason === undefined ? { parameter } : { parameter, reason },
+  }
 }
 
 export function parseAuditFilter(searchParams: URLSearchParams): AuditFilterParse {
@@ -96,10 +104,12 @@ export function parseAuditFilter(searchParams: URLSearchParams): AuditFilterPars
   if (artifactId !== undefined && !UUID_PATTERN.test(artifactId)) return rejected('artifactId')
 
   const from = parseMoment(optionalParameter(searchParams, 'from'))
-  if (from === 'invalid') return rejected('from')
+  if (from === 'invalid') return rejected('from', MOMENT_REASON)
   const to = parseMoment(optionalParameter(searchParams, 'to'))
-  if (to === 'invalid') return rejected('to')
-  if (from !== undefined && to !== undefined && to < from) return rejected('to')
+  if (to === 'invalid') return rejected('to', MOMENT_REASON)
+  if (from !== undefined && to !== undefined && to < from) {
+    return rejected('to', 'must not be earlier than from')
+  }
 
   const rawCursor = optionalParameter(searchParams, 'cursor')
   const cursor = rawCursor === undefined ? undefined : decodeAuditCursor(rawCursor)

@@ -17,6 +17,10 @@ import { createTestStore, probeServices, removeTestOwnerData } from './services'
 const OWNER_EMAIL = 'integration-sweep@example.test'
 
 async function createSweepOwner(): Promise<string> {
+  // Same pre-delete as `createTestOwner`: an interrupted run leaves the unique email behind and
+  // every subsequent run of this file fails until the row is removed by hand.
+  await db.delete(users).where(eq(users.email, OWNER_EMAIL))
+
   const [owner] = await db
     .insert(users)
     .values({ email: OWNER_EMAIL, passwordHash: null, role: 'member', isActive: true })

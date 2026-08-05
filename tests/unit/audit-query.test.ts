@@ -87,6 +87,15 @@ describe('audit filter parsing', () => {
     expect(parsed.details['parameter']).toBe(parameter)
   })
 
+  it('names the reason when a zone-less from is refused', () => {
+    const parsed = parse('from=2026-08-01T09:00')
+
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.details['parameter']).toBe('from')
+    expect(String(parsed.details['reason'])).toMatch(/RFC 3339|explicit zone/i)
+  })
+
   it('accepts the maximum page size', () => {
     const parsed = parse(`limit=${MAX_AUDIT_LIMIT}`)
 
@@ -101,6 +110,14 @@ describe('audit filter parsing', () => {
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(parsed.value.from?.toISOString()).toBe('2026-08-01T08:00:00.000Z')
+  })
+
+  it('accepts a six-digit fractional second and lowercase z', () => {
+    const parsed = parse('from=2026-08-01T09:00:00.123456z')
+
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.value.from?.toISOString()).toBe('2026-08-01T09:00:00.123Z')
   })
 })
 
@@ -120,6 +137,15 @@ describe('the browser-side query builder converts wall-clock input to an absolut
     form.set('from', '2026-08-01T09:00')
 
     expect(queryFrom(form, null)).toBe('from=2026-08-01T08%3A00%3A00.000Z')
+  })
+
+  it('refuses an unparseable moment rather than dropping the filter', async () => {
+    const { queryFrom } = await import('@app/admin/audit/audit-viewer')
+
+    const form = new FormData()
+    form.set('from', 'not-a-date')
+
+    expect(() => queryFrom(form, null)).toThrow(/from/)
   })
 })
 

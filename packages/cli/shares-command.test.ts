@@ -332,7 +332,7 @@ describe('share commands', () => {
       })
 
       expect(errorText()).toContain(
-        'expires 2026-08-10T16:59:59.999Z (23:59:59 local, Asia/Jakarta)',
+        'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
       )
     })
 
@@ -360,7 +360,7 @@ describe('share commands', () => {
       })
 
       expect(disclosureAtRequest).toContain(
-        'expires 2026-08-10T16:59:59.999Z (23:59:59 local, Asia/Jakarta)',
+        'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
       )
       expect(JSON.parse(outputText())).toMatchObject({ expiresAt: '2026-08-10T16:59:59.999Z' })
     })
@@ -385,12 +385,38 @@ describe('share commands', () => {
       expect(errorText()).not.toContain('expires ')
     })
 
-    it('rejects a fraction wider than 3 digits, naming all four accepted shapes', async () => {
+    it('accepts a six-digit fractional second on a zoned instant (matches the API)', async () => {
       const code = await runShareCreate({
         host: HOST,
         id: ARTIFACT_ID,
         versionId: VERSION_ID,
         expires: '2026-08-10T09:00:00.123456Z',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.123Z')
+    })
+
+    it('accepts lowercase z as an explicit zone (RFC 3339 §5.6)', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10T09:00:00z',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.000Z')
+    })
+
+    it('rejects a calendar-overflow date-only value after local round-trip', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2027-02-30',
         isJson: false,
       })
 
@@ -400,6 +426,38 @@ describe('share commands', () => {
       expect(errorText()).toContain('a date-time like 2026-08-10T14:30')
       expect(errorText()).toContain('ISO-8601')
       expect(mocks.post).not.toHaveBeenCalled()
+    })
+  })
+
+  // West of UTC the local calendar day can differ from the UTC day — the disclosure must name
+  // the local date, not only the wall-clock time.
+  describe('expiry disclosure in a negative-offset zone', () => {
+    let originalTz: string | undefined
+
+    beforeEach(() => {
+      originalTz = process.env['TZ']
+      process.env['TZ'] = 'America/Los_Angeles'
+    })
+
+    afterEach(() => {
+      if (originalTz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = originalTz
+    })
+
+    it('resolves a bare date to local end-of-day and prints the local calendar date', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-11T06:59:59.999Z')
+      expect(errorText()).toContain(
+        'expires 2026-08-11T06:59:59.999Z (10 Aug 2026, 23:59:59 local, America/Los_Angeles)',
+      )
     })
   })
 

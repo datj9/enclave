@@ -8,7 +8,7 @@ import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
 import { requireSessionUser } from '@/lib/api/guards'
-import { databaseNowEpoch, epochToDate } from '@/lib/shares/clock'
+import { databaseNowEpoch, tryEpochToDate } from '@/lib/shares/clock'
 import { enforceAuthRateLimit } from './rate-limit-auth'
 
 /**
@@ -102,7 +102,12 @@ async function assertFutureExpiry(expiresAt: Date | null): Promise<void> {
   const [row] = await db.execute<{ databaseNow: string | number }>(
     sql`select ${databaseNowEpoch} as "databaseNow"`,
   )
-  if (row !== undefined && expiresAt <= epochToDate(row.databaseNow)) {
+  // Fail closed: a missing clock row must not mint a token the gate would already reject.
+  const databaseNow = tryEpochToDate(row)
+  if (databaseNow === null) {
+    throw new HttpError('INTERNAL_ERROR', 'Could not read the database clock')
+  }
+  if (expiresAt <= databaseNow) {
     throw new HttpError('VALIDATION_FAILED', 'expiresAt must be in the future', {
       details: { fields: ['expiresAt'] },
     })

@@ -342,8 +342,10 @@ describe.skipIf(!database)('S5 share links', () => {
 
       expect(response.status).toBe(422)
       expect(body.error.details.issues.length).toBeGreaterThan(0)
-      expect(body.error.details.issues[0]).toMatchObject({ field: 'expiresAt' })
-      expect(body.error.details.issues[0]?.message.length).toBeGreaterThan(0)
+      expect(body.error.details.issues[0]).toMatchObject({
+        field: 'expiresAt',
+        message: expect.stringContaining('explicit zone'),
+      })
     })
 
     it("404s another member on a private artifact, so nothing confirms it exists", async () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { API_TOKEN_SCOPES } from '@/db/schema/api-tokens'
+import { optionalExpiresAtSchema } from '@/lib/api/expires-at'
 import { readJsonBody, requireJsonContentType, requireSessionUser } from '@/lib/api/guards'
 import { createApiToken, listApiTokens } from '@/lib/auth/bearer'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
@@ -18,7 +19,7 @@ const MAX_TOKEN_NAME_LENGTH = 100
 const createTokenBodySchema = z.object({
   name: z.string().trim().min(1).max(MAX_TOKEN_NAME_LENGTH),
   scopes: z.array(z.enum(API_TOKEN_SCOPES)).min(1),
-  expiresAt: z.iso.datetime({ offset: true }).optional(),
+  expiresAt: optionalExpiresAtSchema,
 })
 
 function parseCreateTokenBody(body: unknown) {

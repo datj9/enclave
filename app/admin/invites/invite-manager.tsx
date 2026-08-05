@@ -101,7 +101,13 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
   return (
     <>
-      {created !== null && <RevealedInvite created={created} onDismiss={() => setCreated(null)} />}
+      {created !== null && (
+        <RevealedInvite
+          created={created}
+          isMountedForLocalTime={isMountedForLocalTime}
+          onDismiss={() => setCreated(null)}
+        />
+      )}
 
       <form className={styles.form} onSubmit={(event) => void handleCreate(event)}>
         {errorMessage !== null && (
@@ -155,9 +161,11 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
 function RevealedInvite({
   created,
+  isMountedForLocalTime,
   onDismiss,
 }: {
   readonly created: CreatedInviteView
+  readonly isMountedForLocalTime: boolean
   readonly onDismiss: () => void
 }) {
   return (
@@ -167,7 +175,10 @@ function RevealedInvite({
       </h2>
       <p className={styles.revealedBody}>
         This is the only time it is shown, it works once, and it expires{' '}
-        {formatInstantLocal(created.expiresAt)}.
+        {isMountedForLocalTime
+          ? formatInstantLocal(created.expiresAt)
+          : formatInstantStable(created.expiresAt)}
+        .
       </p>
       <code className={styles.inviteUrl}>{created.url}</code>
       <button className="button-secondary" type="button" onClick={onDismiss}>

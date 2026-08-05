@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { optionalExpiresAtSchema } from '@/lib/api/expires-at'
 import { readJsonBody, requireJsonContentType } from '@/lib/api/guards'
 import { apiTokenViewerRef, userViewerRef } from '@/lib/artifacts/authorize'
 import { requireApiPrincipal, type ApiPrincipal } from '@/lib/auth/bearer'
@@ -20,7 +21,7 @@ export const dynamic = 'force-dynamic'
 const createShareBodySchema = z
   .object({
     versionId: z.uuid().optional(),
-    expiresAt: z.iso.datetime({ offset: true }).optional(),
+    expiresAt: optionalExpiresAtSchema,
   })
   // Refused rather than ignored: a misspelled `expiresAt` must not silently create a link that
   // never expires.

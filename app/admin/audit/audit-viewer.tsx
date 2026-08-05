@@ -35,7 +35,10 @@ export function queryFrom(form: FormData, cursor: string | null): string {
     }
     // `datetime-local` has no zone; the API contract is an absolute instant.
     const parsed = new Date(value)
-    if (Number.isNaN(parsed.getTime())) continue
+    // Dropping a bad moment would silently widen the window — refuse instead of guessing.
+    if (Number.isNaN(parsed.getTime())) {
+      throw new RangeError(`Could not parse ${name} as a date`)
+    }
     parameters.set(name, parsed.toISOString())
   }
   if (cursor !== null) parameters.set('cursor', cursor)
@@ -69,6 +72,8 @@ export function AuditViewer({
       setPage(body.data)
       // Appending on a cursor page, replacing on a fresh filter.
       setEntries((previous) => (cursor === null ? body.data.items : [...previous, ...body.data.items]))
+    } catch {
+      setErrorMessage(GENERIC_FAILURE)
     } finally {
       setIsBusy(false)
     }

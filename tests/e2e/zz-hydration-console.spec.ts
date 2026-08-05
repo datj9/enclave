@@ -19,9 +19,13 @@ const ADMIN_EMAIL = 'ops@example.com'
 const ADMIN_PASSWORD = 'correct-horse-battery'
 
 /**
- * Load-bearing, not cosmetic: the server renders in the host's zone and the browser in this one, so
- * they must differ or a host-zone string would match the viewer's by accident. New York is west of
- * every plausible host zone a CI runner or developer machine uses, so the calendar day differs too.
+ * Load-bearing, not cosmetic: first paint uses the wire ISO (`formatInstantStable`); after mount
+ * the browser formats in this zone with a zone label. New York is west of UTC so the calendar day
+ * often differs from the Z instant — and the zone label can only come from the post-hydration path
+ * (the server never emits `GMT-4`/`GMT-5`).
+ *
+ * CI and the Docker image pin process `TZ=UTC`; a local `pnpm start` without that still cannot
+ * satisfy the label assertion from the server path alone.
  */
 test.use({ timezoneId: 'America/New_York' })
 
@@ -29,12 +33,10 @@ test.use({ timezoneId: 'America/New_York' })
  * What `timeZoneName: 'short'` produces for America/New_York — `GMT-4` in EDT, `GMT-5` in EST.
  * Not `EDT`: `src/lib/format/instant.ts` formats with the `en-GB` locale, which renders US zones as
  * a GMT offset rather than a letter abbreviation.
- *
- * This offset is the whole assertion. The host renders in Asia/Saigon (GMT+7) and emits no label at
- * all before the fix, so a west-of-UTC offset here can only come from the viewer's own zone after
- * hydration — which is exactly the contract.
  */
 const NEW_YORK_ZONE_LABEL = /GMT-[45]\b/
+/** Wire form from `formatInstantStable` — must not remain after hydration. */
+const WIRE_ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
 
 async function signInAsAdmin(request: APIRequestContext): Promise<void> {
   if ((await request.get('/setup')).status() === 200) {
@@ -70,4 +72,6 @@ test('a deadline renders in the viewer zone with a zone label', async ({ page, c
 
   const rendered = await page.getByText(NEW_YORK_ZONE_LABEL).first().innerText()
   expect(rendered).toMatch(NEW_YORK_ZONE_LABEL)
+  // Not the stable wire form: proves the viewer-zone path ran, even if the host is also New York.
+  expect(rendered).not.toMatch(WIRE_ISO_INSTANT)
 })

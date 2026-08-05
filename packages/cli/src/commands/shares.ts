@@ -14,9 +14,10 @@ const REQUIRED_SCOPE = 'shares:write'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
 const ISO_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
-const ISO_ZONELESS_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/
+// Fractional seconds match Zod/RFC 3339 (unlimited digits): Python/Go often emit 6.
+const ISO_ZONELESS_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
 const ISO_ZONED_DATETIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:\d{2})$/
 const HOURS_PER_UNIT: Readonly<Record<string, number>> = { h: 1, d: 24, w: 168 }
 const MILLISECONDS_PER_HOUR = 3_600_000
 /** ECMAScript Date absolute range (±100_000_000 days from epoch). */
@@ -125,17 +126,26 @@ function requireUuid(given: string, label: string): string {
   return given
 }
 
-/** `23:59:59 local, Asia/Jakarta` — the second frame in the pre-send disclosure below. */
+/**
+ * Second frame in the pre-send disclosure — local *date* and wall clock, not time alone.
+ * West of UTC the local calendar day can differ from the UTC day in the first frame; omitting
+ * the date made the disclosure unusable for the operators who need it most.
+ */
 function localClockLabel(when: Date): string {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const localTime = new Intl.DateTimeFormat('en-GB', {
+  // `month: 'short'` (not 2-digit): next to a year-first UTC frame, day-first `10/08/2026` is
+  // ambiguous for a US operator — `10 Aug 2026` matches `src/lib/format/instant.ts`.
+  const local = new Intl.DateTimeFormat('en-GB', {
     timeZone,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hourCycle: 'h23',
   }).format(when)
-  return `${localTime} local, ${timeZone}`
+  return `${local} local, ${timeZone}`
 }
 
 /** Accepts `7d` / `12h` / `2w`, a local date, a local date-time, or a zoned instant. */

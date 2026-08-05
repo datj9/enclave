@@ -321,11 +321,12 @@ list and the served type cannot drift apart.
 ### Retention windows are exact hours, not calendar days
 
 Every deadline is stored as `timestamp with time zone`, so Postgres always holds an absolute
-instant. The app pins its own process `TZ` and its Postgres session `TimeZone` to UTC, so
-`TRASH_RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` are enforced as exact N x 24 h windows — not
-calendar days — and are unaffected by the database server's `timezone` setting or by daylight
-saving transitions. A `TRASH_RETENTION_DAYS=30` window is 720 hours on every deployment, regardless
-of what your Postgres provider's parameter group sets `timezone` to.
+instant. Retention math uses `make_interval(hours => N * 24)` rather than `days => N`: hour-field
+intervals do not consult the session `TimeZone`, so a 30-day window is exactly 720 hours even
+across DST transitions and regardless of the database server's `timezone` GUC. The app also pins
+process `TZ` and the pooled session `TimeZone` to UTC so any remaining day/month arithmetic and
+`now()` rendering stay consistent — that pin is belt-and-braces for display, not what makes the
+hour window exact.
 
 ## Running it
 

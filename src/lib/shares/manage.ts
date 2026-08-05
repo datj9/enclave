@@ -7,7 +7,7 @@ import { requireOwnedArtifact } from '@/lib/artifacts/update'
 import { recordAuditEvent } from '@/lib/audit'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
-import { databaseNowEpoch, epochToDate } from './clock'
+import { databaseNowEpoch, epochToDate, tryEpochToDate } from './clock'
 import { loadShareLink } from './links'
 import { mintShareToken, shareLinkUrl } from './token'
 
@@ -157,8 +157,11 @@ async function readDatabaseNow(): Promise<Date> {
   const [row] = await db.execute<{ databaseNow: string | number }>(
     sql`select ${databaseNowEpoch} as "databaseNow"`,
   )
-  if (row === undefined) throw new HttpError('INTERNAL_ERROR', 'Could not read the database clock')
-  return epochToDate(row.databaseNow)
+  const databaseNow = tryEpochToDate(row)
+  if (databaseNow === null) {
+    throw new HttpError('INTERNAL_ERROR', 'Could not read the database clock')
+  }
+  return databaseNow
 }
 
 /**
