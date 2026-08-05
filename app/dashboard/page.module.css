@@ -52,3 +52,7 @@
   color: var(--color-ink-2);
   margin: 0;
 }
+
+.cta {
+  margin-top: var(--space-md);
+}

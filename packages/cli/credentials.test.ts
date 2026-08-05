@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -69,6 +69,31 @@ describe('credentials', () => {
   it('readCredentials throws when group readable', () => {
     saveToken('enclave.example.com', 'first-secret')
     chmodSync(credentialsPath(), 0o640)
+
+    expect(() => readCredentials()).toThrow(CredentialError)
+  })
+
+  it('readCredentials throws a named error, not a JSON.parse stack trace, on malformed JSON', () => {
+    saveToken('enclave.example.com', 'first-secret')
+    writeFileSync(credentialsPath(), '{ not json', { mode: 0o600 })
+
+    expect(() => readCredentials()).toThrow(CredentialError)
+  })
+
+  it('readCredentials throws on a valid JSON document with the wrong shape', () => {
+    saveToken('enclave.example.com', 'first-secret')
+    writeFileSync(credentialsPath(), JSON.stringify(['not', 'a', 'map']), { mode: 0o600 })
+
+    expect(() => readCredentials()).toThrow(CredentialError)
+  })
+
+  it('readCredentials throws on an entry missing its token', () => {
+    saveToken('enclave.example.com', 'first-secret')
+    writeFileSync(
+      credentialsPath(),
+      JSON.stringify({ 'enclave.example.com': { nope: true } }),
+      { mode: 0o600 },
+    )
 
     expect(() => readCredentials()).toThrow(CredentialError)
   })

@@ -13,6 +13,13 @@ import styles from './prompt-composer.module.css'
 
 const PLACEHOLDER = 'a countdown timer to new year, with fireworks when it hits zero'
 
+const STARTERS: readonly string[] = [
+  'a pomodoro timer with a start, pause, and reset button',
+  'a markdown note pad that saves to local storage',
+  'a unit converter for length, weight, and temperature',
+  'a flashcard quiz app with a deck of 10 questions I can edit',
+]
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   return `${(bytes / 1024).toFixed(1)} KB`
@@ -40,10 +47,13 @@ function FilePanel({ file }: { file: StreamedFile }) {
 }
 
 export function PromptComposer() {
-  const { state, generate } = useGeneration()
+  const { state, generate, cancel } = useGeneration()
   const [prompt, setPrompt] = useState('')
   const streamRef = useRef<HTMLDivElement>(null)
   const isStreaming = state.status === 'streaming'
+  // The prompt Retry replays — held separately from the live textarea so an edit made after a
+  // mid-stream failure doesn't turn "retry" into a different request.
+  const submittedPromptRef = useRef('')
 
   useEffect(() => {
     const element = streamRef.current
@@ -53,7 +63,13 @@ export function PromptComposer() {
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (prompt.trim() !== '') void generate(prompt)
+    if (prompt.trim() === '') return
+    submittedPromptRef.current = prompt
+    void generate(prompt)
+  }
+
+  function onRetry(): void {
+    void generate(submittedPromptRef.current)
   }
 
   return (
@@ -75,6 +91,21 @@ export function PromptComposer() {
             onChange={(event) => setPrompt(event.target.value)}
           />
         </div>
+
+        <div className={styles.starters}>
+          {STARTERS.map((starter) => (
+            <button
+              key={starter}
+              type="button"
+              className={styles.starter}
+              disabled={isStreaming}
+              onClick={() => setPrompt(starter)}
+            >
+              {starter}
+            </button>
+          ))}
+        </div>
+
         <div className={styles.actions}>
           <button
             className="button-primary"
@@ -84,6 +115,11 @@ export function PromptComposer() {
             {isStreaming ? 'Generating' : 'Generate'}
           </button>
           {isStreaming ? (
+            <button className="button-secondary" type="button" onClick={cancel}>
+              Stop
+            </button>
+          ) : null}
+          {isStreaming ? (
             <span className={styles.indicator} role="status">
               <span className={styles.pulse} aria-hidden="true" />
               streaming
@@ -91,6 +127,12 @@ export function PromptComposer() {
           ) : null}
         </div>
       </form>
+
+      {state.status === 'cancelled' ? (
+        <p className={styles.cancelledNotice} role="status">
+          Stopped. This attempt still counted against your hourly limit.
+        </p>
+      ) : null}
 
       {state.files.length > 0 ? (
         <div className={styles.stream} ref={streamRef}>
@@ -104,7 +146,12 @@ export function PromptComposer() {
         <div className={styles.failure} role="alert">
           <p className={styles.failureMessage}>{state.failure.message}</p>
           <p className={styles.failureCode}>{state.failure.code}</p>
-          <button className="button-secondary" type="button" onClick={() => void generate(prompt)}>
+          <button
+            className="button-secondary"
+            type="button"
+            disabled={isStreaming}
+            onClick={onRetry}
+          >
             Retry
           </button>
         </div>

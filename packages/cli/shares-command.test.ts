@@ -32,7 +32,7 @@ const SHARE_URL = 'https://artifacts.example.com/s/pl41nt3xt-t0k3n'
 const NOW = new Date('2026-08-02T00:00:00.000Z')
 
 interface RequestBody {
-  readonly versionId: string
+  readonly versionId?: string
   readonly expiresAt?: string
 }
 
@@ -86,9 +86,12 @@ describe('share commands', () => {
       remove: mocks.remove,
     })
     mocks.post.mockResolvedValue({
-      data: { shareId: SHARE_ID, token: 'plaintext', url: SHARE_URL },
+      shareId: SHARE_ID,
+      token: 'plaintext',
+      url: SHARE_URL,
+      versionId: VERSION_ID,
     })
-    mocks.get.mockResolvedValue({ data: { items: [] } })
+    mocks.get.mockResolvedValue({ items: [] })
     mocks.remove.mockResolvedValue(undefined)
   })
 
@@ -120,9 +123,21 @@ describe('share commands', () => {
       })
 
       expect(code).toBe(0)
-      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN)
+      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, false)
       expect(postCall().path).toBe(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
       expect(postCall().body).toEqual({ versionId: VERSION_ID })
+    })
+
+    it('passes the insecure-host opt-in through to the api client', async () => {
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        isJson: false,
+        isInsecureAllowed: true,
+      })
+
+      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, true)
     })
 
     it('prints the url exactly once and says it is shown only once', async () => {
@@ -137,16 +152,21 @@ describe('share commands', () => {
       await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: true })
 
       const parsed: unknown = JSON.parse(outputText())
-      expect(parsed).toEqual({ shareId: SHARE_ID, url: SHARE_URL, expiresAt: null })
+      expect(parsed).toEqual({
+        shareId: SHARE_ID,
+        url: SHARE_URL,
+        expiresAt: null,
+        versionId: VERSION_ID,
+      })
       expect(errorText()).toContain('shown once')
     })
 
-    it('refuses to guess a version, before any request', async () => {
+    it('omits versionId so the server can default to the current ready version', async () => {
       const code = await runShareCreate({ host: HOST, id: ARTIFACT_ID, isJson: false })
 
-      expect(code).toBe(2)
-      expect(errorText()).toContain('--version <versionId> is required')
-      expect(mocks.post).not.toHaveBeenCalled()
+      expect(code).toBe(0)
+      expect(postCall().body).toEqual({})
+      expect(outputText()).toContain(VERSION_ID)
     })
   })
 
@@ -180,16 +200,57 @@ describe('share commands', () => {
       expect(postCall().body.expiresAt).toBe('2026-08-02T12:00:00.000Z')
     })
 
-    it('sends a bare ISO timestamp normalised to UTC', async () => {
+    it('refuses a duration that overflows the Date range instead of sending an invalid instant', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '999999999999w',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('is out of range')
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+
+    it('sends a Zulu instant through unchanged', async () => {
       await runShareCreate({
         host: HOST,
         id: ARTIFACT_ID,
         versionId: VERSION_ID,
-        expires: '2026-09-01T10:30:00+02:00',
+        expires: '2026-09-01T08:30:00.000Z',
         isJson: false,
       })
 
       expect(postCall().body.expiresAt).toBe('2026-09-01T08:30:00.000Z')
+    })
+
+    it('rejects engine-lenient calendar overflow such as 2027-02-30', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2027-02-30',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('a duration like 7d, 12h or 2w')
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+
+    it('rejects legacy Date strings that are not documented', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: 'Dec 25 2027',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.post).not.toHaveBeenCalled()
     })
 
     it('reports the absolute expiry it sent', async () => {
@@ -273,6 +334,35 @@ describe('share commands', () => {
       expect(errorText()).toContain(
         'expires 2026-08-10T16:59:59.999Z (23:59:59 local, Asia/Jakarta)',
       )
+    })
+
+    // Reading stderr from inside the request itself is the only assertion that survives the
+    // disclosure being moved below `client.post`, where the operator would learn the instant only
+    // after the link already exists.
+    it('writes the disclosure before the request, and keeps --json stdout parseable', async () => {
+      let disclosureAtRequest = ''
+      mocks.post.mockImplementation(() => {
+        disclosureAtRequest = errorText()
+        return Promise.resolve({
+          shareId: SHARE_ID,
+          token: 'plaintext',
+          url: SHARE_URL,
+          versionId: VERSION_ID,
+        })
+      })
+
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: true,
+      })
+
+      expect(disclosureAtRequest).toContain(
+        'expires 2026-08-10T16:59:59.999Z (23:59:59 local, Asia/Jakarta)',
+      )
+      expect(JSON.parse(outputText())).toMatchObject({ expiresAt: '2026-08-10T16:59:59.999Z' })
     })
 
     it('writes the disclosure even when the POST itself is later rejected', async () => {
@@ -385,7 +475,7 @@ describe('share commands', () => {
     })
 
     it('shows id, pinned version, expiry and state', async () => {
-      mocks.get.mockResolvedValue({ data: { items } })
+      mocks.get.mockResolvedValue({ items })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
 
@@ -398,7 +488,7 @@ describe('share commands', () => {
     })
 
     it('never prints a token, in either format', async () => {
-      mocks.get.mockResolvedValue({ data: { items } })
+      mocks.get.mockResolvedValue({ items })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
@@ -410,16 +500,14 @@ describe('share commands', () => {
     // Also exercises the databaseNow-absent fallback: this payload never sets it.
     it('marks a lapsed expiry as expired', async () => {
       mocks.get.mockResolvedValue({
-        data: {
-          items: [
-            {
-              shareId: SHARE_ID,
-              versionId: VERSION_ID,
-              expiresAt: '2026-07-01T00:00:00.000Z',
-              revokedAt: null,
-            },
-          ],
-        },
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: '2026-07-01T00:00:00.000Z',
+            revokedAt: null,
+          },
+        ],
       })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
@@ -445,19 +533,17 @@ describe('share commands', () => {
     // (src/lib/shares/clock.ts) — never the operator's laptop clock, which can be skewed.
     it('derives STATE from the server clock the API returns, not the laptop clock', async () => {
       mocks.get.mockResolvedValue({
-        data: {
-          items: [
-            {
-              shareId: SHARE_ID,
-              versionId: VERSION_ID,
-              // Equal to the laptop clock (NOW): the old `<= laptop now` rule would call this
-              // expired, but the server clock below is a minute earlier — still active.
-              expiresAt: NOW.toISOString(),
-              revokedAt: null,
-            },
-          ],
-          databaseNow: '2026-08-01T23:59:00.000Z',
-        },
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            // Equal to the laptop clock (NOW): the old `<= laptop now` rule would call this
+            // expired, but the server clock below is a minute earlier — still active.
+            expiresAt: NOW.toISOString(),
+            revokedAt: null,
+          },
+        ],
+        databaseNow: '2026-08-01T23:59:00.000Z',
       })
 
       await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
@@ -474,17 +560,15 @@ describe('share commands', () => {
 
     it('falls back to the laptop clock when databaseNow is unparseable', async () => {
       mocks.get.mockResolvedValue({
-        data: {
-          items: [
-            {
-              shareId: SHARE_ID,
-              versionId: VERSION_ID,
-              expiresAt: '2026-07-01T00:00:00.000Z',
-              revokedAt: null,
-            },
-          ],
-          databaseNow: 'not-a-timestamp',
-        },
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: '2026-07-01T00:00:00.000Z',
+            revokedAt: null,
+          },
+        ],
+        databaseNow: 'not-a-timestamp',
       })
 
       const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
@@ -561,6 +645,18 @@ describe('share commands', () => {
 
     it('exits 1 when no token is stored for the host', async () => {
       delete process.env['ENCLAVE_TOKEN']
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+
+      expect(code).toBe(1)
+      expect(errorText()).toContain('enclave login')
+      expect(mocks.get).not.toHaveBeenCalled()
+    })
+
+    it('exits 1 on an empty stored token rather than sending a bare bearer header', async () => {
+      // `artifacts.ts` already rejected this locally; sending it puts an empty credential on the
+      // wire and answers with the server's scope error, which the user cannot act on.
+      process.env['ENCLAVE_TOKEN'] = ''
 
       const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
 

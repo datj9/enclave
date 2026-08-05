@@ -13,18 +13,16 @@ const REQUIRED_SCOPE = 'shares:write'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
-const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
-const ZONELESS_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/
-const ZONED_DATETIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/
+const ISO_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+const ISO_ZONELESS_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/
+const ISO_ZONED_DATETIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/
 const HOURS_PER_UNIT: Readonly<Record<string, number>> = { h: 1, d: 24, w: 168 }
 const MILLISECONDS_PER_HOUR = 3_600_000
+/** ECMAScript Date absolute range (±100_000_000 days from epoch). */
+const MAX_DATE_MILLISECONDS = 8.64e15
 
-/**
- * A bare date and a zone-less date-time used to resolve to different frames (UTC midnight vs the
- * operator's local midnight) even though they look like the same kind of input. Both now resolve
- * in the operator's local zone so the same typed shape never silently means two different instants.
- */
+/** Every rejection names all four shapes: "ISO" on its own is the wording that caused the defect. */
 const EXPIRY_SHAPES =
   'a duration like 7d, 12h or 2w, a date like 2026-08-10, a date-time like 2026-08-10T14:30, ' +
   'or an ISO-8601 instant with an explicit zone such as 2026-08-10T23:59:00+07:00 or ' +
@@ -33,16 +31,12 @@ const EXPIRY_SHAPES =
 const EXPIRES_COLUMN_WIDTH = 24
 const NEVER = 'never'
 
-/** Every route wraps its payload (`jsonData` in `src/lib/http.ts`); the client returns it verbatim. */
-interface DataEnvelope<TData> {
-  readonly data: TData
-}
-
 /** `token` is readable exactly once — `src/lib/shares/manage.ts` never selects `token_hash` again. */
 interface CreatedShareLink {
   readonly shareId: string
   readonly token: string
   readonly url: string
+  readonly versionId?: string
 }
 
 interface ShareLinkSummary {
@@ -66,17 +60,20 @@ export interface ShareCreateOptions {
   readonly versionId?: string
   readonly expires?: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShareListOptions {
   readonly host: string
   readonly id: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShareRevokeOptions {
   readonly host: string
   readonly shareId: string
+  readonly isInsecureAllowed?: boolean
 }
 
 function fail(message: string): void {
@@ -112,30 +109,20 @@ function reportFailure(error: unknown): number {
   throw error
 }
 
-function clientFor(host: string): ApiClient | null {
+function clientFor(host: string, isInsecureAllowed = false): ApiClient | null {
   const token = tokenFor(host)
-  if (token === null) {
+  // An empty stored token is not a credential. Sending `Authorization: Bearer ` puts it on the
+  // wire and surfaces the server's scope error instead of the local one the user can act on.
+  if (token === null || token === '') {
     fail(`not logged in to ${host} — run: enclave login --host ${host}`)
     return null
   }
-  return apiClient(host, token)
+  return apiClient(host, token, isInsecureAllowed)
 }
 
 function requireUuid(given: string, label: string): string {
   if (!UUID_PATTERN.test(given)) throw new InvalidInputError(`'${given}' is not a valid ${label}`)
   return given
-}
-
-/**
- * A date-only string has no wall-clock time of its own, so it is read as the last instant of that
- * local day rather than local midnight — the end of "the 10th" the operator meant, not its start.
- */
-function resolveAbsoluteExpiry(trimmed: string): Date {
-  if (DATE_ONLY_PATTERN.test(trimmed)) return new Date(`${trimmed}T23:59:59.999`)
-  if (ZONELESS_DATETIME_PATTERN.test(trimmed) || ZONED_DATETIME_PATTERN.test(trimmed)) {
-    return new Date(trimmed)
-  }
-  return new Date(Number.NaN)
 }
 
 /** `23:59:59 local, Asia/Jakarta` — the second frame in the pre-send disclosure below. */
@@ -156,19 +143,20 @@ function parseExpiry(given: string, now: Date): Date {
   const trimmed = given.trim()
   const relative = RELATIVE_EXPIRY_PATTERN.exec(trimmed)
 
-  const when =
-    relative === null
-      ? resolveAbsoluteExpiry(trimmed)
-      : new Date(
-          now.getTime() +
-            Number(relative[1]) *
-              (HOURS_PER_UNIT[(relative[2] ?? 'h').toLowerCase()] ?? 1) *
-              MILLISECONDS_PER_HOUR,
-        )
-
-  if (Number.isNaN(when.getTime())) {
-    throw new InvalidInputError(`'${given}' must be ${EXPIRY_SHAPES}`)
+  let when: Date
+  if (relative !== null) {
+    const amount = Number(relative[1])
+    const unit = (relative[2] ?? 'h').toLowerCase()
+    const hours = amount * (HOURS_PER_UNIT[unit] ?? 1)
+    const deltaMs = hours * MILLISECONDS_PER_HOUR
+    if (!Number.isFinite(deltaMs) || Math.abs(now.getTime() + deltaMs) > MAX_DATE_MILLISECONDS) {
+      throw new InvalidInputError(`--expires ${given} is out of range`)
+    }
+    when = new Date(now.getTime() + deltaMs)
+  } else {
+    when = parseAbsoluteExpiry(trimmed, given)
   }
+
   if (when.getTime() <= now.getTime()) {
     throw new InvalidInputError(
       `--expires ${given} resolves to ${when.toISOString()}, which is not in the future`,
@@ -177,26 +165,67 @@ function parseExpiry(given: string, now: Date): Date {
   return when
 }
 
+/**
+ * A date-only string has no wall-clock time of its own, so it resolves to the last instant of that
+ * local day — the end of "the 10th" the operator meant, not local midnight at its start. A
+ * zone-less date-time resolves as that exact wall clock in the same local zone. Both used to
+ * silently disagree with a zoned instant (UTC midnight vs the operator's local midnight) even
+ * though they look like the same kind of input — resolving both locally removes the ambiguity.
+ */
+function parseAbsoluteExpiry(trimmed: string, original: string): Date {
+  const dateOnly = ISO_DATE_ONLY_PATTERN.exec(trimmed)
+  if (dateOnly !== null) {
+    const year = Number(dateOnly[1])
+    const month = Number(dateOnly[2])
+    const day = Number(dateOnly[3])
+    const when = new Date(`${trimmed}T23:59:59.999`)
+    // Reject calendar overflow (2027-02-30 → March) by requiring a round-trip.
+    if (when.getFullYear() !== year || when.getMonth() !== month - 1 || when.getDate() !== day) {
+      throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+    }
+    return when
+  }
+
+  if (!ISO_ZONELESS_DATETIME_PATTERN.test(trimmed) && !ISO_ZONED_DATETIME_PATTERN.test(trimmed)) {
+    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+  }
+
+  const when = new Date(trimmed)
+  if (Number.isNaN(when.getTime())) {
+    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+  }
+  return when
+}
+
 function createRequestBody(
-  versionId: string,
+  versionId: string | undefined,
   expiresAt: Date | null,
 ): Readonly<Record<string, string>> {
-  return expiresAt === null ? { versionId } : { versionId, expiresAt: expiresAt.toISOString() }
+  const body: Record<string, string> = {}
+  if (versionId !== undefined) body['versionId'] = versionId
+  if (expiresAt !== null) body['expiresAt'] = expiresAt.toISOString()
+  return body
 }
 
 function printCreated(
   created: CreatedShareLink,
-  versionId: string,
+  versionId: string | undefined,
   expiresAt: Date | null,
   isJson: boolean,
 ): void {
   const expires = expiresAt === null ? null : expiresAt.toISOString()
+  const resolvedVersionId = created.versionId ?? versionId
 
   if (isJson) {
     // The warning goes to stderr so stdout stays parseable.
     fail('the share url is shown once and cannot be read again')
     process.stdout.write(
-      `${JSON.stringify({ shareId: created.shareId, url: created.url, expiresAt: expires })}\n`,
+      `${JSON.stringify({
+        shareId: created.shareId,
+        url: created.url,
+        expiresAt: expires,
+        ...(resolvedVersionId === undefined ? {} : { versionId: resolvedVersionId }),
+      })}\n`,
     )
     return
   }
@@ -205,21 +234,19 @@ function printCreated(
   process.stdout.write('This URL is shown once and can never be read again — copy it now.\n\n')
   process.stdout.write(`  ${created.url}\n\n`)
   process.stdout.write(`  share id  ${created.shareId}\n`)
-  process.stdout.write(`  version   ${shortId(versionId)}\n`)
+  if (resolvedVersionId !== undefined) {
+    process.stdout.write(`  version   ${resolvedVersionId}\n`)
+  }
   process.stdout.write(`  expires   ${expires ?? NEVER}\n`)
 }
 
 export async function runShareCreate(options: ShareCreateOptions): Promise<number> {
-  let versionId: string
+  let versionId: string | undefined
   let expiresAt: Date | null
 
   try {
-    if (options.versionId === undefined) {
-      // The route requires `versionId` and no bearer-reachable endpoint lists versions yet (S16),
-      // so there is nothing to default to.
-      throw new InvalidInputError('--version <versionId> is required')
-    }
-    versionId = requireUuid(options.versionId, 'version id')
+    versionId =
+      options.versionId === undefined ? undefined : requireUuid(options.versionId, 'version id')
     expiresAt = options.expires === undefined ? null : parseExpiry(options.expires, new Date())
   } catch (error) {
     if (!(error instanceof InvalidInputError)) throw error
@@ -233,16 +260,16 @@ export async function runShareCreate(options: ShareCreateOptions): Promise<numbe
     process.stderr.write(`expires ${expiresAt.toISOString()} (${localClockLabel(expiresAt)})\n`)
   }
 
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {
     const artifactId = await resolveArtifactId(client, options.id)
-    const response = await client.post<DataEnvelope<CreatedShareLink>>(
+    const response = await client.post<CreatedShareLink>(
       `/api/v1/artifacts/${artifactId}/shares`,
       createRequestBody(versionId, expiresAt),
     )
-    printCreated(response.data, versionId, expiresAt, options.isJson)
+    printCreated(response, versionId, expiresAt, options.isJson)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error)
@@ -287,25 +314,23 @@ function printLinks(
     return
   }
 
-  process.stdout.write(`SHARE ID  VERSION   ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
+  process.stdout.write(`SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
     process.stdout.write(
-      `${shortId(row.shareId)}  ${shortId(row.versionId)}  ${expires}  ${row.state}\n`,
+      `${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`,
     )
   }
 }
 
 export async function runShareList(options: ShareListOptions): Promise<number> {
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {
     const artifactId = await resolveArtifactId(client, options.id)
-    const response = await client.get<DataEnvelope<ShareLinkList>>(
-      `/api/v1/artifacts/${artifactId}/shares`,
-    )
-    printLinks(response.data.items, response.data.databaseNow, options.isJson)
+    const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
+    printLinks(response.items, response.databaseNow, options.isJson)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error)
@@ -322,7 +347,7 @@ export async function runShareRevoke(options: ShareRevokeOptions): Promise<numbe
     return EXIT_USAGE
   }
 
-  const client = clientFor(options.host)
+  const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {

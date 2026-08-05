@@ -1,7 +1,8 @@
-import { collectBundle, ENTRY_PATH } from './collect.ts'
+import { collectBundle } from './collect.ts'
 import { PushError } from './errors.ts'
 import { normaliseHost } from './host.ts'
 import type { BundleFile, PushOptions, PushResult } from './types.ts'
+import { assertBundlePushable } from './validate-local.ts'
 
 interface WireFile {
   readonly path: string
@@ -13,6 +14,22 @@ interface CreateArtifactResponse {
   readonly id: string
   readonly versionId: string
   readonly viewUrl: string
+}
+
+/** The server's envelope is `{data:…}` on success; anything else is a transport fault. */
+function unwrapCreateResponse(body: unknown): CreateArtifactResponse {
+  if (typeof body !== 'object' || body === null || !('data' in body)) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response is missing a data envelope', {})
+  }
+  const data = (body as { data: unknown }).data
+  if (typeof data !== 'object' || data === null) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response data is not an object', {})
+  }
+  const { id, versionId, viewUrl } = data as Record<string, unknown>
+  if (typeof id !== 'string' || typeof versionId !== 'string' || typeof viewUrl !== 'string') {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response is missing id, versionId or viewUrl', {})
+  }
+  return { id, versionId, viewUrl }
 }
 
 /** Send utf-8 when the bytes round-trip losslessly; the server rejects both fields at once. */
@@ -53,16 +70,7 @@ async function errorFrom(response: Response): Promise<PushError> {
 
 export async function push(options: PushOptions): Promise<PushResult> {
   const { files, skipped } = collectBundle(options.directory)
-  if (files.length === 0) {
-    throw new PushError('NOTHING_TO_UPLOAD', 'No file in that directory can be uploaded', {
-      skipped,
-    })
-  }
-  if (!files.some((file) => file.path === ENTRY_PATH)) {
-    throw new PushError('ENTRY_MISSING', `The bundle needs an ${ENTRY_PATH} at its root`, {
-      skipped,
-    })
-  }
+  assertBundlePushable(files, skipped)
 
   const body = JSON.stringify({
     title: options.title ?? 'Untitled artifact',
@@ -78,6 +86,7 @@ export async function push(options: PushOptions): Promise<PushResult> {
       headers: {
         authorization: `Bearer ${options.token}`,
         'content-type': 'application/json',
+        ...(options.userAgent === undefined ? {} : { 'user-agent': options.userAgent }),
       },
       body,
     })
@@ -87,7 +96,7 @@ export async function push(options: PushOptions): Promise<PushResult> {
 
   if (!response.ok) throw await errorFrom(response)
 
-  const created = (await response.json()) as CreateArtifactResponse
+  const created = unwrapCreateResponse(await response.json())
   return {
     artifactId: created.id,
     versionId: created.versionId,

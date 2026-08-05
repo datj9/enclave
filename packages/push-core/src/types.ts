@@ -20,6 +20,7 @@ export interface PushOptions {
   readonly title?: string
   readonly visibility?: Visibility
   readonly isInsecureAllowed?: boolean
+  readonly userAgent?: string
 }
 
 export interface PushResult {

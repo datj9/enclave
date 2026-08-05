@@ -169,6 +169,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
     mocks.sessionUser = { id: ownerId, email: OWNER_EMAIL, role: 'member', isActive: true }
     mocks.envOverrides = {
       RATE_LIMIT_GENERATIONS_PER_HOUR: 2,
+      RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY: 2,
       QUOTA_GENERATIONS_PER_DAY: 100,
       QUOTA_GENERATIONS_PER_DAY_OWN_KEY: 1000,
     }
@@ -254,10 +255,25 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
     expect(rows.every((row) => row.usedInstanceKey === false)).toBe(true)
     expect(await dailyCountFor(ownerId)).toBe(2)
 
-    // Two is the hourly limit for this suite, and bringing a key does not raise it.
+    // Both hourly limits are two in this suite, so the own-key path still has one.
     const denied = await generate()
     expect(denied.status).toBe(429)
     expect(denied.errorCode).toBe('RATE_LIMITED')
+  })
+
+  it('gives a user on their own key the looser hourly limit too', async () => {
+    mocks.envOverrides.RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY = 4
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect((await generate()).status).toBe(200)
+    }
+
+    // Past the own-key hourly limit, not the instance one it would have hit at two.
+    const denied = await generate()
+    expect(denied.status).toBe(429)
+    expect(denied.errorCode).toBe('RATE_LIMITED')
+    expect(await generationRowsFor(ownerId)).toHaveLength(4)
   })
 
   it('falls back to the instance key and the stricter cap when the key is deleted', async () => {

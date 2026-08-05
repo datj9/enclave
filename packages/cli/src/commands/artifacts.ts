@@ -1,6 +1,13 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
-import { IdResolutionError, resolveArtifactId, shortId, type ArtifactSummary } from '../ids.ts'
+import { displayTitle } from '../display.ts'
+import {
+  IdResolutionError,
+  InvalidIdError,
+  resolveArtifactId,
+  shortId,
+  type ArtifactSummary,
+} from '../ids.ts'
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 const VISIBILITIES = ['private', 'org'] as const
@@ -8,6 +15,7 @@ const VISIBILITIES = ['private', 'org'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
 const VISIBILITY_COLUMN_WIDTH = 7
+const MAX_PAGES = 100
 
 export interface ArtifactView {
   readonly id: string
@@ -29,12 +37,14 @@ export interface ListOptions {
   readonly limit?: number
   readonly cursor?: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface ShowOptions {
   readonly host: string
   readonly id: string
   readonly isJson: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RenameOptions {
@@ -42,6 +52,7 @@ export interface RenameOptions {
   readonly id: string
   readonly title: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface PrivacyOptions {
@@ -49,18 +60,21 @@ export interface PrivacyOptions {
   readonly id: string
   readonly visibility: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RemoveOptions {
   readonly host: string
   readonly id: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 export interface RestoreOptions {
   readonly host: string
   readonly id: string
   readonly isJson?: boolean
+  readonly isInsecureAllowed?: boolean
 }
 
 class CliError extends Error {}
@@ -82,12 +96,12 @@ function fail(line: string): void {
   process.stderr.write(`${line}\n`)
 }
 
-function requireClient(host: string): ApiClient {
+function requireClient(host: string, isInsecureAllowed = false): ApiClient {
   const token = tokenFor(host)
   if (token === null || token === '') {
     throw new CliError(`not logged in to ${host} — run: enclave login --host ${host}`)
   }
-  return apiClient(host, token)
+  return apiClient(host, token, isInsecureAllowed)
 }
 
 /**
@@ -99,12 +113,24 @@ function reportFailure(error: unknown, given?: string): number {
     fail(given === undefined ? '✗ not found' : `✗ not found: ${given}`)
     return EXIT_FAILED
   }
+  // A prefix too short to resolve is a malformed argument, not a lookup that came back empty —
+  // callers distinguish those by exit code, so it exits 2 like every other unusable value.
+  if (error instanceof InvalidIdError) {
+    fail(`✗ ${error.message}`)
+    return EXIT_USAGE
+  }
   if (
     error instanceof ApiError ||
     error instanceof IdResolutionError ||
     error instanceof CliError
   ) {
     fail(`✗ ${error.message}`)
+    if (error instanceof ApiError && Object.keys(error.details).length > 0) {
+      const rendered = Object.entries(error.details)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(' ')
+      fail(`  ${rendered}`)
+    }
     return EXIT_FAILED
   }
   fail(`✗ ${error instanceof Error ? error.message : String(error)}`)
@@ -130,6 +156,8 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
   const isPageRequest = options.limit !== undefined || options.cursor !== undefined
   const items: ArtifactSummary[] = []
   let cursor: string | null = options.cursor ?? null
+  const seenCursors = new Set<string>()
+  let pages = 0
 
   for (;;) {
     const page = await client.get<ArtifactPage>(
@@ -137,7 +165,17 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
     )
     items.push(...page.items)
     if (isPageRequest) return { items, nextCursor: page.nextCursor }
-    if (page.nextCursor === null) return { items, nextCursor: null }
+    pages += 1
+    if (page.nextCursor === null || page.nextCursor === undefined) return { items, nextCursor: null }
+    if (seenCursors.has(page.nextCursor)) {
+      throw new CliError('the server returned a cursor it had already given — stopping')
+    }
+    if (pages >= MAX_PAGES) {
+      throw new CliError(
+        `stopped after ${String(MAX_PAGES)} pages — pass --limit and --cursor to page through more`,
+      )
+    }
+    seenCursors.add(page.nextCursor)
     cursor = page.nextCursor
   }
 }
@@ -148,19 +186,20 @@ function printArtifacts(page: ArtifactPage): void {
     return
   }
 
-  const titleWidth = Math.max(...page.items.map((item) => item.title.length))
-  for (const item of page.items) {
-    const title = item.title.padEnd(titleWidth)
+  const titles = page.items.map((item) => displayTitle(item.title))
+  const titleWidth = Math.max(...titles.map((title) => title.length))
+  page.items.forEach((item, index) => {
+    const title = (titles[index] ?? '').padEnd(titleWidth)
     const visibility = item.visibility.padEnd(VISIBILITY_COLUMN_WIDTH)
     write(`${shortId(item.id)}  ${title}  ${visibility}  ${item.viewUrl}`)
-  }
+  })
 
   if (page.nextCursor !== null) write(`\nmore: enclave list --cursor ${page.nextCursor}`)
 }
 
 function printArtifact(artifact: ArtifactView): void {
   write(`id          ${artifact.id}`)
-  write(`title       ${artifact.title}`)
+  write(`title       ${displayTitle(artifact.title)}`)
   write(`visibility  ${artifact.visibility}`)
   write(`created     ${artifact.createdAt}`)
   write(`url         ${artifact.viewUrl}`)
@@ -168,7 +207,7 @@ function printArtifact(artifact: ArtifactView): void {
 
 export async function runList(options: ListOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const page = await readArtifacts(client, options)
 
     if (options.isJson) writeJson(page)
@@ -181,7 +220,7 @@ export async function runList(options: ListOptions): Promise<number> {
 
 export async function runShow(options: ShowOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const artifact = await client.get<ArtifactView>(`/api/v1/artifacts/${id}`)
 
@@ -196,19 +235,19 @@ export async function runShow(options: ShowOptions): Promise<number> {
 export async function runRename(options: RenameOptions): Promise<number> {
   const title = options.title.trim()
   if (title === '') {
-    write('✗ a title is required')
+    fail('✗ a title is required')
     return EXIT_USAGE
   }
 
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     // `{title}` alone. PATCH is the only writer of `artifact.visibility_change`, so echoing
     // visibility back would log a privacy change for a rename.
     const artifact = await client.patch<ArtifactView>(`/api/v1/artifacts/${id}`, { title })
 
     if (options.isJson === true) writeJson(artifact)
-    else write(`✓ ${shortId(artifact.id)} renamed to "${artifact.title}"`)
+    else write(`✓ ${shortId(artifact.id)} renamed to "${displayTitle(artifact.title)}"`)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error, options.id)
@@ -219,15 +258,15 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
   // Refused before the id is resolved: resolving a prefix costs a request, and there is nothing to
   // send — VISIBILITIES is ['private','org'] and the third privacy level is a share link.
   if (!isVisibility(options.visibility)) {
-    write(`✗ visibility must be private or org, not '${options.visibility}'`)
+    fail(`✗ visibility must be private or org, not '${options.visibility}'`)
     if (options.visibility === 'public') {
-      write('  a share link is how you publish beyond this instance')
+      fail('  a share link is how you publish beyond this instance')
     }
     return EXIT_USAGE
   }
 
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const before = await client.get<ArtifactView>(`/api/v1/artifacts/${id}`)
     const after = await client.patch<ArtifactView>(`/api/v1/artifacts/${id}`, {
@@ -243,7 +282,7 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
 }
 
 function printPrivacyChange(before: ArtifactView, after: ArtifactView): void {
-  write(`  ${shortId(after.id)}  ${after.title}`)
+  write(`  ${shortId(after.id)}  ${displayTitle(after.title)}`)
   write(`  ${before.visibility} → ${after.visibility}`)
   write(
     after.visibility === 'org'
@@ -254,7 +293,7 @@ function printPrivacyChange(before: ArtifactView, after: ArtifactView): void {
 
 export async function runRemove(options: RemoveOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     await client.remove(`/api/v1/artifacts/${id}`)
 
@@ -274,7 +313,7 @@ export async function runRemove(options: RemoveOptions): Promise<number> {
 
 export async function runRestore(options: RestoreOptions): Promise<number> {
   try {
-    const client = requireClient(options.host)
+    const client = requireClient(options.host, options.isInsecureAllowed)
     const id = await resolveArtifactId(client, options.id)
     const artifact = await client.post<ArtifactView>(
       `/api/v1/artifacts/${id}/restore`,
@@ -283,7 +322,7 @@ export async function runRestore(options: RestoreOptions): Promise<number> {
     )
 
     if (options.isJson === true) writeJson(artifact)
-    else write(`✓ restored ${shortId(artifact.id)}  ${artifact.title}`)
+    else write(`✓ restored ${shortId(artifact.id)}  ${displayTitle(artifact.title)}`)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error, options.id)

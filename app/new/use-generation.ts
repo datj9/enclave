@@ -25,7 +25,7 @@ export interface GenerationFailure {
   readonly message: string
 }
 
-export type GenerationStatus = 'idle' | 'streaming' | 'done' | 'error'
+export type GenerationStatus = 'idle' | 'streaming' | 'done' | 'error' | 'cancelled'
 
 interface GenerationState {
   readonly status: GenerationStatus
@@ -34,13 +34,14 @@ interface GenerationState {
   readonly failure: GenerationFailure | null
 }
 
-type Action =
+export type Action =
   | { readonly type: 'start' }
   | { readonly type: 'file_start'; readonly path: string }
   | { readonly type: 'chunk'; readonly path: string; readonly text: string }
   | { readonly type: 'file_end'; readonly path: string; readonly bytes: number }
   | { readonly type: 'done'; readonly result: GenerationResult }
   | { readonly type: 'error'; readonly failure: GenerationFailure }
+  | { readonly type: 'cancelled' }
 
 const INITIAL_STATE: GenerationState = {
   status: 'idle',
@@ -62,7 +63,7 @@ function updateFile(
   return files.map((file) => (file.path === path ? change(file) : file))
 }
 
-function reducer(state: GenerationState, action: Action): GenerationState {
+export function reducer(state: GenerationState, action: Action): GenerationState {
   switch (action.type) {
     case 'start':
       return { status: 'streaming', files: [], result: null, failure: null }
@@ -85,7 +86,14 @@ function reducer(state: GenerationState, action: Action): GenerationState {
       return { ...state, status: 'done', result: action.result }
     case 'error':
       return { ...state, status: 'error', failure: action.failure }
+    case 'cancelled':
+      return { ...state, status: 'cancelled', failure: null }
   }
+}
+
+/** Distinguishes a terminal frame from progress frames so the read loop can latch `reachedEnd`. */
+export function isTerminalAction(action: Action): boolean {
+  return action.type === 'done' || action.type === 'error'
 }
 
 interface SseFrame {
@@ -163,10 +171,14 @@ async function failureFromResponse(response: Response): Promise<GenerationFailur
 export function useGeneration() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE)
   const inFlight = useRef(false)
+  const controller = useRef<AbortController | null>(null)
+  const wasCancelled = useRef(false)
 
   const generate = useCallback(async (prompt: string): Promise<void> => {
     if (inFlight.current) return
     inFlight.current = true
+    wasCancelled.current = false
+    controller.current = new AbortController()
     dispatch({ type: 'start' })
 
     try {
@@ -174,6 +186,7 @@ export function useGeneration() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ prompt }),
+        signal: controller.current.signal,
       })
 
       if (!response.ok || response.body === null) {
@@ -185,18 +198,29 @@ export function useGeneration() {
       for await (const frame of readFrames(response.body)) {
         const action = toAction(frame)
         if (action === undefined) continue
-        reachedEnd = action.type === 'done' || action.type === 'error'
+        if (isTerminalAction(action)) reachedEnd = true
         dispatch(action)
       }
 
       // A stream that stops without `done` or `error` is a dropped connection, not a success.
       if (!reachedEnd) dispatch({ type: 'error', failure: NETWORK_FAILURE })
     } catch {
-      dispatch({ type: 'error', failure: NETWORK_FAILURE })
+      // `AbortError` is indistinguishable from a dropped connection by type alone, so the
+      // cancel path is told apart with a ref `cancel` sets, not by inspecting the error.
+      dispatch(
+        wasCancelled.current ? { type: 'cancelled' } : { type: 'error', failure: NETWORK_FAILURE },
+      )
     } finally {
       inFlight.current = false
+      controller.current = null
     }
   }, [])
 
-  return { state, generate }
+  const cancel = useCallback((): void => {
+    if (controller.current === null) return
+    wasCancelled.current = true
+    controller.current.abort()
+  }, [])
+
+  return { state, generate, cancel }
 }

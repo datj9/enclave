@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic'
 
 const createShareBodySchema = z
   .object({
-    versionId: z.uuid(),
+    versionId: z.uuid().optional(),
     expiresAt: z.iso.datetime({ offset: true }).optional(),
   })
   // Refused rather than ignored: a misspelled `expiresAt` must not silently create a link that
@@ -61,7 +61,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     const body = parseCreateShareBody(await readJsonBody(request))
     const created = await createShareLink({
       artifactId: id,
-      versionId: body.versionId,
+      ...(body.versionId === undefined ? {} : { versionId: body.versionId }),
       viewerRef: viewerRefOf(principal),
       expiresAt: body.expiresAt === undefined ? null : new Date(body.expiresAt),
       actorIp: clientIpFromHeaders(request.headers),

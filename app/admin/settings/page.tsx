@@ -39,6 +39,11 @@ function quotaSettings(): readonly Setting[] {
       note: 'Rolling hourly cap per user, so one account cannot drain the key in a burst.',
     },
     {
+      name: 'RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY',
+      value: String(env.RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY),
+      note: 'Rolling hourly cap per user when they supply their own provider key.',
+    },
+    {
       name: 'RATE_LIMIT_AUTH_PER_IP_PER_HOUR',
       value: String(env.RATE_LIMIT_AUTH_PER_IP_PER_HOUR),
       note: 'Failed sign-in, setup, and signup attempts allowed per IP per hour.',

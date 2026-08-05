@@ -60,6 +60,7 @@ export const envSchema = z.object({
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
 
   RATE_LIMIT_GENERATIONS_PER_HOUR: positiveIntFromString(10),
+  RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY: positiveIntFromString(100),
   QUOTA_GENERATIONS_PER_DAY: positiveIntFromString(100),
   QUOTA_GENERATIONS_PER_DAY_OWN_KEY: positiveIntFromString(1000),
 

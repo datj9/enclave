@@ -1,10 +1,20 @@
-import { forgetToken } from '../credentials.ts'
+import { CredentialError, forgetToken } from '../credentials.ts'
 
 export function runLogout(host: string): number {
-  if (forgetToken(host)) {
-    process.stdout.write(`✓ forgot ${host}\n`)
-    return 0
+  try {
+    if (forgetToken(host)) {
+      process.stdout.write(`✓ forgot ${host}\n`)
+      return 0
+    }
+  } catch (error) {
+    const message = error instanceof CredentialError ? error.message : messageOf(error)
+    process.stderr.write(`${message}\n`)
+    return 1
   }
-  process.stdout.write(`no credential for ${host}\n`)
+  process.stderr.write(`no credential for ${host}\n`)
   return 0
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

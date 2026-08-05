@@ -1,7 +1,8 @@
-import { statSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 import {
+  assertBundlePushable,
   collectBundle,
   InvalidHostError,
   normaliseHost,
@@ -11,8 +12,9 @@ import {
 import type { PushResult, SkippedFile } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
-import { readState, writeState } from '../state.ts'
+import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
 import type { ProjectState } from '../state.ts'
+import { USER_AGENT } from '../version.ts'
 
 export interface PushCommandOptions {
   readonly directory: string
@@ -61,12 +63,27 @@ function kilobytesOf(directory: string, paths: readonly string[]): number {
   return Math.round(totalBytes / BYTES_PER_KILOBYTE)
 }
 
-function reportError(isJson: boolean, code: string, message: string, humanText: string): void {
+/** Errors, JSON or human, never land on stdout — `--json` promises stdout is nothing but the result. */
+function reportError(
+  isJson: boolean,
+  code: string,
+  message: string,
+  humanText: string,
+  details: Readonly<Record<string, unknown>> = {},
+): void {
   if (isJson) {
-    process.stdout.write(`${JSON.stringify({ error: { code, message } })}\n`)
+    const error =
+      Object.keys(details).length === 0 ? { code, message } : { code, message, details }
+    process.stderr.write(`${JSON.stringify({ error })}\n`)
     return
   }
-  process.stdout.write(`${humanText}\n`)
+  process.stderr.write(`${humanText}\n`)
+  if (Object.keys(details).length > 0) {
+    const rendered = Object.entries(details)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(' ')
+    process.stderr.write(`  ${rendered}\n`)
+  }
 }
 
 function messageOf(error: unknown): string {
@@ -77,16 +94,25 @@ function messageOf(error: unknown): string {
 function refuseExistingState(
   state: ProjectState | null,
   host: string,
+  hostSource: HostSource,
   options: PushCommandOptions,
 ): number | null {
   if (state === null || options.isNew) return null
 
+  // An unnormalisable state host is only fatal when the push is relying on it. If --host or
+  // ENCLAVE_HOST supplied the target, the state file simply describes a different instance —
+  // that is a mismatch to report, not a corrupt-file error that hides which host won.
   let stateHost: string
   try {
     stateHost = normaliseHost(state.host, options.isInsecureAllowed ?? false)
   } catch (error) {
-    const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
-    reportError(options.isJson, 'INVALID_STATE', text, text)
+    if (hostSource === 'state') {
+      const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
+      reportError(options.isJson, 'INVALID_STATE', text, text)
+      return 1
+    }
+    const text = `state file targets '${state.host}', not ${host}`
+    reportError(options.isJson, 'HOST_MISMATCH', text, text)
     return 1
   }
 
@@ -108,21 +134,44 @@ function refuseExistingState(
   return 1
 }
 
+type HostSource = 'flag' | 'environment' | 'state'
+
+/** The single place push's host precedence is written down — `refuseExistingState` reads the
+ *  winning source from here rather than re-deriving it and drifting. */
+function hostCandidate(
+  state: ProjectState | null,
+  options: PushCommandOptions,
+): { readonly value: string; readonly source: HostSource } | null {
+  if (options.host !== undefined && options.host !== '') {
+    return { value: options.host, source: 'flag' }
+  }
+  const fromEnvironment = process.env['ENCLAVE_HOST']
+  if (fromEnvironment !== undefined && fromEnvironment !== '') {
+    return { value: fromEnvironment, source: 'environment' }
+  }
+  if (state !== null && state.host !== '') return { value: state.host, source: 'state' }
+  return null
+}
+
 type HostResolution =
-  | { readonly canonicalHost: string; readonly failureExitCode: null }
+  | {
+      readonly canonicalHost: string
+      readonly hostSource: HostSource
+      readonly failureExitCode: null
+    }
   | { readonly failureExitCode: number }
 
 function resolveHost(state: ProjectState | null, options: PushCommandOptions): HostResolution {
-  const host = options.host ?? process.env['ENCLAVE_HOST'] ?? state?.host ?? ''
-  if (host === '') {
+  const candidate = hostCandidate(state, options)
+  if (candidate === null) {
     const text = 'no host: pass --host or set ENCLAVE_HOST'
     reportError(options.isJson, 'NO_HOST', text, text)
     return { failureExitCode: 2 }
   }
 
   try {
-    const canonicalHost = normaliseHost(host, options.isInsecureAllowed ?? false)
-    return { canonicalHost, failureExitCode: null }
+    const canonicalHost = normaliseHost(candidate.value, options.isInsecureAllowed ?? false)
+    return { canonicalHost, hostSource: candidate.source, failureExitCode: null }
   } catch (error) {
     const text = error instanceof InvalidHostError ? error.message : 'invalid host'
     reportError(options.isJson, 'INVALID_HOST', text, text)
@@ -132,6 +181,17 @@ function resolveHost(state: ProjectState | null, options: PushCommandOptions): H
 
 function reportDryRun(options: PushCommandOptions): number {
   const bundle = collectBundle(options.directory)
+
+  try {
+    assertBundlePushable(bundle.files, bundle.skipped)
+  } catch (error) {
+    const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
+    const text = messageOf(error)
+    const details = error instanceof PushError ? error.details : {}
+    reportError(options.isJson, code, text, `✗ ${text}`, details)
+    return 1
+  }
+
   const uploaded = bundle.files.map((file) => file.path)
 
   if (options.isJson) {
@@ -158,14 +218,36 @@ function reportPushed(options: PushCommandOptions, result: PushResult): void {
   process.stdout.write(`→ ${result.viewUrl}\n`)
 }
 
+function reportLegacyState(options: PushCommandOptions): number {
+  const legacy = legacyStatePath(options.directory)
+  const inDir = statePath(options.directory)
+  const text =
+    `found a legacy .enclave.json at ${legacy} — state now lives inside the pushed directory, not beside it.\n` +
+    `  move it: mv ${legacy} ${inDir}\n` +
+    `  or, if this should be a new artifact: rm ${legacy}`
+  reportError(options.isJson, 'LEGACY_STATE', text, `✗ ${text}`)
+  return 1
+}
+
 export async function runPush(options: PushCommandOptions): Promise<number> {
-  const state = readState(options.directory)
+  let state: ProjectState | null
+  try {
+    state = readState(options.directory)
+  } catch (error) {
+    const text = error instanceof StateError ? error.message : messageOf(error)
+    reportError(options.isJson, 'INVALID_STATE', text, `✗ ${text}`)
+    return 1
+  }
+
+  if (state === null && existsSync(legacyStatePath(options.directory))) {
+    return reportLegacyState(options)
+  }
 
   const hostResolution = resolveHost(state, options)
   if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
-  const { canonicalHost } = hostResolution
+  const { canonicalHost, hostSource } = hostResolution
 
-  const refusal = refuseExistingState(state, canonicalHost, options)
+  const refusal = refuseExistingState(state, canonicalHost, hostSource, options)
   if (refusal !== null) return refusal
 
   const token = tokenFor(canonicalHost)
@@ -186,11 +268,13 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
       title: options.title ?? basename(resolve(options.directory)),
       visibility: options.visibility ?? 'private',
       isInsecureAllowed: options.isInsecureAllowed ?? false,
+      userAgent: USER_AGENT,
     })
   } catch (error) {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
     const text = messageOf(error)
-    reportError(options.isJson, code, text, `✗ ${text}`)
+    const details = error instanceof PushError ? error.details : {}
+    reportError(options.isJson, code, text, `✗ ${text}`, details)
     return 1
   }
 

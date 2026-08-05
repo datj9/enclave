@@ -10,6 +10,7 @@ import { push } from '../push-core/src/index.ts'
 import type { PushResult } from '../push-core/src/index.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
+import { USER_AGENT } from './src/version.ts'
 
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
@@ -32,11 +33,17 @@ describe('push command', () => {
   let projectDirectory: string
   let configHome: string
   let stdout: string
+  let stderr: string
   let originalConfigHome: string | undefined
   let originalEnvironmentToken: string | undefined
   let originalHost: string | undefined
 
   function writeStateFile(state: ProjectState): void {
+    writeFileSync(join(projectDirectory, '.enclave.json'), `${JSON.stringify(state, null, 2)}\n`)
+  }
+
+  /** The pre-fix location: beside the pushed directory, not inside it. */
+  function writeLegacyStateFile(state: ProjectState): void {
     writeFileSync(join(workspace, '.enclave.json'), `${JSON.stringify(state, null, 2)}\n`)
   }
 
@@ -57,8 +64,13 @@ describe('push command', () => {
     delete process.env['ENCLAVE_HOST']
 
     stdout = ''
+    stderr = ''
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
       stdout += String(chunk)
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown): boolean => {
+      stderr += String(chunk)
       return true
     })
     vi.mocked(push).mockResolvedValue(SUCCESS_RESULT)
@@ -93,8 +105,8 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('S15')
-    expect(stdout).toContain('.enclave.json exists (artifact 3f2a91c4)')
+    expect(stderr).toContain('S15')
+    expect(stderr).toContain('.enclave.json exists (artifact 3f2a91c4)')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -113,6 +125,19 @@ describe('push command', () => {
     expect(push).toHaveBeenCalledTimes(1)
   })
 
+  it('identifies itself with a User-Agent naming the CLI and its version', async () => {
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(vi.mocked(push).mock.calls[0]?.[0]).toMatchObject({ userAgent: USER_AGENT })
+  })
+
   it('exits 1 when no token is available', async () => {
     delete process.env['ENCLAVE_TOKEN']
 
@@ -125,7 +150,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('enclave login')
+    expect(stderr).toContain('enclave login')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -156,7 +181,64 @@ describe('push command', () => {
     expect(stdout).toContain('app.js.map        unsupported (.map)')
   })
 
-  it('writes the state file after a successful push', async () => {
+  it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
+    const emptyDirectory = join(workspace, 'empty')
+    mkdirSync(emptyDirectory)
+    writeFileSync(join(emptyDirectory, 'app.js'), 'console.log(1)')
+
+    const exitCode = await runPush({
+      directory: emptyDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('index.html')
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('--dry-run fails an empty directory rather than reporting success', async () => {
+    const emptyDirectory = join(workspace, 'empty')
+    mkdirSync(emptyDirectory)
+
+    const exitCode = await runPush({
+      directory: emptyDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'NOTHING_TO_UPLOAD' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('--dry-run fails a bundle over the default file count the same way a real push would', async () => {
+    for (let index = 0; index < 51; index += 1) {
+      writeFileSync(join(projectDirectory, `page-${String(index)}.html`), '<!doctype html>')
+    }
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'BUNDLE_TOO_LARGE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('writes the state file inside the pushed directory after a successful push', async () => {
     const exitCode = await runPush({
       directory: projectDirectory,
       host: HOST,
@@ -167,7 +249,7 @@ describe('push command', () => {
 
     expect(exitCode).toBe(0)
     const written = JSON.parse(
-      readFileSync(join(workspace, '.enclave.json'), 'utf8'),
+      readFileSync(join(projectDirectory, '.enclave.json'), 'utf8'),
     ) as ProjectState
     // Persists the canonical form (scheme included), not the raw --host value — otherwise a
     // later mismatch check compares two spellings of the same host and misreports.
@@ -208,12 +290,35 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('other.example.com')
-    expect(stdout).toContain(HOST)
+    expect(stderr).toContain('other.example.com')
+    expect(stderr).toContain(HOST)
     expect(push).not.toHaveBeenCalled()
   })
 
-  it('reports INVALID_STATE with exit 1 for a corrupt state host, not a stack trace', async () => {
+  it('reports INVALID_STATE with exit 1 when a corrupt state host is the only host', async () => {
+    writeStateFile({
+      host: 'not a host',
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(2)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_HOST' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('reports a corrupt state host as a mismatch when --host supplied the target', async () => {
+    // The state file describes a different instance; --host won, so which host is in play is the
+    // useful thing to say — not that a file the push is no longer reading is malformed.
     writeStateFile({
       host: 'not a host',
       artifactId: SUCCESS_RESULT.artifactId,
@@ -229,8 +334,8 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(JSON.parse(stdout) as { error: { code: string } }).toMatchObject({
-      error: { code: 'INVALID_STATE' },
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'HOST_MISMATCH' },
     })
     expect(push).not.toHaveBeenCalled()
   })
@@ -248,8 +353,91 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stdout).toContain('http://enclave.example.com')
-    expect(stdout).toContain('https://enclave.example.com')
+    expect(stderr).toContain('http://enclave.example.com')
+    expect(stderr).toContain('https://enclave.example.com')
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('sibling directories each keep their own state without colliding', async () => {
+    const siblingDirectory = join(workspace, 'dist-b')
+    mkdirSync(siblingDirectory)
+    writeFileSync(join(siblingDirectory, 'index.html'), '<!doctype html>')
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
+
+    const exitCode = await runPush({
+      directory: siblingDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(push).toHaveBeenCalledTimes(1)
+    const written = JSON.parse(
+      readFileSync(join(siblingDirectory, '.enclave.json'), 'utf8'),
+    ) as ProjectState
+    expect(written.artifactId).toBe(SUCCESS_RESULT.artifactId)
+  })
+
+  it('reports INVALID_STATE for malformed JSON instead of throwing a stack trace', async () => {
+    writeFileSync(join(projectDirectory, '.enclave.json'), '{ not json')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_STATE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('reports INVALID_STATE when artifactId is missing rather than treating it as no state', async () => {
+    writeFileSync(
+      join(projectDirectory, '.enclave.json'),
+      `${JSON.stringify({ host: HOST, lastPushedVersionNo: 1 })}\n`,
+    )
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_STATE' },
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('stops with move/delete instructions when a legacy parent state file exists', async () => {
+    writeLegacyStateFile({
+      host: HOST,
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('legacy')
+    expect(stderr).toContain('mv ')
+    expect(stderr).toContain('rm ')
     expect(push).not.toHaveBeenCalled()
   })
 })

@@ -3,6 +3,7 @@ import { Writable } from 'node:stream'
 
 import { baseUrlFor } from '../../../push-core/src/index.ts'
 import { saveToken } from '../credentials.ts'
+import { USER_AGENT } from '../version.ts'
 
 /**
  * Every scope the CLI needs across all its commands. `login` probes a read endpoint to validate
@@ -27,14 +28,14 @@ function readSecret(promptText: string): Promise<string> {
     },
   })
 
-  process.stdout.write(promptText)
+  process.stderr.write(promptText)
   const reader = createInterface({ input: process.stdin, output: discardEcho, terminal: true })
 
   const redrawMask = (_character: string, key: { name?: string } | undefined): void => {
     if (key?.name === 'return' || key?.name === 'enter') return
-    if (process.stdout.isTTY !== true) return
+    if (process.stderr.isTTY !== true) return
     const width = (reader as unknown as { line: string }).line.length
-    process.stdout.write(`\r${promptText}${'*'.repeat(width)}${ESCAPE}[K`)
+    process.stderr.write(`\r${promptText}${'*'.repeat(width)}${ESCAPE}[K`)
   }
   process.stdin.on('keypress', redrawMask)
 
@@ -45,7 +46,7 @@ function readSecret(promptText: string): Promise<string> {
       isSettled = true
       process.stdin.off('keypress', redrawMask)
       reader.close()
-      process.stdout.write('\n')
+      process.stderr.write('\n')
       resolve(answer.trim())
     }
     // Ctrl-D (stdin closed with no input) never fires `question`'s callback, so without this the
@@ -63,41 +64,74 @@ export async function runLogin(
   isInsecureAllowed = false,
 ): Promise<number> {
   const baseUrl = baseUrlFor(host, isInsecureAllowed)
-  process.stdout.write(`Create a token at ${baseUrl}/settings/tokens\n`)
-  process.stdout.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
+  process.stderr.write(`Create a token at ${baseUrl}/settings/tokens\n`)
+  process.stderr.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
 
-  const resolvedToken = token ?? (await readSecret('Token: '))
+  // `--help` promises ENCLAVE_TOKEN works and `tokenFor` honours it; prompting anyway dead-ends
+  // every CI run, where there is no TTY to answer.
+  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  const givenToken =
+    token ?? (fromEnvironment !== undefined && fromEnvironment !== '' ? fromEnvironment : undefined)
+  const resolvedToken = givenToken ?? (await readSecret('Token: '))
   if (resolvedToken === '') {
-    process.stdout.write('no token was entered\n')
+    process.stderr.write('no token was entered\n')
     return 1
   }
 
   let response: Response
   try {
     response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
-      headers: { authorization: `Bearer ${resolvedToken}` },
+      headers: { authorization: `Bearer ${resolvedToken}`, 'user-agent': USER_AGENT },
+      redirect: 'manual',
     })
   } catch {
-    process.stdout.write(`could not reach ${host}\n`)
+    process.stderr.write(`could not reach ${host}\n`)
     return 1
   }
 
+  if (response.status >= 300 && response.status < 400) {
+    process.stderr.write(`${host} redirected the API probe — is that the right host?\n`)
+    return 1
+  }
   if (response.status === 401) {
-    process.stdout.write('that token was rejected\n')
+    process.stderr.write('that token was rejected\n')
     return 1
   }
   // The probe reads, so a write-only token lands here rather than on 401. Naming the scope the
   // server refused is the difference between a one-line fix and an unexplained failure.
   if (response.status === 403) {
-    process.stdout.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
+    process.stderr.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
     return 1
   }
   if (response.status !== 200) {
-    process.stdout.write(`the server returned ${String(response.status)}\n`)
+    process.stderr.write(`the server returned ${String(response.status)}\n`)
+    return 1
+  }
+
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    process.stderr.write(
+      'server response was not an enclave artifacts list — is that the right host?\n',
+    )
+    return 1
+  }
+  if (!isArtifactsListEnvelope(body)) {
+    process.stderr.write(
+      'server response was not an enclave artifacts list — is that the right host?\n',
+    )
     return 1
   }
 
   saveToken(host, resolvedToken)
   process.stdout.write(`✓ logged in to ${host}\n`)
   return 0
+}
+
+function isArtifactsListEnvelope(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null || !('data' in body)) return false
+  const data = (body as { data: unknown }).data
+  if (typeof data !== 'object' || data === null || !('items' in data)) return false
+  return Array.isArray((data as { items: unknown }).items)
 }

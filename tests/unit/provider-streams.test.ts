@@ -78,6 +78,34 @@ function openAiStream(texts: readonly string[]): AsyncIterable<unknown> {
   ])
 }
 
+/** Usage reported, then the connection drops before the stream completes normally. */
+function anthropicStreamThatThrowsAfterUsage(): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: 'message_start', message: { usage: { input_tokens: TOKENS_IN } } }
+      yield {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: TOKENS_OUT },
+      }
+      throw new Error('stream disconnected')
+    },
+  }
+}
+
+function openAiStreamThatThrowsAfterUsage(): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { choices: [{ delta: { content: 'x' }, finish_reason: null }] }
+      yield {
+        choices: [{ delta: {}, finish_reason: null }],
+        usage: { prompt_tokens: TOKENS_IN, completion_tokens: TOKENS_OUT },
+      }
+      throw new Error('stream disconnected')
+    },
+  }
+}
+
 async function collect(
   provider: ArtifactProvider,
   overrides: { readonly onUsage?: (usage: ProviderUsage) => void } = {},
@@ -140,6 +168,48 @@ describe('anthropicProvider', () => {
     const usages: ProviderUsage[] = []
 
     await collect(anthropicProvider, { onUsage: (usage) => usages.push(usage) })
+
+    expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
+  })
+
+  it('reports the tokens already charged when the stream throws mid-stream', async () => {
+    mocks.anthropicCreate.mockResolvedValue(anthropicStreamThatThrowsAfterUsage())
+    const usages: ProviderUsage[] = []
+
+    await expect(
+      collect(anthropicProvider, { onUsage: (usage) => usages.push(usage) }),
+    ).rejects.toThrow()
+
+    expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
+  })
+
+  it('reports the tokens collected so far when the consumer returns early', async () => {
+    mocks.anthropicCreate.mockResolvedValue(
+      asStream([
+        { type: 'message_start', message: { usage: { input_tokens: TOKENS_IN } } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'a' } },
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn' },
+          usage: { output_tokens: TOKENS_OUT },
+        },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'b' } },
+      ]),
+    )
+    const usages: ProviderUsage[] = []
+
+    const iterator = anthropicProvider
+      .generate({
+        prompt: 'p',
+        model: 'm',
+        apiKey: 'k',
+        signal: new AbortController().signal,
+        onUsage: (usage) => usages.push(usage),
+      })
+      [Symbol.asyncIterator]()
+    await iterator.next()
+    await iterator.next()
+    await iterator.return?.(undefined)
 
     expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
   })
@@ -250,6 +320,46 @@ describe('openAiCompatibleProvider', () => {
     const usages: ProviderUsage[] = []
 
     await collect(openAiCompatibleProvider, { onUsage: (usage) => usages.push(usage) })
+
+    expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
+  })
+
+  it('reports the tokens already charged when the stream throws mid-stream', async () => {
+    mocks.openAiCreate.mockResolvedValue(openAiStreamThatThrowsAfterUsage())
+    const usages: ProviderUsage[] = []
+
+    await expect(
+      collect(openAiCompatibleProvider, { onUsage: (usage) => usages.push(usage) }),
+    ).rejects.toThrow()
+
+    expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
+  })
+
+  it('reports the tokens collected so far when the consumer returns early', async () => {
+    mocks.openAiCreate.mockResolvedValue(
+      asStream([
+        { choices: [{ delta: { content: 'a' }, finish_reason: null }] },
+        {
+          choices: [{ delta: { content: 'b' }, finish_reason: null }],
+          usage: { prompt_tokens: TOKENS_IN, completion_tokens: TOKENS_OUT },
+        },
+        { choices: [{ delta: { content: 'c' }, finish_reason: null }] },
+      ]),
+    )
+    const usages: ProviderUsage[] = []
+
+    const iterator = openAiCompatibleProvider
+      .generate({
+        prompt: 'p',
+        model: 'm',
+        apiKey: 'k',
+        signal: new AbortController().signal,
+        onUsage: (usage) => usages.push(usage),
+      })
+      [Symbol.asyncIterator]()
+    await iterator.next()
+    await iterator.next()
+    await iterator.return?.(undefined)
 
     expect(usages).toEqual([{ tokensIn: TOKENS_IN, tokensOut: TOKENS_OUT }])
   })
