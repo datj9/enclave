@@ -43,6 +43,13 @@
       "when": 1785580554719,
       "tag": "0006_trash_index",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785971855177,
+      "tag": "0007_public_visibility",
+      "breakpoints": true
     }
   ]
 }

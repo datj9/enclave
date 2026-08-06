@@ -12,12 +12,12 @@ import { WorkflowStage } from '@app/_components/marketing/workflow-stage'
 export const metadata: Metadata = {
   title: 'enclave — generate an artifact, decide who can open it',
   description:
-    'Self-hosted artifact generation and hosting. One prompt writes a multi-file HTML page; you choose whether it is private, visible to your instance, or open to anyone holding a revocable link.',
+    'Self-hosted artifact generation and hosting. One prompt writes a multi-file HTML page; you choose whether it is private, visible to your instance, open to anyone holding a revocable link, or public to the whole internet.',
 }
 
 /**
  * Public landing page. Narrative Workflow (design.md § Marketing page structure): four numbered
- * stages, with 3.0 carrying the weight because the three audiences are the product.
+ * stages, with 3.0 carrying the weight because the audiences are the product.
  */
 export default function MarketingPage() {
   return (
@@ -72,7 +72,7 @@ export default function MarketingPage() {
           id="audience"
           number="3.0"
           heading="Choose who sees it"
-          lede="Three audiences, set per artifact, each with a way back. This is the part that is not like a hosted notebook."
+          lede="Four audiences, set per artifact, each with a way back. This is the part that is not like a hosted notebook."
           weight="lead"
           wide
         >

@@ -23,12 +23,12 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
   enclave login    [--host <host>] [--token <token>]
   enclave logout   [--host <host>]
 
-  enclave push     <dir> [--title <t>] [--visibility private|org]
+  enclave push     <dir> [--title <t>] [--visibility private|org|public]
                          [--new] [--dry-run] [--json]
   enclave list     [--limit <n>] [--cursor <c>] [--json]
   enclave show     <id> [--json]
   enclave rename   <id> <title>
-  enclave privacy  <id> private|org
+  enclave privacy  <id> private|org|public
   enclave rm       <id>
   enclave restore  <id>
 
@@ -154,10 +154,10 @@ function parseLimit(raw: string | undefined): number | undefined {
   return parsed
 }
 
-function parseVisibility(raw: string | undefined): 'private' | 'org' | undefined {
+function parseVisibility(raw: string | undefined): 'private' | 'org' | 'public' | undefined {
   if (raw === undefined) return undefined
-  if (raw === 'private' || raw === 'org') return raw
-  throw new UsageError(`--visibility must be private or org, got '${raw}'`)
+  if (raw === 'private' || raw === 'org' || raw === 'public') return raw
+  throw new UsageError(`--visibility must be private, org, or public, got '${raw}'`)
 }
 
 /** `--json` has a consumer, so the version has to be an object there and a bare line otherwise. */

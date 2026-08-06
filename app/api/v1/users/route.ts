@@ -4,7 +4,7 @@ import { jsonData, toErrorResponse } from '@/lib/http'
 
 /**
  * `GET /api/v1/users` — the admin roster. Ids, addresses, roles, and artifact *counts*; no titles
- * and no artifact content of any kind (§5.1 branch 5, decision #26).
+ * and no artifact content of any kind (§5.1 branch 6, decision #26).
  */
 
 export const dynamic = 'force-dynamic'

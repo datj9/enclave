@@ -41,7 +41,7 @@ test.describe('marketing landing page', () => {
     expect(stagePositions).toEqual([...stagePositions].sort((left, right) => left - right))
   })
 
-  test('names all three audiences with a way to withdraw each', async ({ page }) => {
+  test('names all four audiences with a way to withdraw each', async ({ page }) => {
     await page.goto('/')
 
     const audiences = page.getByRole('rowheader')
@@ -49,6 +49,7 @@ test.describe('marketing landing page', () => {
       'Only me',
       'Everyone on this instance',
       'Anyone with the link',
+      'Anyone on the internet',
     ])
   })
 
@@ -128,7 +129,7 @@ test.describe('marketing landing page', () => {
 
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       await expect(page.locator('#self-host pre code')).toContainText('docker compose up')
-      await expect(page.getByRole('rowheader')).toHaveCount(3)
+      await expect(page.getByRole('rowheader')).toHaveCount(4)
     } finally {
       await context.close()
     }

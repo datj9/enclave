@@ -14,7 +14,7 @@ import { HttpError } from '@/lib/http'
 /**
  * User administration (§5.3, US-11). Everything here operates on rows *about* users — never on
  * artifact bytes or manifests. An admin's read of a private artifact stays a 404 through
- * `canRead` branch 5 (§5.1, decision #26); no query below joins artifact content of any kind.
+ * `canRead` branch 6 (§5.1, decision #26); no query below joins artifact content of any kind.
  *
  * Deactivation is the reversible control and is what the console offers first. Deletion is
  * refused while the account still owns artifacts, because the alternative is a cascade that
@@ -36,9 +36,14 @@ export interface AdminUserSummary {
   readonly isActive: boolean
   readonly createdAt: string
   readonly deactivatedAt: string | null
-  /** Counts only. Titles stay out of every admin response (§5.1 branch 5). */
+  /** Counts only. Titles stay out of every admin response (§5.1 branch 6). */
   readonly liveArtifactCount: number
-  readonly orgArtifactCount: number
+  /**
+   * How many of them somebody other than the owner can read — org-visible or public. The number an
+   * operator needs before deactivating an account, and the reason it is not `visibility = 'org'`
+   * alone: a public artifact outlives the session that published it just as an org one does.
+   */
+  readonly sharedArtifactCount: number
 }
 
 export interface SetUserAccessInput {
@@ -59,7 +64,7 @@ export async function listUsers(): Promise<readonly AdminUserSummary[]> {
       createdAt: users.createdAt,
       deactivatedAt: users.deactivatedAt,
       liveArtifactCount: raw<number>`count(${artifacts.id})::int`,
-      orgArtifactCount: raw<number>`count(${artifacts.id}) filter (where ${artifacts.visibility} = 'org')::int`,
+      sharedArtifactCount: raw<number>`count(${artifacts.id}) filter (where ${artifacts.visibility} <> 'private')::int`,
     })
     .from(users)
     .leftJoin(artifacts, and(eq(artifacts.ownerId, users.id), isNull(artifacts.deletedAt)))
@@ -142,7 +147,7 @@ async function assertNoOwnedArtifacts(userId: string): Promise<void> {
     status: 409,
     details: {
       blockingArtifactIds: owned.map((artifact) => artifact.id),
-      orgVisibleCount: owned.filter((artifact) => artifact.visibility === 'org').length,
+      sharedCount: owned.filter((artifact) => artifact.visibility !== 'private').length,
     },
   })
 }

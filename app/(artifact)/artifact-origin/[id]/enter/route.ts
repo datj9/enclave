@@ -49,6 +49,9 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   //
   // A share-link view is always recorded whatever the visibility: the reader is anonymous and
   // outside the instance, which is the case the owner most needs the trail for (§5.2, A.12.4.1).
+  //
+  // A `public` artifact records its views the same way an org one does, with no actor — the row is
+  // the timestamp and the IP, which is all an anonymous read can honestly claim.
   const shareLinkId = shareLinkIdFromViewerRef(claims.viewerRef)
   if (shareLinkId !== null || authorized.visibility !== 'private') {
     await recordAuditEvent({

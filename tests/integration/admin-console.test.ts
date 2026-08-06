@@ -73,7 +73,7 @@ async function createUser(email: string, role: 'admin' | 'member'): Promise<stri
 async function createArtifactRow(
   owner: string,
   title: string,
-  visibility: 'private' | 'org',
+  visibility: 'private' | 'org' | 'public',
 ): Promise<string> {
   const [artifact] = await db
     .insert(artifacts)
@@ -128,7 +128,7 @@ describe.skipIf(!database)('the admin console', () => {
 
   afterAll(removeTestRows)
 
-  describe('the admin exclusion (§5.1 branch 5, decision #26)', () => {
+  describe('the admin exclusion (§5.1 branch 6, decision #26)', () => {
     it('refuses an admin another user’s private artifact', async () => {
       const authorized = await authorizeArtifactRead(privateArtifactId, userViewerRef(adminId))
 
@@ -165,13 +165,26 @@ describe.skipIf(!database)('the admin console', () => {
       const owner = (await listUsers()).find((person) => person.id === ownerId)
 
       expect(owner?.liveArtifactCount).toBe(2)
-      expect(owner?.orgArtifactCount).toBe(1)
+      expect(owner?.sharedArtifactCount).toBe(1)
+    })
+
+    it('counts a public artifact as shared, like an org one', async () => {
+      const publicArtifactId = await createArtifactRow(ownerId, 'Open to all', 'public')
+
+      try {
+        const owner = (await listUsers()).find((person) => person.id === ownerId)
+
+        expect(owner?.liveArtifactCount).toBe(3)
+        expect(owner?.sharedArtifactCount).toBe(2)
+      } finally {
+        await db.delete(artifacts).where(eq(artifacts.id, publicArtifactId))
+      }
     })
 
     it('reports zero for a user who owns nothing', async () => {
       const spare = (await listUsers()).find((person) => person.id === spareId)
 
-      expect([spare?.liveArtifactCount, spare?.orgArtifactCount]).toEqual([0, 0])
+      expect([spare?.liveArtifactCount, spare?.sharedArtifactCount]).toEqual([0, 0])
     })
   })
 

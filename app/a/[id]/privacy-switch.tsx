@@ -10,12 +10,13 @@ import styles from './privacy-switch.module.css'
  * layout shift — docs/motion.md § This project's surfaces. The three options are equal width, so
  * the filled layer slides by re-clipping rather than by resizing anything.
  *
- * "Anyone with the link" is the derived third level from §5.1: it exists once an artifact has an
- * active share link, which is S5. It is rendered now so the control does not change shape then.
+ * These are the three levels that are properties of the artifact. "Anyone with the link" is not
+ * one of them: it is a capability derived from an active `share_links` row (§5.1 branch 4), so it
+ * lives in the Share dialog next to this control rather than as a fourth segment here.
  */
 
 interface PrivacyOption {
-  readonly value: Visibility | 'link'
+  readonly value: Visibility
   readonly label: string
   readonly hint: string
 }
@@ -23,7 +24,11 @@ interface PrivacyOption {
 const OPTIONS: readonly PrivacyOption[] = [
   { value: 'private', label: 'Only me', hint: 'Nobody else can open it, not even an admin.' },
   { value: 'org', label: 'Organization', hint: 'Everyone signed in to this instance can open it.' },
-  { value: 'link', label: 'Anyone with the link', hint: 'Share links arrive in a later release.' },
+  {
+    value: 'public',
+    label: 'Public',
+    hint: 'Anyone with the address can open it, no sign-in — and search engines may index it.',
+  },
 ]
 
 const SAVE_FAILED = 'That change did not save. The artifact is still set to its previous level.'
@@ -89,9 +94,9 @@ export function PrivacySwitch({
             role="radio"
             aria-checked={option.value === visibility}
             aria-describedby={`privacy-hint-${option.value}`}
-            disabled={option.value === 'link' || isSaving}
+            disabled={isSaving}
             onClick={() => {
-              if (option.value !== 'link') void choose(option.value)
+              void choose(option.value)
             }}
           >
             {option.label}

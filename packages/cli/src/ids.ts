@@ -13,7 +13,7 @@ export class InvalidIdError extends IdResolutionError {}
 export interface ArtifactSummary {
   readonly id: string
   readonly title: string
-  readonly visibility: 'private' | 'org'
+  readonly visibility: 'private' | 'org' | 'public'
   readonly viewUrl: string
 }
 

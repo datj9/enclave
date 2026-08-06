@@ -9,16 +9,18 @@ multi-file HTML bundle, and the result is hosted with an audience you choose and
 > [SECURITY.md](SECURITY.md) before you host anything you care about, and expect to read the
 > code when something surprises you.
 
-## The three privacy levels
+## The four privacy levels
 
-Every artifact starts at the first level. The third is additive — a link is a capability you hand
-out, not a switch you flip.
+Every artifact starts at the first level. *Anyone with the link* is additive — a link is a
+capability you hand out, not a switch you flip — while the other three are the artifact's own
+`visibility` and are mutually exclusive.
 
 | Level | Who can read it | How it is revoked |
 |---|---|---|
 | **Only me** | The owner. Nobody else, including administrators. | It is the default. |
 | **Organization** | Every active account on this instance, read-only. The owner stays the sole editor. | Set the artifact back to *Only me*. |
 | **Anyone with the link** | Whoever holds a share link. No account, no sign-in. | Revoke the link. Each link is separate, pinned to one version, and can carry an expiry. |
+| **Public** | Everyone. The artifact's own `/a/{id}` URL opens with no account, no sign-in, and no link, always on the current version. This is the one level search engines are allowed to index — the page carries `robots: noindex` at every other level, and only public artifacts appear in `/sitemap.xml`. | Set the artifact back to *Only me* or *Organization*. The next request is refused, and the page leaves the index when the crawler next comes round. |
 
 Revocation is not eventually-consistent theatre. The entry document is proxied through the app on
 every request, so revoking is immediate for the document; assets are served by presigned URLs with
@@ -101,12 +103,12 @@ The rest of the surface:
 enclave version  [--json]              (also -v, -V, --version)
 enclave logout   [--host <host>]
 
-enclave push     <dir> [--title <t>] [--visibility private|org]
+enclave push     <dir> [--title <t>] [--visibility private|org|public]
                        [--new] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title>
-enclave privacy  <id> private|org
+enclave privacy  <id> private|org|public
 enclave rm       <id>
 enclave restore  <id>
 

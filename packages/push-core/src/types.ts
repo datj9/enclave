@@ -11,7 +11,7 @@ export interface BundleFile {
   readonly content: Buffer
 }
 
-export type Visibility = 'private' | 'org'
+export type Visibility = 'private' | 'org' | 'public'
 
 export interface PushOptions {
   readonly directory: string

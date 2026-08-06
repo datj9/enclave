@@ -182,7 +182,7 @@ export async function softDeleteArtifact(input: {
 /**
  * `POST /api/v1/artifacts/{id}/restore` (§5.3). The gate cannot authorize this one: branch 1
  * refuses a trashed artifact to every viewer, so ownership is checked against the row instead.
- * Everything that is not the active owner — another member, an admin (branch 5), an artifact that
+ * Everything that is not the active owner — another member, an admin (branch 6), an artifact that
  * was never deleted, one past its retention window — collapses to the same 404.
  */
 export async function restoreArtifact(input: {

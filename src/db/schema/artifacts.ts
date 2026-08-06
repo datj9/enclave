@@ -15,13 +15,17 @@ import {
 import type { ManifestEntry } from '@/lib/bundle/validate'
 import { users } from './users'
 
-export const VISIBILITIES = ['private', 'org'] as const
+export const VISIBILITIES = ['private', 'org', 'public'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
 export const VERSION_STATUSES = ['pending', 'ready'] as const
 export type VersionStatus = (typeof VERSION_STATUSES)[number]
 
-/** grill-result §5.2. The third privacy level is derived from `share_links` (S5), not an enum value. */
+/**
+ * grill-result §5.2. `share_links` (S5) is still a derived level rather than an enum value — a link
+ * is a capability, pinned to one version and revocable on its own. `public` is an enum value
+ * because it is a property of the artifact: the `/a/{id}` URL opens for everyone, no link needed.
+ */
 export const artifacts = pgTable(
   'artifacts',
   {
@@ -43,7 +47,7 @@ export const artifacts = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
-    check('artifacts_visibility_check', sql`${table.visibility} in ('private', 'org')`),
+    check('artifacts_visibility_check', sql`${table.visibility} in ('private', 'org', 'public')`),
     // Matches the list query's keyset order exactly: owner, then created_at desc, id desc.
     index('artifacts_owner_created_idx').on(
       table.ownerId,

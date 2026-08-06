@@ -10,10 +10,11 @@ import {
 } from '../ids.ts'
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
-const VISIBILITIES = ['private', 'org'] as const
+const VISIBILITIES = ['private', 'org', 'public'] as const
 
 export type Visibility = (typeof VISIBILITIES)[number]
 
+/** Wide enough for the longest level name, so the list column stays aligned. */
 const VISIBILITY_COLUMN_WIDTH = 7
 const MAX_PAGES = 100
 
@@ -256,12 +257,10 @@ export async function runRename(options: RenameOptions): Promise<number> {
 
 export async function runPrivacy(options: PrivacyOptions): Promise<number> {
   // Refused before the id is resolved: resolving a prefix costs a request, and there is nothing to
-  // send — VISIBILITIES is ['private','org'] and the third privacy level is a share link.
+  // send. `enclave share create` is the fourth level; it is a capability, not a visibility value.
   if (!isVisibility(options.visibility)) {
-    fail(`✗ visibility must be private or org, not '${options.visibility}'`)
-    if (options.visibility === 'public') {
-      fail('  a share link is how you publish beyond this instance')
-    }
+    fail(`✗ visibility must be private, org, or public, not '${options.visibility}'`)
+    fail('  to publish one pinned version behind a revocable link, use `enclave share create`')
     return EXIT_USAGE
   }
 
@@ -281,14 +280,16 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
   }
 }
 
+const PRIVACY_OUTCOME: Record<Visibility, string> = {
+  private: '  ✓ only you can read it now',
+  org: '  ✓ everyone on this instance can now read it',
+  public: '  ✓ anyone with the address can now read it, and search engines may index it',
+}
+
 function printPrivacyChange(before: ArtifactView, after: ArtifactView): void {
   write(`  ${shortId(after.id)}  ${displayTitle(after.title)}`)
   write(`  ${before.visibility} → ${after.visibility}`)
-  write(
-    after.visibility === 'org'
-      ? '  ✓ everyone on this instance can now read it'
-      : '  ✓ only you can read it now',
-  )
+  write(PRIVACY_OUTCOME[after.visibility])
 }
 
 export async function runRemove(options: RemoveOptions): Promise<number> {

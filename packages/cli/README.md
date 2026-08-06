@@ -58,12 +58,12 @@ enclave version  [--json]              (also -v, -V, --version)
 enclave login    [--host <host>] [--token <token>]
 enclave logout   [--host <host>]
 
-enclave push     <dir> [--title <t>] [--visibility private|org]
+enclave push     <dir> [--title <t>] [--visibility private|org|public]
                        [--new] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title>
-enclave privacy  <id> private|org
+enclave privacy  <id> private|org|public
 enclave rm       <id>
 enclave restore  <id>
 

@@ -11,7 +11,7 @@ import styles from './artifact-list.module.css'
 const STAGGER_STEP_MS = 50
 const MAX_STAGGERED_ROWS = 8
 
-const VISIBILITY_LABEL = { private: 'Only me', org: 'Organization' } as const
+const VISIBILITY_LABEL = { private: 'Only me', org: 'Organization', public: 'Public' } as const
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
