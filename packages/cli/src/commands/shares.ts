@@ -14,12 +14,20 @@ const REQUIRED_SCOPE = 'shares:write'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
 const ISO_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
-const ISO_DATETIME_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/
+// Fractional seconds match Zod/RFC 3339 (unlimited digits): Python/Go often emit 6.
+const ISO_ZONELESS_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
+const ISO_ZONED_DATETIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:\d{2})$/
 const HOURS_PER_UNIT: Readonly<Record<string, number>> = { h: 1, d: 24, w: 168 }
 const MILLISECONDS_PER_HOUR = 3_600_000
 /** ECMAScript Date absolute range (±100_000_000 days from epoch). */
 const MAX_DATE_MILLISECONDS = 8.64e15
+
+/** Every rejection names all four shapes: "ISO" on its own is the wording that caused the defect. */
+const EXPIRY_SHAPES =
+  'a duration like 7d, 12h or 2w, a date like 2026-08-10, a date-time like 2026-08-10T14:30, ' +
+  'or an ISO-8601 instant with an explicit zone such as 2026-08-10T23:59:00+07:00 or ' +
+  '2026-08-10T16:59:00Z'
 
 const EXPIRES_COLUMN_WIDTH = 24
 const NEVER = 'never'
@@ -41,6 +49,7 @@ interface ShareLinkSummary {
 
 interface ShareLinkList {
   readonly items: readonly ShareLinkSummary[]
+  readonly databaseNow?: string
 }
 
 /** Everything refused before a request is made, so nothing invalid ever reaches the network. */
@@ -117,7 +126,29 @@ function requireUuid(given: string, label: string): string {
   return given
 }
 
-/** Accepts only `7d` / `12h` / `2w` or a documented ISO-8601 form — never engine-lenient Date parse. */
+/**
+ * Second frame in the pre-send disclosure — local *date* and wall clock, not time alone.
+ * West of UTC the local calendar day can differ from the UTC day in the first frame; omitting
+ * the date made the disclosure unusable for the operators who need it most.
+ */
+function localClockLabel(when: Date): string {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  // `month: 'short'` (not 2-digit): next to a year-first UTC frame, day-first `10/08/2026` is
+  // ambiguous for a US operator — `10 Aug 2026` matches `src/lib/format/instant.ts`.
+  const local = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(when)
+  return `${local} local, ${timeZone}`
+}
+
+/** Accepts `7d` / `12h` / `2w`, a local date, a local date-time, or a zoned instant. */
 function parseExpiry(given: string, now: Date): Date {
   const trimmed = given.trim()
   const relative = RELATIVE_EXPIRY_PATTERN.exec(trimmed)
@@ -144,37 +175,34 @@ function parseExpiry(given: string, now: Date): Date {
   return when
 }
 
+/**
+ * A date-only string has no wall-clock time of its own, so it resolves to the last instant of that
+ * local day — the end of "the 10th" the operator meant, not local midnight at its start. A
+ * zone-less date-time resolves as that exact wall clock in the same local zone. Both used to
+ * silently disagree with a zoned instant (UTC midnight vs the operator's local midnight) even
+ * though they look like the same kind of input — resolving both locally removes the ambiguity.
+ */
 function parseAbsoluteExpiry(trimmed: string, original: string): Date {
   const dateOnly = ISO_DATE_ONLY_PATTERN.exec(trimmed)
   if (dateOnly !== null) {
     const year = Number(dateOnly[1])
     const month = Number(dateOnly[2])
     const day = Number(dateOnly[3])
-    const when = new Date(Date.UTC(year, month - 1, day))
+    const when = new Date(`${trimmed}T23:59:59.999`)
     // Reject calendar overflow (2027-02-30 → March) by requiring a round-trip.
-    if (
-      when.getUTCFullYear() !== year ||
-      when.getUTCMonth() !== month - 1 ||
-      when.getUTCDate() !== day
-    ) {
-      throw new InvalidInputError(
-        `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
-      )
+    if (when.getFullYear() !== year || when.getMonth() !== month - 1 || when.getDate() !== day) {
+      throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
     }
     return when
   }
 
-  if (!ISO_DATETIME_PATTERN.test(trimmed)) {
-    throw new InvalidInputError(
-      `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
-    )
+  if (!ISO_ZONELESS_DATETIME_PATTERN.test(trimmed) && !ISO_ZONED_DATETIME_PATTERN.test(trimmed)) {
+    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
   }
 
   const when = new Date(trimmed)
   if (Number.isNaN(when.getTime())) {
-    throw new InvalidInputError(
-      `'${original}' is neither an ISO-8601 timestamp nor a duration like 7d, 12h or 2w`,
-    )
+    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
   }
   return when
 }
@@ -236,6 +264,12 @@ export async function runShareCreate(options: ShareCreateOptions): Promise<numbe
     return EXIT_USAGE
   }
 
+  // Both frames, so the operator can check the resolved instant against either clock they read —
+  // stderr so `--json` stdout stays parseable.
+  if (expiresAt !== null) {
+    process.stderr.write(`expires ${expiresAt.toISOString()} (${localClockLabel(expiresAt)})\n`)
+  }
+
   const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
@@ -260,9 +294,19 @@ function stateOf(link: ShareLinkSummary, now: Date): 'revoked' | 'expired' | 'ac
   return 'active'
 }
 
-/** Projects four columns rather than echoing the response, so an unexpected field cannot leak. */
-function printLinks(items: readonly ShareLinkSummary[], isJson: boolean): void {
-  const now = new Date()
+/**
+ * Projects four columns rather than echoing the response, so an unexpected field cannot leak.
+ * STATE is judged on the server's clock (`databaseNow`), never the laptop's — the same rule the
+ * API gate itself follows (src/lib/shares/clock.ts). Falls back to the laptop clock only against
+ * an older server that has not yet started sending `databaseNow`.
+ */
+function printLinks(
+  items: readonly ShareLinkSummary[],
+  databaseNow: string | undefined,
+  isJson: boolean,
+): void {
+  const parsed = databaseNow === undefined ? Number.NaN : Date.parse(databaseNow)
+  const now = Number.isNaN(parsed) ? new Date() : new Date(parsed)
   const rows = items.map((link) => ({
     shareId: link.shareId,
     versionId: link.versionId,
@@ -296,7 +340,7 @@ export async function runShareList(options: ShareListOptions): Promise<number> {
   try {
     const artifactId = await resolveArtifactId(client, options.id)
     const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
-    printLinks(response.items, options.isJson)
+    printLinks(response.items, response.databaseNow, options.isJson)
     return EXIT_OK
   } catch (error) {
     return reportFailure(error)

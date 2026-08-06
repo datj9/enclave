@@ -67,7 +67,7 @@ enclave privacy  <id> private|org|public
 enclave rm       <id>
 enclave restore  <id>
 
-enclave share create <id> [--version <versionId>] [--expires <7d|ISO>] [--json]
+enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
 enclave share list   <id> [--json]
 enclave share revoke <shareId>
 ```
@@ -80,6 +80,14 @@ included, so it runs unattended in CI.
 
 Flags are scoped to the command that declares them. A flag a command does not take exits `2`
 rather than being silently discarded — `enclave rm <id> --dry-run` refuses instead of deleting.
+
+`--expires` takes a duration (`7d`, `12h`, `2w`); a date (`2026-08-10`) or a date-time
+(`2026-08-10T14:30`), both resolved in this machine's local timezone; or an ISO-8601 instant with
+an explicit zone (`2026-08-10T23:59:00+07:00`, `2026-08-10T16:59:00Z`), taken exactly as given —
+including fractional seconds of any length and lowercase `z`. A bare date means **local end of that
+day** (`23:59:59.999` local), not UTC midnight (breaking vs early scripts that assumed UTC start of
+day). Anything else is refused. The resolved instant, in both frames (UTC and local date+time), is
+printed to stderr before the share link is created.
 
 ## What gets uploaded
 

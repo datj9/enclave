@@ -32,8 +32,9 @@ export async function pruneAuditLog(
 
     return transaction
       .delete(auditLog)
-      // Postgres `now()`, never app-server time (§7 clock skew).
-      .where(lt(auditLog.at, sql`now() - make_interval(days => ${retentionDays})`))
+      // Postgres `now()`, never app-server time (§7 clock skew). `hours`, not `days`: `days` is
+      // a calendar field on a timestamptz and drifts across a DST transition (TASK-6).
+      .where(lt(auditLog.at, sql`now() - make_interval(hours => ${retentionDays * 24})`))
       .returning({ id: auditLog.id })
   })
 

@@ -22,11 +22,24 @@ export interface ActorOption {
 
 const GENERIC_FAILURE = 'That query did not work. Check the filters and try again.'
 
-function queryFrom(form: FormData, cursor: string | null): string {
+const MOMENT_PARAMETERS: ReadonlySet<string> = new Set(['from', 'to'])
+
+export function queryFrom(form: FormData, cursor: string | null): string {
   const parameters = new URLSearchParams()
   for (const name of ['action', 'actorUserId', 'artifactId', 'from', 'to']) {
     const value = String(form.get(name) ?? '').trim()
-    if (value !== '') parameters.set(name, value)
+    if (value === '') continue
+    if (!MOMENT_PARAMETERS.has(name)) {
+      parameters.set(name, value)
+      continue
+    }
+    // `datetime-local` has no zone; the API contract is an absolute instant.
+    const parsed = new Date(value)
+    // Dropping a bad moment would silently widen the window — refuse instead of guessing.
+    if (Number.isNaN(parsed.getTime())) {
+      throw new RangeError(`Could not parse ${name} as a date`)
+    }
+    parameters.set(name, parsed.toISOString())
   }
   if (cursor !== null) parameters.set('cursor', cursor)
   return parameters.toString()
@@ -59,6 +72,8 @@ export function AuditViewer({
       setPage(body.data)
       // Appending on a cursor page, replacing on a fresh filter.
       setEntries((previous) => (cursor === null ? body.data.items : [...previous, ...body.data.items]))
+    } catch {
+      setErrorMessage(GENERIC_FAILURE)
     } finally {
       setIsBusy(false)
     }

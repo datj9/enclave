@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
 import type { TrashedArtifact } from '@/lib/artifacts/trash'
+import { formatDayLocal, formatDayStable, useIsMountedForLocalTime } from '@/lib/format/instant'
 import styles from './trash-list.module.css'
 
 /**
@@ -23,6 +24,7 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
   const router = useRouter()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function restore(artifactId: string): Promise<void> {
     setBusyId(artifactId)
@@ -64,7 +66,11 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
             <div>
               <p className={styles.rowName}>{item.title}</p>
               <p className={styles.rowMeta}>
-                Deleted {new Date(item.deletedAt).toLocaleDateString()} ·{' '}
+                Deleted{' '}
+                {isMountedForLocalTime
+                  ? formatDayLocal(item.deletedAt)
+                  : formatDayStable(item.deletedAt)}{' '}
+                ·{' '}
                 <span className="tabular" data-testid="trash-days">
                   {daysLabel(item.daysRemaining)}
                 </span>

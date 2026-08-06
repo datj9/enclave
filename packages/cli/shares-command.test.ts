@@ -128,6 +128,18 @@ describe('share commands', () => {
       expect(postCall().body).toEqual({ versionId: VERSION_ID })
     })
 
+    it('passes the insecure-host opt-in through to the api client', async () => {
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        isJson: false,
+        isInsecureAllowed: true,
+      })
+
+      expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, true)
+    })
+
     it('prints the url exactly once and says it is shown only once', async () => {
       await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false })
 
@@ -188,7 +200,21 @@ describe('share commands', () => {
       expect(postCall().body.expiresAt).toBe('2026-08-02T12:00:00.000Z')
     })
 
-    it('sends a bare ISO timestamp only when it is UTC Zulu', async () => {
+    it('refuses a duration that overflows the Date range instead of sending an invalid instant', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '999999999999w',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('is out of range')
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+
+    it('sends a Zulu instant through unchanged', async () => {
       await runShareCreate({
         host: HOST,
         id: ARTIFACT_ID,
@@ -210,7 +236,7 @@ describe('share commands', () => {
       })
 
       expect(code).toBe(2)
-      expect(errorText()).toContain('neither an ISO-8601 timestamp nor a duration')
+      expect(errorText()).toContain('a duration like 7d, 12h or 2w')
       expect(mocks.post).not.toHaveBeenCalled()
     })
 
@@ -237,6 +263,201 @@ describe('share commands', () => {
       })
 
       expect(JSON.parse(outputText())).toMatchObject({ expiresAt: '2026-08-09T00:00:00.000Z' })
+    })
+  })
+
+  // The owner's decision on the timezone defect: a bare date and a zone-less date-time both now
+  // resolve in the operator's local zone, so the same typed shape never means two different
+  // instants depending on whether it carries a time-of-day.
+  describe('expiry normalises in the operator local zone, not UTC', () => {
+    let originalTz: string | undefined
+
+    beforeEach(() => {
+      originalTz = process.env['TZ']
+      // Asia/Jakarta has no DST and a non-zero, non-UTC offset year-round, so a test pinned to it
+      // cannot pass by accident on a host that happens to already be in UTC.
+      process.env['TZ'] = 'Asia/Jakarta'
+    })
+
+    afterEach(() => {
+      if (originalTz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = originalTz
+    })
+
+    it('resolves a bare date to the end of that day in the local zone, not UTC midnight', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T16:59:59.999Z')
+    })
+
+    it('resolves a zone-less date-time to that wall-clock time in the local zone', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10T14:30',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T07:30:00.000Z')
+    })
+
+    it('still resolves a zoned instant exactly as given, regardless of the local zone', async () => {
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10T09:00:00+07:00',
+        isJson: false,
+      })
+
+      expect(postCall().body.expiresAt).toBe('2026-08-10T02:00:00.000Z')
+    })
+
+    it('prints both frames to stderr before the POST', async () => {
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: false,
+      })
+
+      expect(errorText()).toContain(
+        'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
+      )
+    })
+
+    // Reading stderr from inside the request itself is the only assertion that survives the
+    // disclosure being moved below `client.post`, where the operator would learn the instant only
+    // after the link already exists.
+    it('writes the disclosure before the request, and keeps --json stdout parseable', async () => {
+      let disclosureAtRequest = ''
+      mocks.post.mockImplementation(() => {
+        disclosureAtRequest = errorText()
+        return Promise.resolve({
+          shareId: SHARE_ID,
+          token: 'plaintext',
+          url: SHARE_URL,
+          versionId: VERSION_ID,
+        })
+      })
+
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: true,
+      })
+
+      expect(disclosureAtRequest).toContain(
+        'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
+      )
+      expect(JSON.parse(outputText())).toMatchObject({ expiresAt: '2026-08-10T16:59:59.999Z' })
+    })
+
+    it('writes the disclosure even when the POST itself is later rejected', async () => {
+      mocks.post.mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'Token lacks scope shares:write'))
+
+      await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: false,
+      })
+
+      expect(errorText()).toContain('expires 2026-08-10T16:59:59.999Z')
+    })
+
+    it('does not print the disclosure when --expires is omitted', async () => {
+      await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false })
+
+      expect(errorText()).not.toContain('expires ')
+    })
+
+    it('accepts a six-digit fractional second on a zoned instant (matches the API)', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10T09:00:00.123456Z',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.123Z')
+    })
+
+    it('accepts lowercase z as an explicit zone (RFC 3339 §5.6)', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10T09:00:00z',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.000Z')
+    })
+
+    it('rejects a calendar-overflow date-only value after local round-trip', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2027-02-30',
+        isJson: false,
+      })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('a duration like 7d, 12h or 2w')
+      expect(errorText()).toContain('a date like 2026-08-10')
+      expect(errorText()).toContain('a date-time like 2026-08-10T14:30')
+      expect(errorText()).toContain('ISO-8601')
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+  })
+
+  // West of UTC the local calendar day can differ from the UTC day — the disclosure must name
+  // the local date, not only the wall-clock time.
+  describe('expiry disclosure in a negative-offset zone', () => {
+    let originalTz: string | undefined
+
+    beforeEach(() => {
+      originalTz = process.env['TZ']
+      process.env['TZ'] = 'America/Los_Angeles'
+    })
+
+    afterEach(() => {
+      if (originalTz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = originalTz
+    })
+
+    it('resolves a bare date to local end-of-day and prints the local calendar date', async () => {
+      const code = await runShareCreate({
+        host: HOST,
+        id: ARTIFACT_ID,
+        versionId: VERSION_ID,
+        expires: '2026-08-10',
+        isJson: false,
+      })
+
+      expect(code).toBe(0)
+      expect(postCall().body.expiresAt).toBe('2026-08-11T06:59:59.999Z')
+      expect(errorText()).toContain(
+        'expires 2026-08-11T06:59:59.999Z (10 Aug 2026, 23:59:59 local, America/Los_Angeles)',
+      )
     })
   })
 
@@ -334,6 +555,7 @@ describe('share commands', () => {
       expect(outputText()).not.toContain('token')
     })
 
+    // Also exercises the databaseNow-absent fallback: this payload never sets it.
     it('marks a lapsed expiry as expired', async () => {
       mocks.get.mockResolvedValue({
         items: [
@@ -363,6 +585,61 @@ describe('share commands', () => {
 
       expect(code).toBe(0)
       expect(outputText()).toBe('no share links\n')
+    })
+
+    // STATE is judged on the server's clock, mirroring the invariant the API gate itself follows
+    // (src/lib/shares/clock.ts) — never the operator's laptop clock, which can be skewed.
+    it('derives STATE from the server clock the API returns, not the laptop clock', async () => {
+      mocks.get.mockResolvedValue({
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            // Equal to the laptop clock (NOW): the old `<= laptop now` rule would call this
+            // expired, but the server clock below is a minute earlier — still active.
+            expiresAt: NOW.toISOString(),
+            revokedAt: null,
+          },
+        ],
+        databaseNow: '2026-08-01T23:59:00.000Z',
+      })
+
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+
+      expect(JSON.parse(outputText())).toEqual([
+        {
+          shareId: SHARE_ID,
+          versionId: VERSION_ID,
+          expiresAt: NOW.toISOString(),
+          state: 'active',
+        },
+      ])
+    })
+
+    it('falls back to the laptop clock when databaseNow is unparseable', async () => {
+      mocks.get.mockResolvedValue({
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: '2026-07-01T00:00:00.000Z',
+            revokedAt: null,
+          },
+        ],
+        databaseNow: 'not-a-timestamp',
+      })
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+
+      expect(code).toBe(0)
+      expect(JSON.parse(outputText())).toEqual([
+        {
+          shareId: SHARE_ID,
+          versionId: VERSION_ID,
+          expiresAt: '2026-07-01T00:00:00.000Z',
+          state: 'expired',
+        },
+      ])
     })
   })
 

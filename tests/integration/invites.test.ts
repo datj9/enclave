@@ -1,5 +1,5 @@
-import { eq, inArray } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { eq, inArray, sql } from 'drizzle-orm'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { db, pingDatabase } from '@/db'
 import { auditLog } from '@/db/schema/audit-log'
@@ -10,6 +10,7 @@ import { createInvite, listInvites, revokeInvite } from '@/lib/invites/manage'
 import { registerMember } from '@/lib/invites/register'
 import { requireRedeemableToken } from '@/lib/invites/redeem'
 import { hashInviteToken } from '@/lib/invites/tokens'
+import { databaseNowEpoch, epochToDate } from '@/lib/shares/clock'
 
 /**
  * S10's single-use guarantee against the real Postgres the lock lives in. A mock cannot prove the
@@ -87,6 +88,23 @@ async function expireInvite(inviteId: string): Promise<void> {
     .update(invites)
     .set({ expiresAt: new Date(Date.now() - 60_000) })
     .where(eq(invites.id, inviteId))
+}
+
+/** Ages a row on the database clock itself, independent of whatever the Node clock reads. */
+async function ageInviteOnDatabaseClock(inviteId: string): Promise<void> {
+  await db
+    .update(invites)
+    .set({ expiresAt: sql`now() - interval '1 second'` })
+    .where(eq(invites.id, inviteId))
+}
+
+async function currentDatabaseNow(): Promise<Date> {
+  const rows = await db.execute<{ databaseNow: string | number }>(
+    sql`select ${databaseNowEpoch} as "databaseNow"`,
+  )
+  const [row] = rows
+  if (row === undefined) throw new Error('could not read the database clock')
+  return epochToDate(row.databaseNow)
 }
 
 /** The audit log is append-only, so this reads rather than truncates between cases. */
@@ -277,5 +295,71 @@ describe.skipIf(!databaseReady)('invite redemption', () => {
 
     expect(found?.status).toBe('outstanding')
     expect(JSON.stringify(listed)).not.toContain(created.token)
+  })
+
+  it('mints expiresAt from the database clock, within a second of now() + the requested TTL', async () => {
+    const created = await createInvite({ createdBy: adminId, email: DAVE_EMAIL, expiresInHours: 1 })
+
+    const databaseNow = await currentDatabaseNow()
+    const expected = databaseNow.getTime() + 60 * 60 * 1000
+    const actual = new Date(created.expiresAt).getTime()
+
+    expect(Math.abs(actual - expected)).toBeLessThan(1000)
+  })
+
+  it('mints expiresAt from the database clock even when the Node clock is skewed', async () => {
+    const realNow = Date.now.bind(Date)
+    const skewed = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 2 * 60 * 60 * 1000)
+
+    try {
+      const created = await createInvite({ createdBy: adminId, email: DAVE_EMAIL, expiresInHours: 1 })
+      const databaseNow = await currentDatabaseNow()
+      const expected = databaseNow.getTime() + 60 * 60 * 1000
+      const actual = new Date(created.expiresAt).getTime()
+
+      expect(Math.abs(actual - expected)).toBeLessThan(1000)
+    } finally {
+      skewed.mockRestore()
+    }
+  })
+
+  it('reports expired from listInvites once the database clock has passed expiresAt', async () => {
+    const created = await createInvite({ createdBy: adminId, email: DAVE_EMAIL, expiresInHours: 72 })
+    await ageInviteOnDatabaseClock(created.inviteId)
+
+    const listed = await listInvites()
+    const found = listed.find((invite) => invite.id === created.inviteId)
+
+    expect(found?.status).toBe('expired')
+  })
+
+  it('agrees with the redemption gate: a database-clock-expired invite is refused with 410', async () => {
+    const created = await createInvite({ createdBy: adminId, email: DAVE_EMAIL, expiresInHours: 72 })
+    await ageInviteOnDatabaseClock(created.inviteId)
+
+    const listed = await listInvites()
+    const found = listed.find((invite) => invite.id === created.inviteId)
+    expect(found?.status).toBe('expired')
+
+    await expect(requireRedeemableToken(created.token)).rejects.toMatchObject({
+      status: 410,
+      message: 'This invite has expired',
+    })
+  })
+
+  it('reports outstanding from the database clock even when the Node clock is skewed forward', async () => {
+    const created = await createInvite({ createdBy: adminId, email: DAVE_EMAIL, expiresInHours: 1 })
+
+    const realNow = Date.now.bind(Date)
+    const skewed = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 2 * 60 * 60 * 1000)
+
+    try {
+      const listed = await listInvites()
+      const found = listed.find((invite) => invite.id === created.inviteId)
+
+      expect(found?.status).toBe('outstanding')
+    } finally {
+      skewed.mockRestore()
+    }
   })
 })

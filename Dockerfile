@@ -24,6 +24,9 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# Retention windows are exact N x 24h durations regardless of host clock, but a bare
+# `new Date().toLocaleString()` would still render in the process zone if this were unset (TASK-6).
+ENV TZ=UTC
 
 RUN groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs enclave

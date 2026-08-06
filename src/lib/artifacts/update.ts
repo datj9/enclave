@@ -205,7 +205,11 @@ export async function restoreArtifact(input: {
         eq(artifacts.id, input.artifactId),
         eq(artifacts.ownerId, restorerId),
         // Restorable for exactly as long as it is not yet purgeable, on the database clock (§7).
-        gte(artifacts.deletedAt, sql`now() - make_interval(days => ${retentionDays})`),
+        // `hours`, not `days`: `days` is a calendar field on a timestamptz and drifts across a
+        // DST transition (TASK-6) — this must stay textually identical to the purge predicate in
+        // src/jobs/purge-trash.ts apart from `gte` vs `lt`, so the restore window closes exactly
+        // when purge opens.
+        gte(artifacts.deletedAt, sql`now() - make_interval(hours => ${retentionDays * 24})`),
       ),
     )
     .returning({

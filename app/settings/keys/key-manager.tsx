@@ -3,6 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 
+import {
+  formatInstantLocal,
+  formatInstantStable,
+  useIsMountedForLocalTime,
+} from '@/lib/format/instant'
 import { PROVIDER_IDS, type ProviderId } from '@/lib/providers/types'
 import type { StoredProviderKeyView } from '@/lib/providers/user-keys'
 import styles from './page.module.css'
@@ -25,6 +30,7 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
   const [storedKey, setStoredKey] = useState(initialKey)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function refreshStoredKey(): Promise<void> {
     const response = await fetch('/api/v1/settings/keys')
@@ -82,7 +88,12 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
 
   return (
     <>
-      <StoredKeyRow storedKey={storedKey} isBusy={isBusy} onDelete={() => void handleDelete()} />
+      <StoredKeyRow
+        storedKey={storedKey}
+        isBusy={isBusy}
+        isMountedForLocalTime={isMountedForLocalTime}
+        onDelete={() => void handleDelete()}
+      />
 
       <form className={styles.form} onSubmit={(event) => void handleSave(event)}>
         {errorMessage !== null && (
@@ -136,10 +147,12 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
 function StoredKeyRow({
   storedKey,
   isBusy,
+  isMountedForLocalTime,
   onDelete,
 }: {
   readonly storedKey: StoredProviderKeyView | null
   readonly isBusy: boolean
+  readonly isMountedForLocalTime: boolean
   readonly onDelete: () => void
 }) {
   if (storedKey === null) {
@@ -162,7 +175,11 @@ function StoredKeyRow({
         <p className={styles.rowMeta}>
           {storedKey.last4 === null
             ? 'This key can no longer be decrypted. Replace it, or remove it to fall back to the instance key.'
-            : `Stored ${new Date(storedKey.createdAt).toLocaleString()}`}
+            : `Stored ${
+                isMountedForLocalTime
+                  ? formatInstantLocal(storedKey.createdAt)
+                  : formatInstantStable(storedKey.createdAt)
+              }`}
         </p>
       </div>
       <button className="button-secondary" type="button" disabled={isBusy} onClick={onDelete}>

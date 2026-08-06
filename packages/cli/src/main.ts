@@ -32,12 +32,17 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
   enclave rm       <id>
   enclave restore  <id>
 
-  enclave share create <id> [--version <versionId>] [--expires <7d|ISO>] [--json]
+  enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
   enclave share list   <id> [--json]
   enclave share revoke <shareId>
 
 Host resolution: --host, else ENCLAVE_HOST. \`push\` also falls back to .enclave.json.
 Credentials: ENCLAVE_TOKEN, else ~/.config/enclave/credentials.json.
+
+--expires takes a duration (7d, 12h, 2w); a date (2026-08-10) or a date-time (2026-08-10T14:30),
+both resolved in this machine's local timezone (a bare date means local end of day, not UTC
+midnight); or an ISO-8601 instant with an explicit zone (2026-08-10T23:59:00+07:00,
+2026-08-10T16:59:00Z), taken exactly as given. Anything else is refused.
 
 --insecure allows an explicit http:// host that isn't loopback (localhost, 127.0.0.1, [::1]).
 Without it, a non-loopback http host is refused rather than sending a token in cleartext.

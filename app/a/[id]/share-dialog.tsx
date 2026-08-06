@@ -3,6 +3,11 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { useState, type FormEvent } from 'react'
 
+import {
+  formatInstantLocal,
+  formatInstantStable,
+  useIsMountedForLocalTime,
+} from '@/lib/format/instant'
 import type { ShareLinkSummary, ShareableVersion } from '@/lib/shares/manage'
 import { CopyLinkButton } from './copy-link-button'
 import styles from './share-dialog.module.css'
@@ -29,10 +34,6 @@ interface ListResponse {
   readonly data: { readonly items: readonly ShareLinkSummary[] }
 }
 
-function formatMoment(iso: string | null): string {
-  return iso === null ? 'never' : new Date(iso).toLocaleString()
-}
-
 /** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
 function css(className: string | undefined): string {
   return className ?? ''
@@ -55,6 +56,7 @@ export function ShareDialog({
   const [createdUrl, setCreatedUrl] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function refreshShares(): Promise<void> {
     const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
@@ -160,6 +162,7 @@ export function ShareDialog({
             shares={shares}
             versions={versions}
             isBusy={isBusy}
+            isMountedForLocalTime={isMountedForLocalTime}
             onRevoke={(shareId) => void handleRevoke(shareId)}
           />
 
@@ -229,15 +232,23 @@ function ShareList({
   shares,
   versions,
   isBusy,
+  isMountedForLocalTime,
   onRevoke,
 }: {
   readonly shares: readonly ShareLinkSummary[]
   readonly versions: readonly ShareableVersion[]
   readonly isBusy: boolean
+  readonly isMountedForLocalTime: boolean
   readonly onRevoke: (shareId: string) => void
 }) {
   if (shares.length === 0) {
     return <p className={styles.empty}>No links yet.</p>
+  }
+
+  function formatMoment(iso: string | null): string {
+    return isMountedForLocalTime
+      ? formatInstantLocal(iso, 'never')
+      : formatInstantStable(iso, 'never')
   }
 
   return (

@@ -2,6 +2,11 @@
 
 import { useState, type FormEvent } from 'react'
 
+import {
+  formatInstantLocal,
+  formatInstantStable,
+  useIsMountedForLocalTime,
+} from '@/lib/format/instant'
 import { DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS } from '@/lib/invites/limits'
 import type { InviteSummary } from '@/lib/invites/manage'
 import styles from '../admin.module.css'
@@ -29,10 +34,6 @@ interface ListResponse {
   readonly data: { readonly items: readonly InviteSummary[] }
 }
 
-function formatMoment(iso: string | null): string {
-  return iso === null ? '—' : new Date(iso).toLocaleString()
-}
-
 function requestBodyFrom(form: FormData): Record<string, unknown> {
   const email = String(form.get('email') ?? '').trim()
   const hours = Number(form.get('expiresInHours') ?? DEFAULT_INVITE_TTL_HOURS)
@@ -48,6 +49,7 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function refresh(): Promise<void> {
     const response = await fetch('/api/v1/invites')
@@ -99,7 +101,13 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
   return (
     <>
-      {created !== null && <RevealedInvite created={created} onDismiss={() => setCreated(null)} />}
+      {created !== null && (
+        <RevealedInvite
+          created={created}
+          isMountedForLocalTime={isMountedForLocalTime}
+          onDismiss={() => setCreated(null)}
+        />
+      )}
 
       <form className={styles.form} onSubmit={(event) => void handleCreate(event)}>
         {errorMessage !== null && (
@@ -141,16 +149,23 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
         </button>
       </form>
 
-      <InviteTable invites={invites} isBusy={isBusy} onRevoke={(id) => void handleRevoke(id)} />
+      <InviteTable
+        invites={invites}
+        isBusy={isBusy}
+        isMountedForLocalTime={isMountedForLocalTime}
+        onRevoke={(id) => void handleRevoke(id)}
+      />
     </>
   )
 }
 
 function RevealedInvite({
   created,
+  isMountedForLocalTime,
   onDismiss,
 }: {
   readonly created: CreatedInviteView
+  readonly isMountedForLocalTime: boolean
   readonly onDismiss: () => void
 }) {
   return (
@@ -159,7 +174,11 @@ function RevealedInvite({
         Copy this link now{created.email === null ? '' : ` for ${created.email}`}
       </h2>
       <p className={styles.revealedBody}>
-        This is the only time it is shown, it works once, and it expires {formatMoment(created.expiresAt)}.
+        This is the only time it is shown, it works once, and it expires{' '}
+        {isMountedForLocalTime
+          ? formatInstantLocal(created.expiresAt)
+          : formatInstantStable(created.expiresAt)}
+        .
       </p>
       <code className={styles.inviteUrl}>{created.url}</code>
       <button className="button-secondary" type="button" onClick={onDismiss}>
@@ -172,13 +191,19 @@ function RevealedInvite({
 function InviteTable({
   invites,
   isBusy,
+  isMountedForLocalTime,
   onRevoke,
 }: {
   readonly invites: readonly InviteSummary[]
   readonly isBusy: boolean
+  readonly isMountedForLocalTime: boolean
   readonly onRevoke: (inviteId: string) => void
 }) {
   if (invites.length === 0) return <p className={styles.empty}>No invites yet.</p>
+
+  function formatMoment(iso: string | null): string {
+    return isMountedForLocalTime ? formatInstantLocal(iso) : formatInstantStable(iso)
+  }
 
   return (
     <div className={styles.tableScroll}>

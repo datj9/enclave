@@ -72,7 +72,7 @@ export default async function ArtifactViewerPage({
   const shareState = authorized.isOwner
     ? {
         versions: await listShareableVersions(id, viewerRef),
-        shares: await listShareLinks(id, viewerRef),
+        shares: (await listShareLinks(id, viewerRef)).items,
       }
     : null
 

@@ -4,6 +4,11 @@ import { useState, type FormEvent } from 'react'
 
 import { API_TOKEN_SCOPES, type ApiTokenScope } from '@/db/schema/api-tokens'
 import type { ApiTokenSummary } from '@/lib/auth/bearer'
+import {
+  formatInstantLocal,
+  formatInstantStable,
+  useIsMountedForLocalTime,
+} from '@/lib/format/instant'
 import styles from './page.module.css'
 
 /**
@@ -33,15 +38,12 @@ interface ListResponse {
   readonly data: { readonly items: readonly ApiTokenSummary[] }
 }
 
-function formatMoment(iso: string | null): string {
-  return iso === null ? 'never' : new Date(iso).toLocaleString()
-}
-
 export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTokenSummary[] }) {
   const [tokens, setTokens] = useState(initialTokens)
   const [created, setCreated] = useState<CreatedTokenView | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function refreshTokens(): Promise<void> {
     const response = await fetch('/api/v1/tokens')
@@ -142,7 +144,12 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
         </button>
       </form>
 
-      <TokenTable tokens={tokens} isBusy={isBusy} onRevoke={(id) => void handleRevoke(id)} />
+      <TokenTable
+        tokens={tokens}
+        isBusy={isBusy}
+        isMountedForLocalTime={isMountedForLocalTime}
+        onRevoke={(id) => void handleRevoke(id)}
+      />
     </>
   )
 }
@@ -184,14 +191,22 @@ function RevealedToken({
 function TokenTable({
   tokens,
   isBusy,
+  isMountedForLocalTime,
   onRevoke,
 }: {
   readonly tokens: readonly ApiTokenSummary[]
   readonly isBusy: boolean
+  readonly isMountedForLocalTime: boolean
   readonly onRevoke: (tokenId: string) => void
 }) {
   if (tokens.length === 0) {
     return <p className={styles.empty}>No tokens yet.</p>
+  }
+
+  function formatMoment(iso: string | null): string {
+    return isMountedForLocalTime
+      ? formatInstantLocal(iso, 'never')
+      : formatInstantStable(iso, 'never')
   }
 
   return (

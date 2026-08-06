@@ -7,7 +7,7 @@ import { requireOwnedArtifact } from '@/lib/artifacts/update'
 import { recordAuditEvent } from '@/lib/audit'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
-import { databaseNowEpoch, epochToDate } from './clock'
+import { databaseNowEpoch, epochToDate, tryEpochToDate } from './clock'
 import { loadShareLink } from './links'
 import { mintShareToken, shareLinkUrl } from './token'
 
@@ -36,6 +36,12 @@ export interface ShareLinkSummary {
   readonly viewCount: number
   readonly lastViewedAt: string | null
   readonly createdAt: string
+}
+
+/** `databaseNow` is Postgres `now()`, Z-suffixed, so a client can judge STATE without guessing. */
+export interface ShareLinkListResult {
+  readonly items: readonly ShareLinkSummary[]
+  readonly databaseNow: string
 }
 
 export interface CreateShareLinkInput {
@@ -146,11 +152,28 @@ export async function createShareLink(input: CreateShareLinkInput): Promise<Crea
   }
 }
 
-/** Never selects `token_hash`: the list must not expose anything derived from the secret. */
+/** A row-less fallback for the empty list, where the main query below carries no clock reading. */
+async function readDatabaseNow(): Promise<Date> {
+  const [row] = await db.execute<{ databaseNow: string | number }>(
+    sql`select ${databaseNowEpoch} as "databaseNow"`,
+  )
+  const databaseNow = tryEpochToDate(row)
+  if (databaseNow === null) {
+    throw new HttpError('INTERNAL_ERROR', 'Could not read the database clock')
+  }
+  return databaseNow
+}
+
+/**
+ * Never selects `token_hash`: the list must not expose anything derived from the secret.
+ *
+ * Carries Postgres `now()` alongside the rows so a client can judge expiry without trusting its
+ * own clock (§7), the same way `createShareLink` already does.
+ */
 export async function listShareLinks(
   artifactId: string,
   viewerRef: string,
-): Promise<readonly ShareLinkSummary[]> {
+): Promise<ShareLinkListResult> {
   await requireOwnedArtifact(artifactId, viewerRef)
 
   const rows = await db
@@ -162,20 +185,29 @@ export async function listShareLinks(
       viewCount: shareLinks.viewCount,
       lastViewedAt: shareLinks.lastViewedAt,
       createdAt: shareLinks.createdAt,
+      databaseNow: databaseNowEpoch,
     })
     .from(shareLinks)
     .where(eq(shareLinks.artifactId, artifactId))
     .orderBy(desc(shareLinks.createdAt))
 
-  return rows.map((row) => ({
-    shareId: row.id,
-    versionId: row.versionId,
-    expiresAt: row.expiresAt?.toISOString() ?? null,
-    revokedAt: row.revokedAt?.toISOString() ?? null,
-    viewCount: row.viewCount,
-    lastViewedAt: row.lastViewedAt?.toISOString() ?? null,
-    createdAt: row.createdAt.toISOString(),
-  }))
+  const [firstRow] = rows
+  const databaseNow = (
+    firstRow === undefined ? await readDatabaseNow() : epochToDate(firstRow.databaseNow)
+  ).toISOString()
+
+  return {
+    items: rows.map((row) => ({
+      shareId: row.id,
+      versionId: row.versionId,
+      expiresAt: row.expiresAt?.toISOString() ?? null,
+      revokedAt: row.revokedAt?.toISOString() ?? null,
+      viewCount: row.viewCount,
+      lastViewedAt: row.lastViewedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+    })),
+    databaseNow,
+  }
 }
 
 export interface ShareableVersion {

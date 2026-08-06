@@ -20,7 +20,13 @@ const globalForDb = globalThis as unknown as {
  * the Docker build. Nothing touches Postgres until a request actually asks for it.
  */
 function getSql(): postgres.Sql {
-  return (globalForDb.enclaveSql ??= postgres(env.DATABASE_URL, { max: 10, prepare: false }))
+  return (globalForDb.enclaveSql ??= postgres(env.DATABASE_URL, {
+    max: 10,
+    prepare: false,
+    // Retention windows and every `now()` render must not depend on the server's `timezone` GUC
+    // (TASK-6) — an operator's RDS parameter group is routinely not UTC.
+    connection: { TimeZone: 'UTC' },
+  }))
 }
 
 function getDb(): Database {

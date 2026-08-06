@@ -6,7 +6,29 @@ import { artifactVersions, artifacts, type VersionStatus } from '@/db/schema/art
 import { slugFromTitle } from '@/lib/artifacts/naming'
 import { PENDING_SWEEP_AFTER_MINUTES, sweepPendingVersions } from '@/jobs/sweep-pending'
 import { storageKey, versionPrefix, type ObjectStore } from '@/lib/storage/object-store'
-import { createTestOwner, createTestStore, probeServices, removeTestOwnerData } from './services'
+import { users } from '@/db/schema/users'
+import { createTestStore, probeServices, removeTestOwnerData } from './services'
+
+/**
+ * Its own owner, not `createTestOwner`'s shared one: vitest runs test files in parallel and that
+ * helper deletes by a single fixed email, so two suites would tear down each other's rows — the
+ * same reason `generate-stream.test.ts` keeps its own.
+ */
+const OWNER_EMAIL = 'integration-sweep@example.test'
+
+async function createSweepOwner(): Promise<string> {
+  // Same pre-delete as `createTestOwner`: an interrupted run leaves the unique email behind and
+  // every subsequent run of this file fails until the row is removed by hand.
+  await db.delete(users).where(eq(users.email, OWNER_EMAIL))
+
+  const [owner] = await db
+    .insert(users)
+    .values({ email: OWNER_EMAIL, passwordHash: null, role: 'member', isActive: true })
+    .returning({ id: users.id })
+
+  if (owner === undefined) throw new Error('could not create the sweep test owner')
+  return owner.id
+}
 
 /**
  * S8 against real Postgres and real object storage: a failed bundle upload leaves objects gone
@@ -106,7 +128,7 @@ describe.skipIf(!servicesReady)('T3 orphan-reclaiming sweep', () => {
   beforeAll(async () => {
     store = createTestStore()
     await store.ensureBucket()
-    ownerId = await createTestOwner()
+    ownerId = await createSweepOwner()
   })
 
   afterAll(async () => {
