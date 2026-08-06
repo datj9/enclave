@@ -41,7 +41,7 @@ test.describe('marketing landing page', () => {
     expect(stagePositions).toEqual([...stagePositions].sort((left, right) => left - right))
   })
 
-  test('names all three audiences with a way to withdraw each', async ({ page }) => {
+  test('names all four audiences with a way to withdraw each', async ({ page }) => {
     await page.goto('/')
 
     const audiences = page.getByRole('rowheader')
@@ -49,6 +49,7 @@ test.describe('marketing landing page', () => {
       'Only me',
       'Everyone on this instance',
       'Anyone with the link',
+      'Anyone on the internet',
     ])
   })
 

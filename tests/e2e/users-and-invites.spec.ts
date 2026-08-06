@@ -140,7 +140,7 @@ test.describe('invites, the admin console, and the admin exclusion (US-11)', () 
     })
 
     expect(response.status()).toBe(404)
-    // A 403 would confirm the artifact exists; the whole point of branch 5 is that it does not.
+    // A 403 would confirm the artifact exists; the whole point of branch 6 is that it does not.
     expect((await response.json()) as ErrorEnvelope).toMatchObject({ error: { code: 'NOT_FOUND' } })
   })
 

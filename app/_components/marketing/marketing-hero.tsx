@@ -24,9 +24,9 @@ export function MarketingHero() {
         </h1>
         <p className={styles.lede} data-reveal style={revealStyle(2)}>
           enclave is a web app you host yourself. Describe what you want, a model you point it at
-          writes a multi-file HTML page, and enclave serves that page to exactly one of three
-          audiences — you alone, everyone signed in to your instance, or anyone holding a link you
-          can revoke.
+          writes a multi-file HTML page, and enclave serves that page to exactly one of four
+          audiences — you alone, everyone signed in to your instance, anyone holding a link you can
+          revoke, or the whole internet.
         </p>
       </div>
 

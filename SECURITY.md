@@ -100,7 +100,8 @@ responses — which would block the viewer's own iframe.
 The artifact origin has no session and makes no authorization decisions of its own. Every decision
 happens on the app origin, and the artifact origin only trusts a signed token:
 
-1. A viewer opens `/a/{id}` (signed in) or `/s/{token}` (a share link) on the app origin.
+1. A viewer opens `/a/{id}` (signed in, or with no session at all if the artifact is *public*) or
+   `/s/{token}` (a share link) on the app origin.
 2. The app authorizes the read, then mints a **handoff token**: signed, single-use, 30-second
    lifetime, bound to a specific artifact, version and viewer.
 3. The viewer page frames `https://{id}.artifacts.example.com/__enter?t=…`.

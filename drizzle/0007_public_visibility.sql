@@ -1,0 +1,2 @@
+ALTER TABLE "artifacts" DROP CONSTRAINT "artifacts_visibility_check";--> statement-breakpoint
+ALTER TABLE "artifacts" ADD CONSTRAINT "artifacts_visibility_check" CHECK ("artifacts"."visibility" in ('private', 'org', 'public'));

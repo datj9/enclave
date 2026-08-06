@@ -24,6 +24,14 @@ const API_TOKEN_VIEWER_PREFIX = 'apiToken:'
 const SHARE_VIEWER_PREFIX = 'share:'
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+/**
+ * The wire form of the anonymous viewer, for a visitor reading a `public` artifact with no session
+ * and no share link. A whole constant rather than a prefix: it carries no identity, so there is
+ * nothing to put after the colon and an exact match is what `resolveViewer` checks — `anon:` plus
+ * anything else is not a viewer.
+ */
+export const ANONYMOUS_VIEWER_REF = 'anon:'
+
 export { canRead }
 export type { ReadableArtifact, ReadableVersion, Viewer } from './can-read'
 
@@ -76,6 +84,10 @@ export interface AuthorizedVersion {
  * their reads — and their tokens' reads — on the next one (§7).
  */
 export async function resolveViewer(viewerRef: string): Promise<Viewer | null> {
+  // No row to re-read: there is no account to deactivate and no link to revoke. What this viewer
+  // may read is decided entirely by the artifact's own `visibility`, on every request.
+  if (viewerRef === ANONYMOUS_VIEWER_REF) return { kind: 'anonymous' }
+
   const shareLinkId = shareLinkIdFromViewerRef(viewerRef)
   if (shareLinkId !== null) {
     const resolved = await loadShareLink(shareLinkId)

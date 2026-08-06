@@ -11,7 +11,7 @@ import styles from './admin.module.css'
  * The admin console shell (US-11). A signed-in member gets 404 rather than 403: unlike the API,
  * where 403 is the specified answer, a page has no caller to explain the refusal to.
  *
- * Being here grants nothing over artifact contents. Every read still runs `canRead`, whose branch 5
+ * Being here grants nothing over artifact contents. Every read still runs `canRead`, whose branch 6
  * refuses an admin someone else's private artifact (§5.1, decision #26) — no route under this
  * layout loads a manifest or a byte of artifact storage.
  */

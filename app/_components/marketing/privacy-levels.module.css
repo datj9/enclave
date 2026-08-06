@@ -1,4 +1,4 @@
-/* F3 · tabular spec sheet. The three privacy levels are rows, not a three-equal-column card
+/* F3 · tabular spec sheet. The privacy levels are rows, not a three-equal-column card
    grid — design.md bans that grid, and rows compare better anyway.
 
    Mobile-first: three columns of prose at 375 px is unreadable, so the base styles stack every

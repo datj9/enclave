@@ -62,6 +62,7 @@ const STRANGER_SESSION = user(BOB)
 const STRANGER_TOKEN: Viewer = { kind: 'apiToken', userId: BOB }
 const ADMIN_SESSION = user(CAROL, { role: 'admin' })
 const SHARE_TOKEN = shareToken()
+const ANONYMOUS: Viewer = { kind: 'anonymous' }
 
 interface Case {
   readonly name: string
@@ -192,28 +193,91 @@ const CASES: readonly Case[] = [
     expected: false,
   },
   {
-    name: "branch 5 — an admin cannot read someone else's private artifact",
+    name: 'branch 5 — an anonymous visitor reads a public artifact, holding nothing at all',
+    viewer: ANONYMOUS,
+    artifact: artifact({ visibility: 'public' }),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 5 — a stranger, their API token, and an admin all read a public artifact',
+    viewer: STRANGER_TOKEN,
+    artifact: artifact({ visibility: 'public' }),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 5 — an admin reads a public artifact, like everyone else',
+    viewer: ADMIN_SESSION,
+    artifact: artifact({ visibility: 'public' }),
+    version: VERSION,
+    expected: true,
+  },
+  {
+    name: 'branch 5 — public does not resurrect a revoked link: branch 4 answered first',
+    viewer: shareToken({ revokedAt: BEFORE_NOW }),
+    artifact: artifact({ visibility: 'public' }),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 5 — nor does it unpin one: a link to v2 still refuses v3 on a public artifact',
+    viewer: SHARE_TOKEN,
+    artifact: artifact({ visibility: 'public' }),
+    version: NEWER_VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 5 — an anonymous visitor reads nothing that is merely org-visible',
+    viewer: ANONYMOUS,
+    artifact: artifact({ visibility: 'org' }),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 5 — nor anything private, whoever owns it',
+    viewer: ANONYMOUS,
+    artifact: artifact(),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 5 — nor a public artifact in the trash (branch 1 comes first)',
+    viewer: ANONYMOUS,
+    artifact: artifact({ visibility: 'public', deletedAt: new Date('2026-01-01T00:00:00Z') }),
+    version: VERSION,
+    expected: false,
+  },
+  {
+    name: 'branch 5 — nor a version belonging to another artifact',
+    viewer: ANONYMOUS,
+    artifact: artifact({ visibility: 'public' }),
+    version: { id: VERSION_ID, artifactId: OTHER_ARTIFACT_ID },
+    expected: false,
+  },
+  {
+    name: "branch 6 — an admin cannot read someone else's private artifact",
     viewer: ADMIN_SESSION,
     artifact: artifact(),
     version: VERSION,
     expected: false,
   },
   {
-    name: 'branch 5 — a deactivated admin cannot either',
+    name: 'branch 6 — a deactivated admin cannot either',
     viewer: user(CAROL, { role: 'admin', isActive: false }),
     artifact: artifact(),
     version: VERSION,
     expected: false,
   },
   {
-    name: 'branch 6 — a member cannot read a private artifact they do not own',
+    name: 'branch 7 — a member cannot read a private artifact they do not own',
     viewer: STRANGER_SESSION,
     artifact: artifact(),
     version: VERSION,
     expected: false,
   },
   {
-    name: "branch 6 — an API token cannot read another user's private artifact",
+    name: "branch 7 — an API token cannot read another user's private artifact",
     viewer: STRANGER_TOKEN,
     artifact: artifact(),
     version: VERSION,
@@ -251,8 +315,16 @@ describe('canRead — the promise the product makes', () => {
     }
   })
 
+  it('gives an anonymous viewer nothing but a public artifact', () => {
+    const readable = (['private', 'org', 'public'] as const).map((visibility) =>
+      canRead(ANONYMOUS, artifact({ visibility }), VERSION),
+    )
+
+    expect(readable).toEqual([false, false, true])
+  })
+
   it('refuses every viewer kind once the artifact is in the trash', () => {
-    const deleted = artifact({ visibility: 'org', deletedAt: new Date('2026-01-01T00:00:00Z') })
+    const deleted = artifact({ visibility: 'public', deletedAt: new Date('2026-01-01T00:00:00Z') })
     const viewers: readonly Viewer[] = [
       OWNER_SESSION,
       OWNER_TOKEN,
@@ -260,6 +332,7 @@ describe('canRead — the promise the product makes', () => {
       STRANGER_TOKEN,
       ADMIN_SESSION,
       SHARE_TOKEN,
+      ANONYMOUS,
     ]
 
     expect(viewers.map((viewer) => canRead(viewer, deleted, VERSION))).toEqual(

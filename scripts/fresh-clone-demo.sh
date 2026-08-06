@@ -361,7 +361,7 @@ expect_status "$status" 404 'the second member reading a private artifact (404, 
 
 # --- step 8 -----------------------------------------------------------------------------------
 
-step 'organization visibility: readable by everyone, editable by the owner alone'
+step 'organization and public visibility, and the indexing that comes with public'
 
 status="$(request PATCH "/api/v1/artifacts/$ARTIFACT_ID" "$ADMIN_JAR" '{"visibility":"org"}')"
 expect_status "$status" 200 'PATCH visibility to org as the owner'
@@ -380,6 +380,32 @@ expect_status "$status" 200 'GET /api/v1/audit as the administrator'
 grep -q 'artifact.visibility_change' "$WORK_DIR/body" \
   || die 'the visibility change produced no audit row.'
 ok 'the visibility change is in the audit log'
+
+# Public is the same switch one level wider: no session, no share token, no cookie jar at all.
+status="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/a/$ARTIFACT_ID")"
+expect_status "$status" 307 'GET /a/{id} with no session while the artifact is org-visible'
+
+status="$(request PATCH "/api/v1/artifacts/$ARTIFACT_ID" "$ADMIN_JAR" '{"visibility":"public"}')"
+expect_status "$status" 200 'PATCH visibility to public as the owner'
+
+status="$(curl -s -o "$WORK_DIR/public.html" -w '%{http_code}' "$BASE_URL/a/$ARTIFACT_ID")"
+expect_status "$status" 200 'GET /a/{id} with no session once it is public'
+grep -q 'content="index' "$WORK_DIR/public.html" \
+  || die 'the public artifact page did not invite indexing.'
+grep -q 'rel="canonical"' "$WORK_DIR/public.html" \
+  || die 'the public artifact page carried no canonical URL.'
+ok 'the public page is indexable and names its canonical URL'
+
+status="$(curl -s -o "$WORK_DIR/sitemap.xml" -w '%{http_code}' "$BASE_URL/sitemap.xml")"
+expect_status "$status" 200 'GET /sitemap.xml'
+grep -q "$ARTIFACT_ID" "$WORK_DIR/sitemap.xml" || die 'the sitemap omitted the public artifact.'
+ok 'the sitemap lists the public artifact'
+
+status="$(request PATCH "/api/v1/artifacts/$ARTIFACT_ID" "$ADMIN_JAR" '{"visibility":"org"}')"
+expect_status "$status" 200 'PATCH visibility back to org'
+
+status="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/a/$ARTIFACT_ID")"
+expect_status "$status" 307 'GET /a/{id} with no session immediately after taking it back'
 
 # --- step 9 -----------------------------------------------------------------------------------
 

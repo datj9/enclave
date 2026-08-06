@@ -26,6 +26,11 @@ const LEVELS: readonly PrivacyLevel[] = [
     reach: 'Whoever holds the link, with no account and no sign-in. The link is pinned to one version, so the edits you make afterwards stay unpublished.',
     revoke: 'Revoke the link, or give it an expiry date when you create it. The page stops loading immediately; its assets stop within 60 seconds.',
   },
+  {
+    audience: 'Anyone on the internet',
+    reach: 'Everybody, with nothing to hold — the artifact’s own address is enough, and this is the one level a search engine is allowed to index. Readers always get the current version.',
+    revoke: 'Set it back to any other level. The next request is refused, and the page leaves the index when the crawler next comes round.',
+  },
 ]
 
 /**
@@ -36,7 +41,7 @@ export function PrivacyLevels() {
   return (
     <table className={styles.table} role="table" aria-labelledby={CAPTION_ID}>
       <caption className={styles.caption} id={CAPTION_ID}>
-        The three audiences an artifact can have, and how each one is withdrawn.
+        The four audiences an artifact can have, and how each one is withdrawn.
       </caption>
       <thead className={styles.head} role="rowgroup">
         <tr role="row">

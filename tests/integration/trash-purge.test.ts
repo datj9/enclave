@@ -275,7 +275,7 @@ describe.skipIf(!servicesReady)('S9 delete, restore and purge', () => {
       expect([first.status, second.status]).toEqual([204, 404])
     })
 
-    it('404s another member and 404s an admin (branch 5), leaving the artifact alive', async () => {
+    it('404s another member and 404s an admin (branch 6), leaving the artifact alive', async () => {
       const created = await createOwnedArtifact('Only the owner deletes')
 
       const asBob = await deleteArtifactRoute(

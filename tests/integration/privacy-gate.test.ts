@@ -14,7 +14,12 @@ import { apiTokens } from '@/db/schema/api-tokens'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
 import { auditLog } from '@/db/schema/audit-log'
 import { users } from '@/db/schema/users'
-import { apiTokenViewerRef, authorizeArtifactRead, userViewerRef } from '@/lib/artifacts/authorize'
+import {
+  ANONYMOUS_VIEWER_REF,
+  apiTokenViewerRef,
+  authorizeArtifactRead,
+  userViewerRef,
+} from '@/lib/artifacts/authorize'
 import { artifactViewUrl } from '@/lib/artifacts/naming'
 import {
   readArtifactView,
@@ -131,7 +136,7 @@ function routeContext(id: string) {
   return { params: Promise.resolve({ id }) }
 }
 
-async function setVisibility(visibility: 'private' | 'org'): Promise<void> {
+async function setVisibility(visibility: 'private' | 'org' | 'public'): Promise<void> {
   await db.update(artifacts).set({ visibility }).where(eq(artifacts.id, artifactId))
 }
 
@@ -249,6 +254,43 @@ describe.skipIf(!database)('S4 privacy gate and audit log', () => {
       expect(await authorizeArtifactRead(artifactId, apiTokenViewerRef(bobId))).toBeNull()
     })
 
+    it('lets a viewer with no session at all read it once it is public', async () => {
+      await setVisibility('public')
+      const authorized = await authorizeArtifactRead(artifactId, ANONYMOUS_VIEWER_REF)
+
+      expect(authorized?.versionId).toBe(versionId)
+      expect(authorized?.visibility).toBe('public')
+      // Nothing about an anonymous read is ownership, whatever the artifact's level.
+      expect(authorized?.isOwner).toBe(false)
+    })
+
+    it('refuses that same viewer at every other level', async () => {
+      for (const visibility of ['private', 'org'] as const) {
+        await setVisibility(visibility)
+
+        expect(await authorizeArtifactRead(artifactId, ANONYMOUS_VIEWER_REF)).toBeNull()
+      }
+    })
+
+    it('refuses a ref that only looks anonymous', async () => {
+      await setVisibility('public')
+
+      expect(await authorizeArtifactRead(artifactId, 'anon:someone')).toBeNull()
+      expect(await authorizeArtifactRead(artifactId, 'anon')).toBeNull()
+    })
+
+    it('opens a public artifact to another member and to an admin, and closes again', async () => {
+      await setVisibility('public')
+
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(bobId))).not.toBeNull()
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(carolId))).not.toBeNull()
+
+      await setVisibility('private')
+
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(bobId))).toBeNull()
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(carolId))).toBeNull()
+    })
+
     it('refuses everyone once the artifact is in the trash', async () => {
       await setVisibility('org')
       await db.update(artifacts).set({ deletedAt: sql`now()` }).where(eq(artifacts.id, artifactId))
@@ -313,6 +355,35 @@ describe.skipIf(!database)('S4 privacy gate and audit log', () => {
         actorUserId: aliceId,
         metadata: { from: 'private', to: 'org' },
       })
+    })
+
+    it('accepts public over the API and records the transition to it', async () => {
+      await setVisibility('org')
+
+      const response = await patchArtifactRoute(
+        patchRequest(aliceToken, { visibility: 'public' }),
+        routeContext(artifactId),
+      )
+      const body = (await response.json()) as ViewBody
+
+      expect(response.status).toBe(200)
+      expect(body.data.visibility).toBe('public')
+
+      const [row] = await auditRowsFor(artifactId)
+      expect(row).toMatchObject({
+        action: 'artifact.visibility_change',
+        actorUserId: aliceId,
+        metadata: { from: 'org', to: 'public' },
+      })
+    })
+
+    it('422s a level the schema has never heard of', async () => {
+      const response = await patchArtifactRoute(
+        patchRequest(aliceToken, { visibility: 'unlisted' }),
+        routeContext(artifactId),
+      )
+
+      expect(response.status).toBe(422)
     })
 
     it('writes no row when the visibility sent is the one already set', async () => {
@@ -401,6 +472,18 @@ describe.skipIf(!database)('S4 privacy gate and audit log', () => {
       const after = (await auditRowsFor(artifactId)).filter((row) => row.action === 'artifact.view')
       expect(after).toHaveLength(before.length + 1)
       expect(after[0]).toMatchObject({ action: 'artifact.view', actorUserId: bobId })
+    })
+
+    it('records one actorless row when a visitor with no session opens a public artifact', async () => {
+      await setVisibility('public')
+      const before = (await auditRowsFor(artifactId)).filter((row) => row.action === 'artifact.view')
+
+      expect(await enterArtifact(ANONYMOUS_VIEWER_REF)).toBe(302)
+
+      const after = (await auditRowsFor(artifactId)).filter((row) => row.action === 'artifact.view')
+      expect(after).toHaveLength(before.length + 1)
+      // The row is the timestamp and the IP: an anonymous read has no actor to name.
+      expect(after[0]).toMatchObject({ action: 'artifact.view', actorUserId: null })
     })
 
     it('records nothing when an owner views their own private artifact', async () => {

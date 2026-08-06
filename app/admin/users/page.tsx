@@ -18,8 +18,9 @@ export default async function AdminUsersPage() {
       <h1 className={styles.heading}>Users</h1>
       <p className={styles.caption}>
         Deactivating an account ends its sessions immediately and removes its write access. The
-        artifacts it set to Organization stay visible — deactivation is about the person, not their
-        work. Deleting is refused while the account still owns artifacts.
+        artifacts it shared — Organization or Public — stay readable, which is what the Shared count
+        is for: deactivation is about the person, not their work. Deleting is refused while the
+        account still owns artifacts.
       </p>
 
       <UserTable initialUsers={await listUsers()} currentUserId={sessionUser?.id ?? ''} />

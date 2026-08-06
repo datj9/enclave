@@ -40,6 +40,12 @@ export type Viewer =
       readonly databaseNow: Date
     }
   | { readonly kind: 'apiToken'; readonly userId: string }
+  /**
+   * A visitor with no session and no link — the only viewer kind that carries no identity at all.
+   * Branch 5 is the only branch that can grant it anything, so a `public` artifact is the only
+   * thing it ever reads.
+   */
+  | { readonly kind: 'anonymous' }
 
 export interface ReadableArtifact {
   readonly id: string
@@ -90,10 +96,16 @@ export function canRead(
     )
   }
 
-  // 5. Decision #26: an admin cannot read someone else's private artifact. Administering the
+  // 5. Public visibility: the widest audience, and the only branch that grants an anonymous
+  //    viewer anything. Deliberately *after* branch 4 — a share-token viewer is judged as a link
+  //    holder and nothing else, so a revoked link stays dead and never falls through to here to
+  //    read the old version it was pinned to.
+  if (artifact.visibility === 'public') return true
+
+  // 6. Decision #26: an admin cannot read someone else's private artifact. Administering the
   //    instance is not permission to read its contents, and this is the headline privacy promise.
   if (viewer.kind === 'user' && viewer.role === 'admin') return false
 
-  // 6. Everyone else.
+  // 7. Everyone else.
   return false
 }

@@ -29,3 +29,12 @@ export function artifactViewUrl(artifactId: string): string {
   const origin = env.ARTIFACT_ORIGIN_TEMPLATE.replaceAll('{id}', artifactId)
   return origin.endsWith('/') ? origin : `${origin}/`
 }
+
+/**
+ * The app-origin page that frames the artifact — the URL a reader is given, and the only one a
+ * crawler can index. The artifact origin itself serves the document `no-store` behind a grant
+ * cookie, so it is never the canonical address of anything.
+ */
+export function artifactPageUrl(artifactId: string): string {
+  return new URL(`/a/${artifactId}`, env.APP_URL).toString()
+}
