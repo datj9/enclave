@@ -35,9 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # No `version` input: the action reads `packageManager` from package.json, and pinning both
+      # is a hard error the moment they drift ("Multiple versions of pnpm specified").
       - uses: pnpm/action-setup@v6
-        with:
-          version: 9.15.0
 
       - uses: actions/setup-node@v7
         with:
