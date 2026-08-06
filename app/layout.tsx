@@ -12,7 +12,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'enclave',
-  description: 'Self-hosted artifact generation and hosting with three privacy levels.',
+  description: 'Self-hosted artifact generation and hosting with four privacy levels.',
 }
 
 export const viewport: Viewport = {

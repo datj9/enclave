@@ -23,6 +23,23 @@
   color: var(--color-ink);
 }
 
+/*
+ * The heading takes the slack in the bar so the origin and the owner controls keep their intrinsic
+ * widths, and a long title ellipsises rather than pushing them off the row.
+ */
+.title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ownerControls {
   display: flex;
   align-items: center;

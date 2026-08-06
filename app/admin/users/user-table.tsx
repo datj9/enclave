@@ -110,7 +110,7 @@ export function UserTable({
                 Artifacts
               </th>
               <th className={styles.numeric} scope="col">
-                Org
+                Shared
               </th>
               <th scope="col">Joined</th>
               <th scope="col">Actions</th>
@@ -123,7 +123,7 @@ export function UserTable({
                 <td>{person.role}</td>
                 <td>{person.isActive ? 'active' : `deactivated ${formatMoment(person.deactivatedAt)}`}</td>
                 <td className={styles.numeric}>{person.liveArtifactCount}</td>
-                <td className={styles.numeric}>{person.orgArtifactCount}</td>
+                <td className={styles.numeric}>{person.sharedArtifactCount}</td>
                 <td>{formatMoment(person.createdAt)}</td>
                 <td>
                   {person.id === currentUserId ? (

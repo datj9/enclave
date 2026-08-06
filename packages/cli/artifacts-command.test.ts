@@ -336,20 +336,26 @@ describe('AC 3 — privacy org', () => {
   })
 })
 
-describe('AC 4 — there is no public visibility', () => {
-  it('privacy <id> public exits 2 before any HTTP call', async () => {
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'public' })).toBe(2)
+describe('AC 4 — public is a visibility, a share link is not', () => {
+  it('PATCHes {visibility:public} and says what that means', async () => {
+    respondWith({
+      [`GET /api/v1/artifacts/${FULL_ID}`]: KANBAN,
+      [`PATCH /api/v1/artifacts/${FULL_ID}`]: { ...KANBAN, visibility: 'public' },
+    })
 
-    expect(harness.calls).toHaveLength(0)
-    expect(errorOutput()).toContain('must be private or org')
-    expect(errorOutput()).toContain('share link')
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'public' })).toBe(0)
+
+    expect(callAt(1).body).toEqual({ visibility: 'public' })
+    expect(output()).toContain('private → public')
+    expect(output()).toContain('search engines may index it')
   })
 
-  it('any other unknown visibility exits 2 before any HTTP call', async () => {
+  it('any unknown visibility exits 2 before any HTTP call, and names the share command', async () => {
     expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'unlisted' })).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
     expect(errorOutput()).toContain("not 'unlisted'")
+    expect(errorOutput()).toContain('enclave share create')
   })
 })
 

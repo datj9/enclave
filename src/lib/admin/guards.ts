@@ -8,7 +8,7 @@ import type { SessionUser } from '@/lib/auth/session'
  *
  * A non-admin gets 403, not 404 — the console's existence is not a secret, and A.9.4.1 is about
  * what an account may do, not about hiding the route. What an admin still cannot do is read a
- * private artifact: that stays `canRead` branch 5 (§5.1, decision #26), and nothing here widens it.
+ * private artifact: that stays `canRead` branch 6 (§5.1, decision #26), and nothing here widens it.
  */
 export async function requireAdminUser(): Promise<SessionUser> {
   const sessionUser = await requireSessionUser()

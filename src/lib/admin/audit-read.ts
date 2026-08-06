@@ -10,7 +10,7 @@ import { encodeAuditCursor, type AuditFilter } from './audit-query'
  * The A.12.4.1 audit viewer. It reads `audit_log` and joins `users` for the actor's address, and
  * that is the whole of it: `artifacts`, `artifact_versions`, and object storage are never touched,
  * so no response can carry an artifact's title, manifest, or bytes. An admin sees *that* a private
- * artifact was created and by whom — never what is in it (§5.1 branch 5, decision #26).
+ * artifact was created and by whom — never what is in it (§5.1 branch 6, decision #26).
  *
  * Read access only. Nothing here writes, which is what lets the deployment run this surface under
  * the insert-and-select grant `src/db/audit-log-guard.ts` describes.

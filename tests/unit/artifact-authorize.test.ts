@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ANONYMOUS_VIEWER_REF,
   resolveManifestPath,
   shareLinkIdFromViewerRef,
   shareViewerRef,
   userIdFromViewerRef,
   userViewerRef,
+  viewerUserIdFromRef,
 } from '@/lib/artifacts/authorize'
 import type { ManifestEntry } from '@/lib/bundle/validate'
 
@@ -61,6 +63,16 @@ describe('viewer refs', () => {
   it('keeps the two ref kinds from resolving as each other', () => {
     expect(userIdFromViewerRef(shareViewerRef(SHARE_LINK_ID))).toBeNull()
     expect(shareLinkIdFromViewerRef(userViewerRef(USER_ID))).toBeNull()
+  })
+
+  it('resolves no identity of either kind from the anonymous ref', () => {
+    expect(userIdFromViewerRef(ANONYMOUS_VIEWER_REF)).toBeNull()
+    expect(viewerUserIdFromRef(ANONYMOUS_VIEWER_REF)).toBeNull()
+    expect(shareLinkIdFromViewerRef(ANONYMOUS_VIEWER_REF)).toBeNull()
+  })
+
+  it('carries nothing after its colon — the anonymous viewer has no id to carry', () => {
+    expect(ANONYMOUS_VIEWER_REF).toBe('anon:')
   })
 })
 
