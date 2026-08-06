@@ -25,5 +25,12 @@ export default defineConfig({
     url: `${baseURL}/healthz`,
     reuseExistingServer: true,
     timeout: 120_000,
+    // The whole suite signs in from one IP, so it shares the single per-IP hourly auth bucket the
+    // app enforces (`RATE_LIMIT_AUTH_PER_IP_PER_HOUR`, 30 by default) — and CI retries spend from it
+    // twice. Under the shipped default every new spec that signs in 429s some unrelated spec, so the
+    // harness raises it here. No e2e test asserts the auth 429; tests/unit/rate-limit.test.ts covers
+    // the limiter itself against the real default. Ignored when `reuseExistingServer` picks up a
+    // server someone already started.
+    env: { RATE_LIMIT_AUTH_PER_IP_PER_HOUR: '500' },
   },
 })

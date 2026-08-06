@@ -129,7 +129,7 @@ test.describe('marketing landing page', () => {
 
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       await expect(page.locator('#self-host pre code')).toContainText('docker compose up')
-      await expect(page.getByRole('rowheader')).toHaveCount(3)
+      await expect(page.getByRole('rowheader')).toHaveCount(4)
     } finally {
       await context.close()
     }
