@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { main } from './main.ts'
+import { ignoreBrokenPipe } from './streams.ts'
+
+ignoreBrokenPipe(process.stdout)
+ignoreBrokenPipe(process.stderr)
 
 /**
  * `process.exitCode` rather than `process.exit()`: exiting outright can truncate stdout when it is
