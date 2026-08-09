@@ -39,6 +39,10 @@ function toWireFile(file: BundleFile): WireFile {
   return { path: file.path, contentBase64: file.content.toString('base64') }
 }
 
+/** The whole bundle goes up in this one request, so it needs far longer than a metadata call —
+ *  but not forever, which is what Node's `fetch` gives you by default. */
+const UPLOAD_TIMEOUT_MS = 300_000
+
 export function baseUrlFor(host: string, isInsecureAllowed = false): string {
   return normaliseHost(host, isInsecureAllowed)
 }
@@ -89,8 +93,14 @@ export async function push(options: PushOptions): Promise<PushResult> {
         ...(options.userAgent === undefined ? {} : { 'user-agent': options.userAgent }),
       },
       body,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new PushError('NETWORK_TIMEOUT', 'The upload did not complete within 5 minutes', {
+        host: options.host,
+      })
+    }
     throw new PushError('NETWORK_ERROR', 'Could not reach the server', { host: options.host })
   }
 
