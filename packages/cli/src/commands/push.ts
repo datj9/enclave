@@ -63,6 +63,34 @@ function kilobytesOf(directory: string, paths: readonly string[]): number {
   return Math.round(totalBytes / BYTES_PER_KILOBYTE)
 }
 
+const SKIP_REASONS: readonly unknown[] = [
+  'unsupported_extension',
+  'invalid_path',
+  'ignored',
+  'too_large',
+]
+
+function isSkippedFile(value: unknown): value is SkippedFile {
+  if (typeof value !== 'object' || value === null) return false
+  const { path, reason } = value as { path?: unknown; reason?: unknown }
+  return typeof path === 'string' && SKIP_REASONS.includes(reason)
+}
+
+/**
+ * `String(value)` on the skipped array yields `[object Object]`, destroying the one fact that
+ * explains the refusal. Null means the detail has nothing to say, so its line is dropped rather
+ * than printed empty.
+ */
+function detailText(value: unknown): string | null {
+  if (!Array.isArray(value)) return String(value)
+  if (value.length === 0) return null
+  return value
+    .map((entry: unknown) =>
+      isSkippedFile(entry) ? `${entry.path} (${reasonText(entry)})` : String(entry),
+    )
+    .join(', ')
+}
+
 /** Errors, JSON or human, never land on stdout — `--json` promises stdout is nothing but the result. */
 function reportError(
   isJson: boolean,
@@ -78,12 +106,32 @@ function reportError(
     return
   }
   process.stderr.write(`${humanText}\n`)
-  if (Object.keys(details).length > 0) {
-    const rendered = Object.entries(details)
-      .map(([key, value]) => `${key}=${String(value)}`)
-      .join(' ')
-    process.stderr.write(`  ${rendered}\n`)
+  const rendered = Object.entries(details)
+    .flatMap(([key, value]) => {
+      const text = detailText(value)
+      return text === null ? [] : [`${key}=${text}`]
+    })
+    .join(' ')
+  if (rendered !== '') process.stderr.write(`  ${rendered}\n`)
+}
+
+/**
+ * Checked before anything else reads the path: `collectBundle` throws a raw fs error from outside
+ * every `--json` branch, and the catch that would label it belongs to the network push — which is
+ * how a missing directory came to be reported as `UNEXPECTED_RESPONSE`.
+ */
+function refuseUnusableDirectory(options: PushCommandOptions): number | null {
+  if (!existsSync(options.directory)) {
+    const text = `no such directory: ${options.directory}`
+    reportError(options.isJson, 'DIRECTORY_NOT_FOUND', text, `✗ ${text}`)
+    return 2
   }
+  if (!statSync(options.directory).isDirectory()) {
+    const text = `${options.directory} is a file — push takes the directory that holds index.html`
+    reportError(options.isJson, 'NOT_A_DIRECTORY', text, `✗ ${text}`)
+    return 2
+  }
+  return null
 }
 
 function messageOf(error: unknown): string {
@@ -94,23 +142,16 @@ function messageOf(error: unknown): string {
 function refuseExistingState(
   state: ProjectState | null,
   host: string,
-  hostSource: HostSource,
   options: PushCommandOptions,
 ): number | null {
   if (state === null || options.isNew) return null
 
-  // An unnormalisable state host is only fatal when the push is relying on it. If --host or
-  // ENCLAVE_HOST supplied the target, the state file simply describes a different instance —
-  // that is a mismatch to report, not a corrupt-file error that hides which host won.
   let stateHost: string
   try {
     stateHost = normaliseHost(state.host, options.isInsecureAllowed ?? false)
-  } catch (error) {
-    if (hostSource === 'state') {
-      const text = `.enclave.json has an invalid host '${state.host}': ${messageOf(error)}`
-      reportError(options.isJson, 'INVALID_STATE', text, text)
-      return 1
-    }
+  } catch {
+    // resolveHost already refused an unnormalisable host the push was relying on, so reaching here
+    // means --host or ENCLAVE_HOST won and the state simply describes a different instance.
     const text = `state file targets '${state.host}', not ${host}`
     reportError(options.isJson, 'HOST_MISMATCH', text, text)
     return 1
@@ -154,11 +195,7 @@ function hostCandidate(
 }
 
 type HostResolution =
-  | {
-      readonly canonicalHost: string
-      readonly hostSource: HostSource
-      readonly failureExitCode: null
-    }
+  | { readonly canonicalHost: string; readonly failureExitCode: null }
   | { readonly failureExitCode: number }
 
 function resolveHost(state: ProjectState | null, options: PushCommandOptions): HostResolution {
@@ -171,10 +208,17 @@ function resolveHost(state: ProjectState | null, options: PushCommandOptions): H
 
   try {
     const canonicalHost = normaliseHost(candidate.value, options.isInsecureAllowed ?? false)
-    return { canonicalHost, hostSource: candidate.source, failureExitCode: null }
+    return { canonicalHost, failureExitCode: null }
   } catch (error) {
-    const text = error instanceof InvalidHostError ? error.message : 'invalid host'
-    reportError(options.isJson, 'INVALID_HOST', text, text)
+    const reason = error instanceof InvalidHostError ? error.message : 'invalid host'
+    // A host that came from the state file appears nowhere on the command line, so naming the file
+    // is the whole diagnosis — and an unusable file is a failure, not a malformed invocation.
+    if (candidate.source === 'state') {
+      const text = `${statePath(options.directory)} has an invalid host '${candidate.value}': ${reason}`
+      reportError(options.isJson, 'INVALID_STATE', text, `✗ ${text}`)
+      return { failureExitCode: 1 }
+    }
+    reportError(options.isJson, 'INVALID_HOST', reason, reason)
     return { failureExitCode: 2 }
   }
 }
@@ -218,18 +262,26 @@ function reportPushed(options: PushCommandOptions, result: PushResult): void {
   process.stdout.write(`→ ${result.viewUrl}\n`)
 }
 
+/**
+ * The file beside the directory is ambiguous: legacy state for *this* directory, or the live state
+ * of a parent project that happens to contain it. Deleting it was once suggested outright, which
+ * silently detached whichever artifact the parent was tracking.
+ */
 function reportLegacyState(options: PushCommandOptions): number {
-  const legacy = legacyStatePath(options.directory)
+  const beside = legacyStatePath(options.directory)
   const inDir = statePath(options.directory)
   const text =
-    `found a legacy .enclave.json at ${legacy} — state now lives inside the pushed directory, not beside it.\n` +
-    `  move it: mv ${legacy} ${inDir}\n` +
-    `  or, if this should be a new artifact: rm ${legacy}`
+    `a .enclave.json sits beside ${options.directory}, at ${beside}, rather than inside it.\n` +
+    `  if it is this directory's state, move it: mv ${beside} ${inDir}\n` +
+    "  if it belongs to the parent directory, publish this one separately: push --new"
   reportError(options.isJson, 'LEGACY_STATE', text, `✗ ${text}`)
   return 1
 }
 
 export async function runPush(options: PushCommandOptions): Promise<number> {
+  const unusableDirectory = refuseUnusableDirectory(options)
+  if (unusableDirectory !== null) return unusableDirectory
+
   let state: ProjectState | null
   try {
     state = readState(options.directory)
@@ -239,15 +291,16 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 1
   }
 
-  if (state === null && existsSync(legacyStatePath(options.directory))) {
+  // --new already says this directory is its own artifact, which is the answer the guard asks for.
+  if (state === null && !options.isNew && existsSync(legacyStatePath(options.directory))) {
     return reportLegacyState(options)
   }
 
   const hostResolution = resolveHost(state, options)
   if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
-  const { canonicalHost, hostSource } = hostResolution
+  const { canonicalHost } = hostResolution
 
-  const refusal = refuseExistingState(state, canonicalHost, hostSource, options)
+  const refusal = refuseExistingState(state, canonicalHost, options)
   if (refusal !== null) return refusal
 
   const token = tokenFor(canonicalHost)
