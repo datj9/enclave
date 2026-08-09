@@ -214,6 +214,17 @@ describe('share commands', () => {
       expect(mocks.post).not.toHaveBeenCalled()
     })
 
+    /** `show`/`rm`/`rename` exit 2 for the same argument: an id too short to resolve is an
+     *  unusable value, not a lookup that came back empty. */
+    it('exits 2 without a lookup when the id is too short to resolve', async () => {
+      const code = await runShareCreate({ host: HOST, id: '800cb5', isJson: false })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('at least 8')
+      expect(mocks.get).not.toHaveBeenCalled()
+      expect(mocks.post).not.toHaveBeenCalled()
+    })
+
     it('sends a Zulu instant through unchanged', async () => {
       await runShareCreate({
         host: HOST,
@@ -530,6 +541,14 @@ describe('share commands', () => {
 
       expect(code).toBe(0)
       expect(mocks.get).toHaveBeenCalledWith(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
+    })
+
+    it('exits 2 without a lookup when the id is too short to resolve', async () => {
+      const code = await runShareList({ host: HOST, id: '800cb5', isJson: false })
+
+      expect(code).toBe(2)
+      expect(errorText()).toContain('at least 8')
+      expect(mocks.get).not.toHaveBeenCalled()
     })
 
     it('shows id, pinned version, expiry and state', async () => {

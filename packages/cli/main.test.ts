@@ -149,3 +149,43 @@ describe('version', () => {
     expect(await main(['version', 'extra'])).toBe(2)
   })
 })
+
+/**
+ * `enclave --json` is not a request for help, it is a command name that never arrived. Answering it
+ * with the banner on stdout at exit 0 tells a wrapper the run succeeded and then feeds prose to the
+ * parser it promised JSON to.
+ */
+describe('a command name is required', () => {
+  it('prints the banner to stdout at exit 0 for no arguments at all', async () => {
+    expect(await main([])).toBe(0)
+    expect(stdout()).toContain('enclave — publish and manage artifacts')
+    expect(stderr()).toBe('')
+  })
+
+  it('prints the banner to stdout at exit 0 for --help', async () => {
+    expect(await main(['--help'])).toBe(0)
+    expect(stdout()).toContain('enclave — publish and manage artifacts')
+  })
+
+  it('exits 2 with nothing on stdout when flags arrive without a command', async () => {
+    for (const flag of ['--json', '--insecure', '--dry-run']) {
+      written = []
+      writtenToStderr = []
+      expect(await main([flag])).toBe(2)
+      expect(stdout()).toBe('')
+      expect(stderr()).toContain('no command')
+    }
+  })
+})
+
+describe('the usage banner documents every flag a command accepts', () => {
+  it.each(['rename', 'privacy', 'rm', 'restore'])('documents --json on %s', async (command) => {
+    await main(['--help'])
+
+    const line = stdout()
+      .split('\n')
+      .find((candidate) => candidate.trimStart().startsWith(`enclave ${command} `))
+    expect(line).toBeDefined()
+    expect(line).toContain('--json')
+  })
+})
