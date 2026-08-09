@@ -9,6 +9,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
+  flex-wrap: wrap;
   padding: var(--space-2xs) var(--space-md);
   border-bottom: 1px solid var(--color-rule);
 }
@@ -40,10 +41,12 @@
   text-overflow: ellipsis;
 }
 
+/* The privacy switch cannot shrink, so wrapping this row — not .bar — is what clears the overflow. */
 .ownerControls {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 .origin {

@@ -25,7 +25,8 @@ single signal amber. There is no gradient anywhere in this system.
   --color-ink:        oklch(19%  0.010 60);
   --color-ink-2:      oklch(44%  0.008 60);
   --color-rule:       oklch(84%  0.008 60);
-  --color-accent:     oklch(62%  0.160 55);
+  --color-control-border: oklch(61% 0.008 60);   /* 3:1 minimum — WCAG 1.4.11 */
+  --color-accent:     oklch(53%  0.130 55);      /* paired with --color-accent-ink */
   --color-accent-ink: oklch(99%  0.005 60);
   --color-focus:      oklch(58%  0.190 55);
 
@@ -54,7 +55,9 @@ single signal amber. There is no gradient anywhere in this system.
     --color-ink:     oklch(94%  0.006 70);
     --color-ink-2:   oklch(72%  0.006 60);
     --color-rule:    oklch(31%  0.008 60);
-    --color-accent:  oklch(70%  0.130 55);
+    --color-control-border: oklch(52% 0.008 60);   /* 3:1 minimum — WCAG 1.4.11 */
+    --color-accent:  oklch(70%  0.130 55);         /* paired with --color-accent-ink */
+    --color-accent-ink: oklch(19% 0.010 60);
     --color-focus:   oklch(72%  0.190 55);
   }
   body { font-weight: 350; }
@@ -75,7 +78,8 @@ single signal amber. There is no gradient anywhere in this system.
 - Primary · accent **border and text**, paper fill, `--radius-input`,
   `--space-sm` block / `--space-lg` inline. The accent is a highlighter, not a
   colour block — it stays under 3% of any viewport.
-- Secondary · `--color-rule` hairline outline, same radius, ink text.
+- Secondary · `--color-control-border` hairline outline (3:1 minimum — WCAG 1.4.11),
+  same radius, ink text.
 - Marketing page ships one final CTA strip with **one** button.
 
 ## Depth

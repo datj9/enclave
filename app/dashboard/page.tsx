@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { env } from '@/env'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
 import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { getSessionUser } from '@/lib/auth/session'
@@ -21,6 +22,9 @@ export default async function DashboardPage() {
 
   return (
     <div className={styles.shell}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave</p>
         <div className={styles.identity}>
@@ -47,8 +51,16 @@ export default async function DashboardPage() {
         </div>
       </header>
 
-      <main className={styles.main}>
-        {page.items.length === 0 ? <EmptyState /> : <ArtifactList items={page.items} />}
+      <main className={styles.main} id="main" tabIndex={-1}>
+        {page.items.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <ArtifactList
+            initialItems={page.items}
+            initialCursor={page.nextCursor}
+            appUrl={env.APP_URL}
+          />
+        )}
       </main>
     </div>
   )

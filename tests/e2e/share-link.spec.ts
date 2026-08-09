@@ -1,4 +1,10 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test'
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import postgres from 'postgres'
 
@@ -19,6 +25,19 @@ const ADMIN_EMAIL = 'ops@example.com'
 const ADMIN_PASSWORD = 'correct-horse-battery'
 
 const MARKER_ID = 'marker'
+
+const CREATED_ANNOUNCEMENT = 'Share link created. Copy it now — this is the only time it is shown.'
+
+/** Copied from `marketing.spec.ts`; a spec file cannot export without registering its tests twice. */
+const NARROW_VIEWPORT = { width: 320, height: 640 } as const
+const DESKTOP_VIEWPORT = { width: 1280, height: 720 } as const
+
+async function documentOverflowsHorizontally(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const root = document.documentElement
+    return root.scrollWidth > root.clientWidth
+  })
+}
 
 /**
  * The per-IP auth budget is one in-process counter shared by every spec in the run, and the suite
@@ -222,10 +241,20 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
     const dialog = ownerPage.getByTestId('share-dialog')
     await expect(dialog).toBeVisible()
 
+    // A live region that arrives already carrying its text is not announced, so it has to be
+    // mounted and empty before the link exists.
+    const announcement = dialog.getByRole('status')
+    await expect(announcement).toBeAttached()
+    await expect(announcement).toHaveText('')
+
     await ownerPage.getByLabel('Version to pin').selectOption(pinnedVersionId)
     await ownerPage.getByTestId('share-create').click()
 
     await expect(ownerPage.getByTestId('share-url')).toBeVisible()
+    await expect(announcement).toHaveText(CREATED_ANNOUNCEMENT)
+    await expect(
+      dialog.locator('section', { has: ownerPage.getByTestId('share-url') }),
+    ).toBeFocused()
     shareUrl = (await ownerPage.getByTestId('share-url').innerText()).trim()
 
     expect(shareUrl.startsWith(`${APP_ORIGIN}/s/`)).toBe(true)
@@ -256,9 +285,9 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
       const response = await page.goto(shareUrl)
 
       expect(response?.status()).toBe(200)
-      await expect(page.frameLocator('iframe[title="Artifact"]').locator(`#${MARKER_ID}`)).toHaveText(
-        'version two',
-      )
+      await expect(
+        page.frameLocator('iframe[title="Artifact"]').locator(`#${MARKER_ID}`),
+      ).toHaveText('version two')
       // No session was involved: the token alone carried the read.
       expect(await anonymous.cookies(APP_ORIGIN)).toHaveLength(0)
     } finally {
@@ -315,6 +344,53 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
       expect(response?.status()).toBe(404)
     } finally {
       await anonymous.close()
+    }
+  })
+
+  test('the owner toolbar fits a 320px viewport with nothing off the side', async () => {
+    await ownerPage.setViewportSize(NARROW_VIEWPORT)
+    try {
+      await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
+
+      // A reader who does not own it renders no owner controls at all, so the overflow check
+      // below would pass on a bar that never had anything to wrap.
+      await expect(ownerPage.getByTestId('delete-open')).toBeVisible()
+
+      expect(await documentOverflowsHorizontally(ownerPage)).toBe(false)
+    } finally {
+      await ownerPage.setViewportSize(DESKTOP_VIEWPORT)
+    }
+  })
+
+  test('pressing Revoke twice keeps focus and still issues one DELETE', async () => {
+    await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
+    await ownerPage.getByTestId('share-open').click()
+    await ownerPage.getByTestId('share-create').click()
+    await expect(ownerPage.getByTestId('share-url')).toBeVisible()
+
+    const revokePattern = '**/api/v1/shares/*'
+    let deleteCount = 0
+    // Held open so the second press lands while the first request is still in flight.
+    await ownerPage.route(revokePattern, async (route) => {
+      deleteCount += 1
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      await route.continue()
+    })
+
+    try {
+      const revoke = ownerPage.getByTestId('share-revoke')
+      await revoke.focus()
+      await ownerPage.keyboard.press('Space')
+      const focusedTestId = await ownerPage.evaluate(
+        () => document.activeElement?.getAttribute('data-testid') ?? null,
+      )
+      await ownerPage.keyboard.press('Space')
+
+      expect(focusedTestId).toBe('share-revoke')
+      await expect(ownerPage.getByTestId('share-revoke')).toHaveCount(0)
+      expect(deleteCount).toBe(1)
+    } finally {
+      await ownerPage.unroute(revokePattern)
     }
   })
 })

@@ -29,9 +29,7 @@
   margin: 0;
 }
 
-/* Accent text on paper measures 3.52:1 — under AA at body size, over the 3:1 large-text
-   threshold at 20 px/700. Sizing up keeps design.md's accent border *and* text rather than
-   dropping the label to ink, and the page's single CTA has earned the extra weight. */
+/* The page's single CTA carries the extra size and weight; accent-on-paper is 5.06:1, AA as normal text. */
 .action {
   font-size: var(--text-md);
   font-weight: 700;

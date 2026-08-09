@@ -15,6 +15,9 @@ export default async function NewArtifactPage() {
 
   return (
     <div className={styles.shell}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className={styles.bar}>
         <a className={styles.wordmark} href="/dashboard">
           enclave
@@ -22,7 +25,7 @@ export default async function NewArtifactPage() {
         <span className={styles.email}>{sessionUser.email}</span>
       </header>
 
-      <main className={styles.main}>
+      <main className={styles.main} id="main" tabIndex={-1}>
         <h1 className={styles.heading}>New artifact</h1>
         <p className={styles.body}>
           Describe what you want. The model writes the files, they are stored as one version, and

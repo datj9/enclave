@@ -17,7 +17,9 @@
   --color-ink: oklch(19% 0.01 60);
   --color-ink-2: oklch(44% 0.008 60);
   --color-rule: oklch(84% 0.008 60);
-  --color-accent: oklch(62% 0.16 55);
+  --color-control-border: oklch(61% 0.008 60);
+  /* Lightness is paired with --color-accent-ink; move one and the other stops clearing 4.5:1. */
+  --color-accent: oklch(53% 0.13 55);
   --color-accent-ink: oklch(99% 0.005 60);
   --color-focus: oklch(58% 0.19 55);
 
@@ -85,7 +87,10 @@
     --color-ink: oklch(94% 0.006 70);
     --color-ink-2: oklch(72% 0.006 60);
     --color-rule: oklch(31% 0.008 60);
+    --color-control-border: oklch(52% 0.008 60);
+    /* Lightness is paired with --color-accent-ink; move one and the other stops clearing 4.5:1. */
     --color-accent: oklch(70% 0.13 55);
+    --color-accent-ink: oklch(19% 0.01 60);
     --color-focus: oklch(72% 0.19 55);
   }
 
@@ -102,6 +107,7 @@
   --color-ink: var(--color-ink);
   --color-ink-2: var(--color-ink-2);
   --color-rule: var(--color-rule);
+  --color-control-border: var(--color-control-border);
   --color-accent: var(--color-accent);
   --color-accent-ink: var(--color-accent-ink);
   --color-focus: var(--color-focus);

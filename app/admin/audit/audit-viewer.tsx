@@ -81,13 +81,14 @@ export function AuditViewer({
 
   function handleFilter(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
+    if (isBusy) return
     const form = new FormData(event.currentTarget)
     setFilters(form)
     void load(form, null)
   }
 
   function handleMore(): void {
-    if (page.nextCursor === null) return
+    if (isBusy || page.nextCursor === null) return
     void load(filters ?? new FormData(), page.nextCursor)
   }
 
@@ -143,7 +144,7 @@ export function AuditViewer({
           <input className="input" id="audit-to" name="to" type="datetime-local" />
         </div>
 
-        <button className="button-primary" type="submit" disabled={isBusy}>
+        <button className="button-primary" type="submit" aria-disabled={isBusy}>
           Apply filters
         </button>
       </form>
@@ -158,7 +159,12 @@ export function AuditViewer({
 
       {page.nextCursor !== null && (
         <div className={styles.pager}>
-          <button className="button-secondary" type="button" disabled={isBusy} onClick={handleMore}>
+          <button
+            className="button-secondary"
+            type="button"
+            aria-disabled={isBusy}
+            onClick={handleMore}
+          >
             Load more
           </button>
         </div>

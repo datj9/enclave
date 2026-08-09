@@ -1,11 +1,11 @@
 /*
- * The popup itself borrows the share dialog's entrance — `scale(0.96) → 1` plus opacity over
- * 220 ms `ease-out`, `transform-origin: center` because modals are the documented exception to
+ * The popup borrows the delete dialog's entrance — `scale(0.96) → 1` plus opacity over 220 ms
+ * `ease-out`, `transform-origin: center` because modals are the documented exception to
  * origin-aware scaling (docs/motion.md § This project's surfaces).
  */
 .backdrop,
 .popup {
-  --dur-delete: 220ms;
+  --dur-publish: 220ms;
 }
 
 .backdrop {
@@ -13,7 +13,7 @@
   inset: 0;
   background: oklch(20% 0.01 60 / 0.44);
   opacity: 1;
-  transition: opacity var(--dur-delete) var(--ease-out-app);
+  transition: opacity var(--dur-publish) var(--ease-out-app);
 }
 
 .backdrop[data-starting-style],
@@ -38,8 +38,8 @@
   transform: translate(-50%, -50%) scale(1);
   opacity: 1;
   transition:
-    transform var(--dur-delete) var(--ease-out-app),
-    opacity var(--dur-delete) var(--ease-out-app);
+    transform var(--dur-publish) var(--ease-out-app),
+    opacity var(--dur-publish) var(--ease-out-app);
 }
 
 .popup[data-starting-style],
@@ -68,40 +68,25 @@
 }
 
 /*
- * docs/motion.md: no animation on the destructive button — no `transition`, no `:active`
- * transform. Both of these open or commit the delete, so both stay instant.
+ * docs/motion.md: no animation on the button that commits the change — no `transition`, no
+ * `:active` transform. An instant response is what reads as trustworthy.
  */
-.trigger,
 .confirm {
   padding: var(--space-3xs) var(--space-2xs);
   font: inherit;
   font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  background: var(--color-paper);
+  border: 1px solid var(--color-accent);
   border-radius: var(--radius-input);
   cursor: pointer;
 }
 
-.trigger {
-  color: var(--color-ink);
-  background: var(--color-paper);
-  border: 1px solid var(--color-control-border);
-}
-
-.confirm {
-  color: var(--color-accent);
-  background: var(--color-paper);
-  border: 1px solid var(--color-accent);
-  font-weight: 500;
-}
-
-.confirm:disabled,
-.confirm[aria-disabled='true'] {
-  color: var(--color-ink-2);
-  border-color: var(--color-rule);
-  cursor: not-allowed;
-}
-
+/* Padded to a 24px target, pulled back by the same amount so the text stays optically flush. */
 .cancel {
-  padding: 0;
+  padding: var(--space-3xs) var(--space-2xs);
+  margin-inline-start: calc(-1 * var(--space-2xs));
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink-2);
@@ -114,7 +99,7 @@
 @media (prefers-reduced-motion: reduce) {
   .backdrop,
   .popup {
-    transition-duration: var(--dur-delete);
+    transition-duration: var(--dur-publish);
     transition-property: opacity;
   }
 

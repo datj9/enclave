@@ -1,5 +1,6 @@
 'use client'
 
+import { Dialog } from '@base-ui-components/react/dialog'
 import { useState } from 'react'
 
 import type { AdminUserSummary } from '@/lib/admin/users'
@@ -8,7 +9,10 @@ import {
   formatInstantStable,
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
+import { css } from '@/lib/ui/class-name'
+import dialogStyles from '../../a/[id]/delete-dialog.module.css'
 import styles from '../admin.module.css'
+import deleteStyles from './delete-user-dialog.module.css'
 
 /**
  * Dense table, no row animation (docs/motion.md): rows that move while an operator reads them are
@@ -63,6 +67,8 @@ export function UserTable({
   }
 
   async function send(path: string, init: RequestInit): Promise<void> {
+    // `aria-disabled` keeps focus but still fires; all three row actions funnel through here.
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
     try {
@@ -93,8 +99,9 @@ export function UserTable({
     })
   }
 
-  function remove(person: AdminUserSummary): void {
-    void send(`/api/v1/users/${person.id}`, { method: 'DELETE' })
+  // Awaited by the confirmation dialog, which closes once the request has settled either way.
+  function remove(person: AdminUserSummary): Promise<void> {
+    return send(`/api/v1/users/${person.id}`, { method: 'DELETE' })
   }
 
   return (
@@ -127,7 +134,9 @@ export function UserTable({
               <tr key={person.id}>
                 <td>{person.email}</td>
                 <td>{person.role}</td>
-                <td>{person.isActive ? 'active' : `deactivated ${formatMoment(person.deactivatedAt)}`}</td>
+                <td>
+                  {person.isActive ? 'active' : `deactivated ${formatMoment(person.deactivatedAt)}`}
+                </td>
                 <td className={styles.numeric}>{person.liveArtifactCount}</td>
                 <td className={styles.numeric}>{person.sharedArtifactCount}</td>
                 <td>{formatMoment(person.createdAt)}</td>
@@ -164,14 +173,14 @@ function RowActions({
   readonly isBusy: boolean
   readonly onSetAccess: (person: AdminUserSummary, isActive: boolean) => void
   readonly onSetRole: (person: AdminUserSummary, role: AdminUserSummary['role']) => void
-  readonly onRemove: (person: AdminUserSummary) => void
+  readonly onRemove: (person: AdminUserSummary) => Promise<void>
 }) {
   return (
     <div className={styles.rowActions}>
       <button
         className={`button-secondary ${styles.compactButton}`}
         type="button"
-        disabled={isBusy}
+        aria-disabled={isBusy}
         onClick={() => onSetAccess(person, !person.isActive)}
       >
         {person.isActive ? 'Deactivate' : 'Reactivate'}
@@ -179,19 +188,68 @@ function RowActions({
       <button
         className={`button-secondary ${styles.compactButton}`}
         type="button"
-        disabled={isBusy}
+        aria-disabled={isBusy}
         onClick={() => onSetRole(person, person.role === 'admin' ? 'member' : 'admin')}
       >
         {person.role === 'admin' ? 'Make member' : 'Make admin'}
       </button>
-      <button
-        className={`button-secondary ${styles.compactButton}`}
-        type="button"
-        disabled={isBusy}
-        onClick={() => onRemove(person)}
-      >
-        Delete
-      </button>
+      <DeleteUserDialog person={person} isBusy={isBusy} onRemove={onRemove} />
     </div>
+  )
+}
+
+/**
+ * The server refuses to delete an account that still owns artifacts, so the only case that
+ * reaches the API is the newly-invited person who has not published yet — irreversible, with
+ * nothing to restore from.
+ */
+function DeleteUserDialog({
+  person,
+  isBusy,
+  onRemove,
+}: {
+  readonly person: AdminUserSummary
+  readonly isBusy: boolean
+  readonly onRemove: (person: AdminUserSummary) => Promise<void>
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+
+  async function handleDelete(): Promise<void> {
+    if (isBusy) return
+    await onRemove(person)
+    // Closing on failure too — the refusal renders above the table, behind this popup.
+    setIsOpen(false)
+  }
+
+  return (
+    <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
+      <Dialog.Trigger className={css(deleteStyles.trigger)} data-testid="user-delete-open">
+        Delete
+      </Dialog.Trigger>
+
+      <Dialog.Portal>
+        <Dialog.Backdrop className={css(dialogStyles.backdrop)} />
+        <Dialog.Popup className={css(dialogStyles.popup)} data-testid="user-delete-dialog">
+          <Dialog.Title className={css(dialogStyles.title)}>Delete {person.email}?</Dialog.Title>
+          <Dialog.Description className={css(dialogStyles.description)}>
+            Their sign-in stops working and the account is removed. Their audit trail stays. This
+            cannot be undone — deactivate instead if you only want to end their access.
+          </Dialog.Description>
+
+          <div className={dialogStyles.actions}>
+            <button
+              className={dialogStyles.confirm}
+              type="button"
+              aria-disabled={isBusy}
+              data-testid="user-delete-confirm"
+              onClick={() => void handleDelete()}
+            >
+              Delete account
+            </button>
+            <Dialog.Close className={css(dialogStyles.cancel)}>Cancel</Dialog.Close>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

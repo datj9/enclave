@@ -1,4 +1,10 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test'
 import postgres from 'postgres'
 
 import { hashPassword } from '../../src/lib/auth/password'
@@ -173,6 +179,8 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
     expect(patchResponse.status()).toBe(200)
     await expect(organization).toHaveAttribute('aria-checked', 'true')
     await expect(onlyMe).toHaveAttribute('aria-checked', 'false')
+    // Only `public` is gated behind a confirmation; every other level commits on the press.
+    await expect(ownerPage.getByTestId('publish-public-dialog')).not.toBeAttached()
   })
 
   test('the three options are equal width, so the crossfade shifts no layout', async () => {
@@ -180,7 +188,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
 
     const widths = await ownerPage
       .getByRole('radio')
-      .evaluateAll((options) => options.map((option) => Math.round(option.getBoundingClientRect().width)))
+      .evaluateAll((options) =>
+        options.map((option) => Math.round(option.getBoundingClientRect().width)),
+      )
 
     expect(widths).toHaveLength(3)
     expect(new Set(widths).size).toBe(1)
@@ -207,10 +217,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
       data: { visibility: 'private' },
       maxRedirects: 0,
     })
-    const remove = await member.request.delete(
-      `${APP_ORIGIN}/api/v1/artifacts/${sharedArtifact}`,
-      { maxRedirects: 0 },
-    )
+    const remove = await member.request.delete(`${APP_ORIGIN}/api/v1/artifacts/${sharedArtifact}`, {
+      maxRedirects: 0,
+    })
 
     expect([patch.status(), remove.status()]).toEqual([403, 403])
   })

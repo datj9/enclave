@@ -164,3 +164,9 @@
   color: var(--color-ink-2);
   word-break: break-all;
 }
+
+.resultCaption {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}

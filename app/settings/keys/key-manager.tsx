@@ -43,6 +43,7 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
 
   async function handleSave(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
+    if (isBusy) return
     const form = new FormData(event.currentTarget)
     const formElement = event.currentTarget
     setIsBusy(true)
@@ -71,6 +72,7 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
   }
 
   async function handleDelete(): Promise<void> {
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
 
@@ -88,12 +90,15 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
 
   return (
     <>
-      <StoredKeyRow
-        storedKey={storedKey}
-        isBusy={isBusy}
-        isMountedForLocalTime={isMountedForLocalTime}
-        onDelete={() => void handleDelete()}
-      />
+      {/* Both branches render, so this region is in the DOM before any change to announce. */}
+      <div role="status">
+        <StoredKeyRow
+          storedKey={storedKey}
+          isBusy={isBusy}
+          isMountedForLocalTime={isMountedForLocalTime}
+          onDelete={() => void handleDelete()}
+        />
+      </div>
 
       <form className={styles.form} onSubmit={(event) => void handleSave(event)}>
         {errorMessage !== null && (
@@ -136,7 +141,7 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
           />
         </div>
 
-        <button className="button-primary" type="submit" disabled={isBusy}>
+        <button className="button-primary" type="submit" aria-disabled={isBusy}>
           {storedKey === null ? 'Save key' : 'Replace key'}
         </button>
       </form>
@@ -164,7 +169,7 @@ function StoredKeyRow({
   }
 
   return (
-    <section className={styles.row} aria-live="polite">
+    <section className={styles.row}>
       <div>
         <p className={styles.rowName}>
           {PROVIDER_LABEL[storedKey.provider]}{' '}
@@ -182,7 +187,7 @@ function StoredKeyRow({
               }`}
         </p>
       </div>
-      <button className="button-secondary" type="button" disabled={isBusy} onClick={onDelete}>
+      <button className="button-secondary" type="button" aria-disabled={isBusy} onClick={onDelete}>
         Remove
       </button>
     </section>

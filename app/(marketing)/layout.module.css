@@ -11,8 +11,7 @@
  * system: design.md at the project root is the rule. Every value below is one of its tokens.
  * pre-emit critique: P5 H5 E5 S5 R5 V4
  * contrast: pass (40–41) — 127/127 text pairs ≥ AA in both schemes; focus ring 4.15:1 light,
- *   7.50:1 dark. CTA label runs 20 px/700 so accent-on-paper (3.52:1) clears the 3:1 large-text
- *   threshold without dropping design.md's accent text.
+ *   7.50:1 dark. CTA label accent-on-paper 5.06:1 — clears AA as normal text.
  * slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48)
  * responsive: pass (49) · icons: pass (30, none used)
  * mobile: pass (34, 49, 50–57) — 0 px overflow at 320/360/375/414/480/600/768/900/1024/1280/

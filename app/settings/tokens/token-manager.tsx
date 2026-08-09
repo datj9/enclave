@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { API_TOKEN_SCOPES, type ApiTokenScope } from '@/db/schema/api-tokens'
 import type { ApiTokenSummary } from '@/lib/auth/bearer'
@@ -24,6 +24,7 @@ const SCOPE_LABEL: Readonly<Record<ApiTokenScope, string>> = {
 }
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
+const CREATED_ANNOUNCEMENT = 'API token created. Copy it now — this is the only time it is shown.'
 
 interface CreatedTokenView {
   readonly name: string
@@ -54,6 +55,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
+    if (isBusy) return
     const form = new FormData(event.currentTarget)
     setIsBusy(true)
     setErrorMessage(null)
@@ -79,6 +81,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
   }
 
   async function handleRevoke(tokenId: string): Promise<void> {
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
     try {
@@ -95,6 +98,11 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
 
   return (
     <>
+      {/* Mounted empty and filled on create: a region that arrives with its text is not read. */}
+      <p className="sr-only" role="status">
+        {created === null ? '' : CREATED_ANNOUNCEMENT}
+      </p>
+
       {created !== null && (
         <RevealedToken created={created} onDismiss={() => setCreated(null)} />
       )}
@@ -139,7 +147,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
           <input className="input" id="token-expires" name="expiresAt" type="datetime-local" />
         </div>
 
-        <button className="button-primary" type="submit" disabled={isBusy}>
+        <button className="button-primary" type="submit" aria-disabled={isBusy}>
           Create token
         </button>
       </form>
@@ -173,8 +181,14 @@ function RevealedToken({
   readonly created: CreatedTokenView
   readonly onDismiss: () => void
 }) {
+  const panelRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [created])
+
   return (
-    <section className={styles.revealed} aria-live="polite">
+    <section className={styles.revealed} ref={panelRef} tabIndex={-1}>
       <h2 className={styles.revealedHeading}>Copy “{created.name}” now</h2>
       <p className={styles.revealedBody}>
         This is the only time it is shown. Nothing can recover it afterwards — create a new token
@@ -224,7 +238,7 @@ function TokenTable({
             <button
               className="button-secondary"
               type="button"
-              disabled={isBusy}
+              aria-disabled={isBusy}
               onClick={() => onRevoke(token.id)}
             >
               Revoke

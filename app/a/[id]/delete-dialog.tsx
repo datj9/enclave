@@ -4,6 +4,7 @@ import { Dialog } from '@base-ui-components/react/dialog'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
+import { css } from '@/lib/ui/class-name'
 import styles from './delete-dialog.module.css'
 
 /**
@@ -16,11 +17,6 @@ import styles from './delete-dialog.module.css'
  */
 
 const DELETE_FAILED = 'That artifact could not be deleted.'
-
-/** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
-function css(className: string | undefined): string {
-  return className ?? ''
-}
 
 export function DeleteDialog({
   artifactId,
@@ -36,6 +32,7 @@ export function DeleteDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   async function handleDelete(): Promise<void> {
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
 
@@ -82,7 +79,7 @@ export function DeleteDialog({
             <button
               className={styles.confirm}
               type="button"
-              disabled={isBusy}
+              aria-disabled={isBusy}
               data-testid="delete-confirm"
               onClick={() => void handleDelete()}
             >
