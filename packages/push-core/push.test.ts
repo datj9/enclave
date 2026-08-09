@@ -238,6 +238,18 @@ describe('push', () => {
     expect(error.details).toEqual({ host: 'enclave.example.com' })
   })
 
+  it('names the command that tells you whether a timed-out upload landed anyway', async () => {
+    writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+    const timeout = new Error('The operation was aborted due to timeout')
+    timeout.name = 'TimeoutError'
+    fetchMock.mockRejectedValue(timeout)
+
+    const error = await rejectionOf(optionsFor())
+
+    expect(error.code).toBe('NETWORK_TIMEOUT')
+    expect(error.message).toContain('enclave list')
+  })
+
   it('returns uploaded and skipped lists on success', async () => {
     writeFileSync(join(directory, 'index.html'), '<!doctype html>')
     writeFileSync(join(directory, 'app.js'), 'console.log(1)')

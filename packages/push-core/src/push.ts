@@ -76,6 +76,12 @@ export async function push(options: PushOptions): Promise<PushResult> {
   const { files, skipped } = collectBundle(options.directory)
   assertBundlePushable(files, skipped)
 
+  // After validation, so a caller announcing the upload can never announce one that is refused.
+  options.onUploadStart?.({
+    fileCount: files.length,
+    totalBytes: files.reduce((total, file) => total + file.content.length, 0),
+  })
+
   const body = JSON.stringify({
     title: options.title ?? 'Untitled artifact',
     visibility: options.visibility ?? 'private',
@@ -97,9 +103,14 @@ export async function push(options: PushOptions): Promise<PushResult> {
     })
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
-      throw new PushError('NETWORK_TIMEOUT', 'The upload did not complete within 5 minutes', {
-        host: options.host,
-      })
+      // The abort can land after the body was fully sent, and no state file is written on failure,
+      // so a blind retry would publish the artifact twice.
+      throw new PushError(
+        'NETWORK_TIMEOUT',
+        'The upload did not complete within 5 minutes — run enclave list before retrying, ' +
+          'in case it landed anyway',
+        { host: options.host },
+      )
     }
     throw new PushError('NETWORK_ERROR', 'Could not reach the server', { host: options.host })
   }

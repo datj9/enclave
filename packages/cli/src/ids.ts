@@ -2,7 +2,7 @@ import type { ApiClient } from './api-client.ts'
 import { displayTitle } from './display.ts'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const MIN_PREFIX_LENGTH = 8
+export const MIN_PREFIX_LENGTH = 8
 const MAX_PAGES = 100
 
 export class IdResolutionError extends Error {}

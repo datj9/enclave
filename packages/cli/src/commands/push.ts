@@ -9,7 +9,7 @@ import {
   push,
   PushError,
 } from '../../../push-core/src/index.ts'
-import type { PushResult, SkippedFile } from '../../../push-core/src/index.ts'
+import type { PushResult, SkippedFile, UploadPlan } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
 import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
@@ -27,7 +27,6 @@ export interface PushCommandOptions {
   readonly isInsecureAllowed?: boolean
 }
 
-const SKIP_COLUMN_WIDTH = 18
 const BYTES_PER_KILOBYTE = 1024
 const SHORT_ID_LENGTH = 8
 
@@ -49,9 +48,12 @@ function reasonText(file: SkippedFile): string {
 
 function writeSkippedBlock(skipped: readonly SkippedFile[]): void {
   if (skipped.length === 0) return
+  // `reduce`, not `Math.max(...paths)`: the list is unbounded and a spread can blow the argument
+  // limit on a large tree.
+  const pathColumnWidth = skipped.reduce((widest, file) => Math.max(widest, file.path.length), 0)
   process.stdout.write(`skipped ${String(skipped.length)} files:\n`)
   for (const file of skipped) {
-    process.stdout.write(`  ${file.path.padEnd(SKIP_COLUMN_WIDTH)}${reasonText(file)}\n`)
+    process.stdout.write(`  ${file.path.padEnd(pathColumnWidth)}  ${reasonText(file)}\n`)
   }
 }
 
@@ -250,16 +252,36 @@ function reportDryRun(options: PushCommandOptions): number {
   return 0
 }
 
-function reportPushed(options: PushCommandOptions, result: PushResult): void {
+/**
+ * The `/a/{id}` page, not `result.viewUrl`. The artifact origin 404s without the grant cookie
+ * `/enter` mints, so printing it hands the user an address that is dead for everyone including
+ * them. `viewUrl` stays in the `--json` result, which is a pinned contract.
+ */
+function reportPushed(options: PushCommandOptions, host: string, result: PushResult): void {
   writeSkippedBlock(result.skipped)
   process.stdout.write(
     `✓ ${String(result.uploaded.length)} files, ` +
       `${String(kilobytesOf(options.directory, result.uploaded))} KB\n`,
   )
-  process.stdout.write(
-    `✓ created ${result.artifactId.slice(0, SHORT_ID_LENGTH)}  v${String(result.versionNo)}\n`,
+  const shortId = result.artifactId.slice(0, SHORT_ID_LENGTH)
+  process.stdout.write(`✓ created ${shortId}  v${String(result.versionNo)}\n`)
+  process.stdout.write(`→ ${host}/a/${result.artifactId}\n`)
+  const isPrivate = options.visibility === undefined || options.visibility === 'private'
+  if (options.visibility === undefined) {
+    process.stdout.write('  private — only you can open that link\n')
+  }
+  process.stdout.write(`  share it:  enclave share create ${shortId} --expires 7d\n`)
+  if (isPrivate) {
+    process.stdout.write(`  or open to the instance:  enclave privacy ${shortId} org\n`)
+  }
+}
+
+/** stderr, never stdout: `--json` promises stdout carries the result object and nothing else. */
+function announceUpload(host: string, plan: UploadPlan): void {
+  const kilobytes = Math.round(plan.totalBytes / BYTES_PER_KILOBYTE)
+  process.stderr.write(
+    `uploading ${String(plan.fileCount)} files (${String(kilobytes)} KB) to ${host}…\n`,
   )
-  process.stdout.write(`→ ${result.viewUrl}\n`)
 }
 
 /**
@@ -312,6 +334,8 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
 
   if (options.isDryRun) return reportDryRun(options)
 
+  const isProgressVisible = !options.isJson
+
   let result: PushResult
   try {
     result = await push({
@@ -322,12 +346,23 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
       visibility: options.visibility ?? 'private',
       isInsecureAllowed: options.isInsecureAllowed ?? false,
       userAgent: USER_AGENT,
+      ...(isProgressVisible
+        ? {
+            onUploadStart: (plan: UploadPlan): void => {
+              announceUpload(canonicalHost, plan)
+            },
+          }
+        : {}),
     })
   } catch (error) {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
     const text = messageOf(error)
     const details = error instanceof PushError ? error.details : {}
     reportError(options.isJson, code, text, `✗ ${text}`, details)
+    // The no-token path already prints this; a token the server rejected mid-push did not.
+    if (code === 'UNAUTHORIZED' && !options.isJson) {
+      process.stderr.write(`  log in again: enclave login --host ${canonicalHost}\n`)
+    }
     return 1
   }
 
@@ -342,6 +377,6 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 0
   }
 
-  reportPushed(options, result)
+  reportPushed(options, canonicalHost, result)
   return 0
 }
