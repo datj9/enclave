@@ -3,6 +3,7 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 
+import { privateConfirmBody, privateHint } from '@/lib/artifacts/privacy-copy'
 import { css } from '@/lib/ui/class-name'
 import type { Visibility } from '@/db/schema/artifacts'
 import styles from './privacy-switch.module.css'
@@ -17,29 +18,35 @@ import publishStyles from './publish-dialog.module.css'
  * one of them: it is a capability derived from an active `share_links` row (§5.1 branch 4), so it
  * lives in the Share dialog next to this control rather than as a fourth segment here.
  *
- * Every level commits on the press except `public`, which confirms first: it is the one transition
- * that hands the artifact to the whole internet, and it is reached by a 1/3-width segment.
+ * Two levels confirm before they commit. `public` always does: it is the one transition that hands
+ * the artifact to the whole internet. `private` does only when live links remain, because the
+ * downgrade does not close them — and asking about links that do not exist would be noise.
  */
 
 interface PrivacyOption {
   readonly value: Visibility
   readonly label: string
-  readonly hint: string
 }
 
 const OPTIONS: readonly PrivacyOption[] = [
-  {
-    value: 'private',
-    label: 'Only me',
-    hint: 'Nobody can browse to it. Any share link you have already created still opens it — revoke those in Share.',
-  },
-  { value: 'org', label: 'Organization', hint: 'Everyone signed in to this instance can open it.' },
-  {
-    value: 'public',
-    label: 'Public',
-    hint: 'Anyone with the address can open it, no sign-in — and search engines may index it.',
-  },
+  { value: 'private', label: 'Only me' },
+  { value: 'org', label: 'Organization' },
+  { value: 'public', label: 'Public' },
 ]
+
+const FIXED_HINTS: Readonly<Record<Exclude<Visibility, 'private'>, string>> = {
+  org: 'Everyone signed in to this instance can open it.',
+  public: 'Anyone with the address can open it, no sign-in — and search engines may index it.',
+}
+
+/** Only `private` varies: its hint has to name the links the downgrade will leave open. */
+function hintFor(visibility: Visibility, liveShareLinkCount: number): string {
+  return visibility === 'private' ? privateHint(liveShareLinkCount) : FIXED_HINTS[visibility]
+}
+
+interface ShareListResponse {
+  readonly data: { readonly liveCount: number }
+}
 
 const SAVE_FAILED = 'That change did not save. The artifact is still set to its previous level.'
 
@@ -109,19 +116,75 @@ function PublishConfirmDialog({
   )
 }
 
+function PrivateConfirmDialog({
+  isOpen,
+  liveShareLinkCount,
+  privateOptionRef,
+  onOpenChange,
+  onConfirm,
+}: {
+  readonly isOpen: boolean
+  readonly liveShareLinkCount: number
+  readonly privateOptionRef: RefObject<HTMLButtonElement | null>
+  readonly onOpenChange: (isOpen: boolean) => void
+  readonly onConfirm: () => void
+}) {
+  const cancelRef = useRef<HTMLButtonElement | null>(null)
+
+  return (
+    <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className={css(publishStyles.backdrop)} />
+        <Dialog.Popup
+          className={css(publishStyles.popup)}
+          initialFocus={cancelRef}
+          finalFocus={privateOptionRef}
+          data-testid="privacy-private-dialog"
+        >
+          <Dialog.Title className={css(publishStyles.title)}>Share links stay open</Dialog.Title>
+          <Dialog.Description className={css(publishStyles.description)}>
+            {privateConfirmBody(liveShareLinkCount)}
+          </Dialog.Description>
+
+          <div className={publishStyles.actions}>
+            <button
+              className={publishStyles.confirm}
+              type="button"
+              data-testid="privacy-private-confirm"
+              onClick={onConfirm}
+            >
+              Set to Only me
+            </button>
+            <Dialog.Close ref={cancelRef} className={css(publishStyles.cancel)}>
+              Keep it as it is
+            </Dialog.Close>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 export function PrivacySwitch({
   artifactId,
   initialVisibility,
+  liveShareLinkCount,
 }: {
   readonly artifactId: string
   readonly initialVisibility: Visibility
+  readonly liveShareLinkCount: number
 }) {
   const [visibility, setVisibility] = useState<Visibility>(initialVisibility)
+  const [liveShareLinks, setLiveShareLinks] = useState(liveShareLinkCount)
   const [isSaving, setIsSaving] = useState(false)
   const [isConfirmingPublic, setIsConfirmingPublic] = useState(false)
+  const [isConfirmingPrivate, setIsConfirmingPrivate] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const radioRefs = useRef<(HTMLButtonElement | null)[]>([])
   const publicOptionRef = useRef<HTMLButtonElement | null>(null)
+  const privateOptionRef = useRef<HTMLButtonElement | null>(null)
+  // The count check is a round trip; a second press before it lands would confirm twice.
+  const isCountingShareLinks = useRef(false)
 
   async function choose(next: Visibility): Promise<void> {
     if (next === visibility || isSaving) return
@@ -156,10 +219,46 @@ export function PrivacySwitch({
     OPTIONS.findIndex((option) => option.value === visibility),
   )
 
+  /**
+   * The Share dialog sits on this same page and can revoke a link without a reload, so the number
+   * the server rendered may already be wrong. A failed read falls back to it rather than to zero —
+   * a warning that was true at page load beats silently downgrading as if there were no links.
+   */
+  async function readLiveShareLinkCount(): Promise<number> {
+    try {
+      const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
+      if (!response.ok) return liveShareLinks
+      return ((await response.json()) as ShareListResponse).data.liveCount
+    } catch {
+      return liveShareLinks
+    }
+  }
+
+  async function choosePrivateOrConfirm(): Promise<void> {
+    if (isCountingShareLinks.current) return
+    isCountingShareLinks.current = true
+
+    try {
+      const liveCount = await readLiveShareLinkCount()
+      setLiveShareLinks(liveCount)
+      if (liveCount < 1) {
+        await choose('private')
+        return
+      }
+      setIsConfirmingPrivate(true)
+    } finally {
+      isCountingShareLinks.current = false
+    }
+  }
+
   function selectOption(next: Visibility): void {
     if (next === visibility || isSaving) return
     if (next === 'public') {
       setIsConfirmingPublic(true)
+      return
+    }
+    if (next === 'private') {
+      void choosePrivateOrConfirm()
       return
     }
     void choose(next)
@@ -206,6 +305,9 @@ export function PrivacySwitch({
               if (option.value === 'public') {
                 publicOptionRef.current = node
               }
+              if (option.value === 'private') {
+                privateOptionRef.current = node
+              }
             }}
             className={styles.option}
             type="button"
@@ -231,7 +333,7 @@ export function PrivacySwitch({
           id={`privacy-hint-${option.value}`}
           hidden={option.value !== visibility}
         >
-          {option.hint}
+          {hintFor(option.value, liveShareLinks)}
         </p>
       ))}
 
@@ -248,6 +350,17 @@ export function PrivacySwitch({
         onConfirm={() => {
           setIsConfirmingPublic(false)
           void choose('public')
+        }}
+      />
+
+      <PrivateConfirmDialog
+        isOpen={isConfirmingPrivate}
+        liveShareLinkCount={liveShareLinks}
+        privateOptionRef={privateOptionRef}
+        onOpenChange={(isOpen) => setIsConfirmingPrivate(isOpen)}
+        onConfirm={() => {
+          setIsConfirmingPrivate(false)
+          void choose('private')
         }}
       />
     </div>

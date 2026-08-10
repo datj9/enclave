@@ -68,11 +68,12 @@ export default async function ArtifactViewerPage({
     viewerRef,
   })
 
-  // Only the owner may create or revoke a share, so a reader never pays for these two queries.
+  // Only the owner may create or revoke a share, and only the owner sees the privacy switch the
+  // live count feeds, so a reader never pays for these two queries.
   const shareState = authorized.isOwner
     ? {
         versions: await listShareableVersions(id, viewerRef),
-        shares: (await listShareLinks(id, viewerRef)).items,
+        shareLinks: await listShareLinks(id, viewerRef),
       }
     : null
 
@@ -97,16 +98,20 @@ export default async function ArtifactViewerPage({
         <p className={styles.origin}>{new URL(artifactViewUrl(id)).host}</p>
         {shareState !== null && (
           <div className={styles.ownerControls}>
-            <PrivacySwitch artifactId={id} initialVisibility={authorized.visibility} />
+            <PrivacySwitch
+              artifactId={id}
+              initialVisibility={authorized.visibility}
+              liveShareLinkCount={shareState.shareLinks.liveCount}
+            />
             <ShareDialog
               artifactId={id}
               versions={shareState.versions}
-              initialShares={shareState.shares}
+              initialShares={shareState.shareLinks.items}
             />
             <DeleteDialog
               artifactId={id}
               activeShareCount={
-                shareState.shares.filter((share) => share.revokedAt === null).length
+                shareState.shareLinks.items.filter((share) => share.revokedAt === null).length
               }
               retentionDays={env.TRASH_RETENTION_DAYS}
             />
