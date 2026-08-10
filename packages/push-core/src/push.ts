@@ -32,6 +32,37 @@ function unwrapCreateResponse(body: unknown): CreateArtifactResponse {
   return { id, versionId, viewUrl }
 }
 
+interface VersionedResponse {
+  readonly versionId: string
+  readonly versionNo: number
+  readonly viewUrl: string
+}
+
+/** The version endpoint answers with `{versionId, versionNo, viewUrl}` — no artifact id, since
+ *  the path already named the artifact. Same hedge: anything off that shape is a transport fault. */
+function unwrapVersionResponse(body: unknown): VersionedResponse {
+  if (typeof body !== 'object' || body === null || !('data' in body)) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response is missing a data envelope', {})
+  }
+  const data = (body as { data: unknown }).data
+  if (typeof data !== 'object' || data === null) {
+    throw new PushError('UNEXPECTED_RESPONSE', 'Response data is not an object', {})
+  }
+  const { versionId, versionNo, viewUrl } = data as Record<string, unknown>
+  if (
+    typeof versionId !== 'string' ||
+    typeof versionNo !== 'number' ||
+    typeof viewUrl !== 'string'
+  ) {
+    throw new PushError(
+      'UNEXPECTED_RESPONSE',
+      'Response is missing versionId, versionNo or viewUrl',
+      {},
+    )
+  }
+  return { versionId, versionNo, viewUrl }
+}
+
 /** Send utf-8 when the bytes round-trip losslessly; the server rejects both fields at once. */
 function toWireFile(file: BundleFile): WireFile {
   const text = file.content.toString('utf8')
@@ -69,6 +100,7 @@ async function errorFrom(response: Response): Promise<PushError> {
 
   if (response.status === 401) return new PushError('UNAUTHORIZED', message, details)
   if (response.status === 404) return new PushError('NOT_FOUND', message, details)
+  if (response.status === 409) return new PushError('VERSION_CONFLICT', message, details)
   return new PushError(code as PushError['code'], message, details)
 }
 
@@ -82,16 +114,31 @@ export async function push(options: PushOptions): Promise<PushResult> {
     totalBytes: files.reduce((total, file) => total + file.content.length, 0),
   })
 
-  const body = JSON.stringify({
-    title: options.title ?? 'Untitled artifact',
-    visibility: options.visibility ?? 'private',
-    files: files.map(toWireFile),
-  })
+  const wireFiles = files.map(toWireFile)
+  const isRepublish = options.artifactId !== undefined
+
+  // `title` and `visibility` belong to the artifact, not the version — the append endpoint rejects
+  // them as unknown fields, so a republish sends neither.
+  const body = isRepublish
+    ? JSON.stringify({
+        files: wireFiles,
+        ...(options.expectedVersionNo === undefined
+          ? {}
+          : { expectedVersionNo: options.expectedVersionNo }),
+      })
+    : JSON.stringify({
+        title: options.title ?? 'Untitled artifact',
+        visibility: options.visibility ?? 'private',
+        files: wireFiles,
+      })
 
   const url = baseUrlFor(options.host, options.isInsecureAllowed ?? false)
+  const path = isRepublish
+    ? `/api/v1/artifacts/${String(options.artifactId)}/versions`
+    : '/api/v1/artifacts'
   let response: Response
   try {
-    response = await fetch(`${url}/api/v1/artifacts`, {
+    response = await fetch(`${url}${path}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${options.token}`,
@@ -117,13 +164,28 @@ export async function push(options: PushOptions): Promise<PushResult> {
 
   if (!response.ok) throw await errorFrom(response)
 
-  const created = unwrapCreateResponse(await response.json())
+  const uploaded = files.map((file) => file.path)
+  const payload: unknown = await response.json()
+
+  if (options.artifactId !== undefined) {
+    const appended = unwrapVersionResponse(payload)
+    return {
+      artifactId: options.artifactId,
+      versionId: appended.versionId,
+      versionNo: appended.versionNo,
+      viewUrl: appended.viewUrl,
+      uploaded,
+      skipped,
+    }
+  }
+
+  const created = unwrapCreateResponse(payload)
   return {
     artifactId: created.id,
     versionId: created.versionId,
     versionNo: 1,
     viewUrl: created.viewUrl,
-    uploaded: files.map((file) => file.path),
+    uploaded,
     skipped,
   }
 }

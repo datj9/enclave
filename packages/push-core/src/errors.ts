@@ -8,6 +8,7 @@ export type PushErrorCode =
   | 'STORAGE_UNAVAILABLE'
   | 'NETWORK_ERROR'
   | 'NETWORK_TIMEOUT'
+  | 'VERSION_CONFLICT'
   | 'UNEXPECTED_RESPONSE'
 
 export class PushError extends Error {

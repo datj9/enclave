@@ -38,8 +38,8 @@ what you want in CI. `--token <token>` skips the interactive prompt entirely —
 for CI, or for a terminal that cannot mask input correctly.
 
 `push` writes `.enclave.json` next to the directory it published, recording which artifact the
-directory maps to. **Commit that file** — it holds no secret, and committing it is what lets a
-second machine or a CI job target the same artifact.
+directory maps to and which version it last pushed. **Commit that file** — it holds no secret, and
+committing it is what lets a second machine or a CI job target the same artifact.
 
 `--host` accepts a bare authority (`enclave.example.com`, `127.0.0.1:3000`, `[::1]:3000`) or a
 full `http`/`https` origin, with or without a trailing slash. Only `scheme://host[:port]` is
@@ -51,6 +51,65 @@ and `[::1]`, and `https` everywhere else.
 An explicit `http://` origin that isn't loopback is refused, since it would send the bearer token
 in cleartext. Pass `--insecure` to opt in anyway.
 
+## Republishing
+
+A second `push` against a directory that already has `.enclave.json` appends a **new version** to
+the same artifact. The id and the URL do not change, so a link you already shared keeps working and
+starts serving the new content:
+
+```
+$ enclave push ./dist
+✓ 2 files, 40 KB
+✓ updated 3f2a91c4  v2
+→ https://enclave.example.com/a/3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c
+  share it:  enclave share create 3f2a91c4 --expires 7d
+```
+
+`--new` opts out and publishes the directory as a separate artifact instead.
+
+If the server holds a version newer than the one `.enclave.json` records — someone pushed from
+another machine — the push is refused before anything uploads:
+
+```
+$ enclave push ./dist
+✗ server is at v5, you last pushed v2
+  refusing to overwrite a newer version
+  re-run with --force to publish anyway
+```
+
+`--force` drops that guard and publishes regardless, taking the next version number. Under `--json`
+the same refusal is `{"error":{"code":"VERSION_CONFLICT","details":{"expectedVersionNo":2,"currentVersionNo":5}}}`
+on stderr, with stdout left empty.
+
+`title` and `visibility` belong to the artifact, not to a version — a republish leaves both alone.
+Change them with `enclave rename` and `enclave privacy`.
+
+A share link pinned to a version keeps serving that version after a newer one is published.
+
+### Publishing from CI, where there is no state file
+
+`.enclave.json` lives *inside* the directory you push, which is usually a build output — gitignored,
+and wiped by the build step that recreates it. A fresh checkout therefore has no state file, and a
+plain `push` would create a **duplicate artifact at a new address** rather than a new version.
+
+`--artifact` names the target directly, so nothing has to survive the build:
+
+```bash
+npm run build
+enclave push ./dist --artifact 3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c
+```
+
+With no state file there is no local version to compare against, so that push appends
+unconditionally — the guard has nothing to guard. When a state file *is* present and names the same
+artifact, the guard applies as usual and `--force` still overrides it. Naming a **different**
+artifact than the state file is refused rather than guessed.
+
+A full uuid is used as-is and costs no extra request, so this path needs only `artifacts:write`.
+A prefix of eight characters or more is matched against your own artifacts, which additionally needs
+`artifacts:read`.
+
+`--artifact` and `--new` contradict each other and are rejected as a pair.
+
 ## Commands
 
 ```
@@ -59,7 +118,7 @@ enclave login    [--host <host>] [--token <token>]
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                       [--new] [--dry-run] [--json]
+                       [--artifact <id>] [--new] [--force] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title> [--json]

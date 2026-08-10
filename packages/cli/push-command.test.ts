@@ -8,9 +8,12 @@ import type * as PushCoreModule from '../push-core/src/index.ts'
 
 import { push, PushError } from '../push-core/src/index.ts'
 import type { PushResult, UploadPlan } from '../push-core/src/index.ts'
+import { apiClient } from './src/api-client.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
 import { USER_AGENT } from './src/version.ts'
+
+vi.mock('./src/api-client.ts', () => ({ apiClient: vi.fn() }))
 
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
@@ -93,21 +96,241 @@ describe('push command', () => {
     rmSync(configHome, { recursive: true, force: true })
   })
 
-  it('refuses a second push when state exists', async () => {
-    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
+  it('a second push appends a version to the artifact the state file names', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+    vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 3 })
 
     const exitCode = await runPush({
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactId: SUCCESS_RESULT.artifactId,
+        expectedVersionNo: 2,
+      }),
+    )
+    expect(stdout).toContain('✓ updated 3f2a91c4  v3')
+  })
+
+  it('records the version the server returned, not a hard-coded 1', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+    vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 3 })
+
+    await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    const written = JSON.parse(
+      readFileSync(join(projectDirectory, '.enclave.json'), 'utf8'),
+    ) as ProjectState
+    expect(written.lastPushedVersionNo).toBe(3)
+  })
+
+  it('--force drops the expected-version guard', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+
+    await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: true,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    const [options] = vi.mocked(push).mock.calls[0] ?? []
+    expect(options?.artifactId).toBe(SUCCESS_RESULT.artifactId)
+    expect(options).not.toHaveProperty('expectedVersionNo')
+  })
+
+  it('names both versions and points at --force when the server is ahead', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+    vi.mocked(push).mockRejectedValue(
+      new PushError('VERSION_CONFLICT', 'The artifact has a newer version than expected', {
+        expectedVersionNo: 2,
+        currentVersionNo: 5,
+      }),
+    )
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
 
     expect(exitCode).toBe(1)
-    expect(stderr).toContain('S15')
-    expect(stderr).toContain('.enclave.json exists (artifact 3f2a91c4)')
-    expect(push).not.toHaveBeenCalled()
+    expect(stderr).toContain('✗ server is at v5, you last pushed v2')
+    expect(stderr).toContain('refusing to overwrite a newer version')
+    expect(stderr).toContain('re-run with --force to publish anyway')
+    expect(stdout).toBe('')
+  })
+
+  it('offers --new when the artifact the state file tracks is gone', async () => {
+    writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+    vi.mocked(push).mockRejectedValue(new PushError('NOT_FOUND', 'Artifact not found', {}))
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stderr).toContain('use --new to publish this directory as a new artifact')
+  })
+
+  describe('--artifact', () => {
+    const OTHER_ID = '7d5e3b21-2222-4333-8444-555555555555'
+
+    /** The listing `resolveArtifactId` walks to turn a prefix into a full id. */
+    function stubListing(items: readonly { id: string; title: string }[]): void {
+      vi.mocked(apiClient).mockReturnValue({
+        get: vi.fn().mockResolvedValue({ items, nextCursor: null }),
+        post: vi.fn(),
+        patch: vi.fn(),
+        remove: vi.fn(),
+      })
+    }
+
+    it('appends to the named artifact when the directory has no state file', async () => {
+      vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 4 })
+
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: SUCCESS_RESULT.artifactId,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(0)
+      const [options] = vi.mocked(push).mock.calls[0] ?? []
+      expect(options?.artifactId).toBe(SUCCESS_RESULT.artifactId)
+      // Nothing local to compare against, so there is no version to guard.
+      expect(options).not.toHaveProperty('expectedVersionNo')
+      expect(stdout).toContain('✓ updated 3f2a91c4  v4')
+    })
+
+    it('keeps the version guard when it agrees with the state file', async () => {
+      writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+
+      await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: SUCCESS_RESULT.artifactId,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({ expectedVersionNo: 2 }))
+    })
+
+    it('refuses when it disagrees with the state file', async () => {
+      writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: OTHER_ID,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain('7d5e3b21')
+      expect(stderr).toContain('3f2a91c4')
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it('rejects the pair --artifact --new as contradictory', async () => {
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: SUCCESS_RESULT.artifactId,
+        isNew: true,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(2)
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it('resolves a prefix against the caller\'s own artifacts', async () => {
+      stubListing([{ id: SUCCESS_RESULT.artifactId, title: 'Kanban' }])
+
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: '3f2a91c4',
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(0)
+      expect(push).toHaveBeenCalledWith(
+        expect.objectContaining({ artifactId: SUCCESS_RESULT.artifactId }),
+      )
+    })
+
+    it('exits 2 on a prefix too short to be unambiguous', async () => {
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: '3f2a',
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(2)
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it('a full uuid costs no listing request, so artifacts:read is not needed', async () => {
+      const get = vi.fn()
+      vi.mocked(apiClient).mockReturnValue({ get, post: vi.fn(), patch: vi.fn(), remove: vi.fn() })
+
+      await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        artifactRef: SUCCESS_RESULT.artifactId,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(get).not.toHaveBeenCalled()
+    })
   })
 
   it('--new ignores an existing state file', async () => {
@@ -117,6 +340,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: true,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -130,6 +354,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -145,6 +370,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -158,6 +384,7 @@ describe('push command', () => {
     const exitCode = await runPush({
       directory: projectDirectory,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -171,6 +398,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: true,
       isJson: false,
     })
@@ -189,6 +417,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: true,
       isJson: false,
     })
@@ -209,6 +438,7 @@ describe('push command', () => {
       directory: emptyDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: true,
       isJson: false,
     })
@@ -226,6 +456,7 @@ describe('push command', () => {
       directory: emptyDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: true,
       isJson: true,
     })
@@ -246,6 +477,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: true,
       isJson: true,
     })
@@ -262,6 +494,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -284,6 +517,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: true,
     })
@@ -304,6 +538,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -324,6 +559,7 @@ describe('push command', () => {
     const exitCode = await runPush({
       directory: projectDirectory,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: true,
     })
@@ -349,6 +585,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: true,
     })
@@ -367,6 +604,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: 'http://enclave.example.com',
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
       isInsecureAllowed: true,
@@ -388,6 +626,7 @@ describe('push command', () => {
       directory: siblingDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -407,6 +646,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: true,
     })
@@ -428,6 +668,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: true,
     })
@@ -450,6 +691,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: false,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -473,6 +715,7 @@ describe('push command', () => {
       directory: projectDirectory,
       host: HOST,
       isNew: true,
+      isForced: false,
       isDryRun: false,
       isJson: false,
     })
@@ -487,6 +730,7 @@ describe('push command', () => {
         directory: join(workspace, 'does-not-exist'),
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson: true,
       })
@@ -503,6 +747,7 @@ describe('push command', () => {
         directory: join(workspace, 'does-not-exist'),
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: true,
         isJson: true,
       })
@@ -521,6 +766,7 @@ describe('push command', () => {
         directory: file,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: true,
         isJson: true,
       })
@@ -538,6 +784,7 @@ describe('push command', () => {
         directory: projectDirectory,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson: false,
         ...(visibility === undefined ? {} : { visibility }),
@@ -578,6 +825,7 @@ describe('push command', () => {
         directory: projectDirectory,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson: true,
       })
@@ -600,6 +848,7 @@ describe('push command', () => {
         directory: projectDirectory,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson,
       })
@@ -631,6 +880,7 @@ describe('push command', () => {
         directory: projectDirectory,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson: false,
       })
@@ -644,6 +894,7 @@ describe('push command', () => {
         directory: projectDirectory,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: false,
         isJson: true,
       })
@@ -665,6 +916,7 @@ describe('push command', () => {
         directory: oversized,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: true,
         isJson: false,
       })
@@ -684,6 +936,7 @@ describe('push command', () => {
         directory: noIndex,
         host: HOST,
         isNew: false,
+        isForced: false,
         isDryRun: true,
         isJson: false,
       })

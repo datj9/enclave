@@ -222,7 +222,8 @@ describe('per-command --help', () => {
     expect(topic).toContain('index.html')
     expect(topic).toContain('--new')
     expect(topic).toContain('2 MB')
-    expect(topic).toContain('Republishing is not implemented yet')
+    expect(topic).toContain('--artifact')
+    expect(topic).toContain('--force publishes anyway')
   })
 
   it('gives rm its own topic rather than push s', async () => {

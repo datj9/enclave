@@ -58,6 +58,58 @@ function decodeContent(file: z.infer<typeof fileInputSchema>): ContentOutcome {
   return { ok: true, content: decoded }
 }
 
+const appendVersionBodySchema = z
+  .object({
+    files: z.array(fileInputSchema).min(1),
+    expectedVersionNo: z.number().int().min(1).optional(),
+  })
+  // Strict: artifact properties (`title`, `visibility`) move through PATCH, never a push.
+  // Supplying either must fail validation and name the offending key in `details.fields`.
+  .strict()
+
+export interface AppendVersionRequest {
+  readonly files: readonly BundleFile[]
+  readonly expectedVersionNo?: number
+}
+
+export type AppendVersionParse =
+  | { readonly ok: true; readonly value: AppendVersionRequest }
+  | { readonly ok: false; readonly details: Record<string, unknown> }
+
+/** A strict-mode rejection carries its offending keys in `issue.keys`, not in `issue.path`, which
+ *  is empty — so naming them takes reading that field rather than the path. */
+function fieldNamesOf(issue: z.core.$ZodIssue): readonly string[] {
+  if (issue.code === 'unrecognized_keys') return issue.keys
+  return [issue.path.join('.') || '(root)']
+}
+
+export function parseAppendVersionBody(body: unknown): AppendVersionParse {
+  const parsed = appendVersionBodySchema.safeParse(body)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      details: { fields: parsed.error.issues.flatMap(fieldNamesOf) },
+    }
+  }
+
+  const files: BundleFile[] = []
+  for (const file of parsed.data.files) {
+    const outcome = decodeContent(file)
+    if (!outcome.ok) return { ok: false, details: { path: file.path, reason: outcome.reason } }
+    files.push({ path: file.path, content: outcome.content })
+  }
+
+  return {
+    ok: true,
+    value: {
+      files,
+      ...(parsed.data.expectedVersionNo === undefined
+        ? {}
+        : { expectedVersionNo: parsed.data.expectedVersionNo }),
+    },
+  }
+}
+
 export function parseCreateArtifactBody(body: unknown): CreateArtifactParse {
   const parsed = createArtifactBodySchema.safeParse(body)
   if (!parsed.success) {
