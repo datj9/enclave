@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
   formatInstantLocal,
@@ -19,6 +19,7 @@ import styles from '../admin.module.css'
  */
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
+const CREATED_ANNOUNCEMENT = 'Invite link created. Copy it now — this is the only time it is shown.'
 
 interface CreatedInviteView {
   readonly url: string
@@ -59,6 +60,7 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
+    if (isBusy) return
     const form = new FormData(event.currentTarget)
     setIsBusy(true)
     setErrorMessage(null)
@@ -85,6 +87,7 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
   }
 
   async function handleRevoke(inviteId: string): Promise<void> {
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
     try {
@@ -101,6 +104,11 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
   return (
     <>
+      {/* Mounted empty and filled on create: a region that arrives with its text is not read. */}
+      <p className="sr-only" role="status">
+        {created === null ? '' : CREATED_ANNOUNCEMENT}
+      </p>
+
       {created !== null && (
         <RevealedInvite
           created={created}
@@ -144,7 +152,7 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
           />
         </div>
 
-        <button className="button-primary" type="submit" disabled={isBusy}>
+        <button className="button-primary" type="submit" aria-disabled={isBusy}>
           Create invite
         </button>
       </form>
@@ -168,8 +176,14 @@ function RevealedInvite({
   readonly isMountedForLocalTime: boolean
   readonly onDismiss: () => void
 }) {
+  const panelRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [created])
+
   return (
-    <section className={styles.revealed} aria-live="polite">
+    <section className={styles.revealed} ref={panelRef} tabIndex={-1}>
       <h2 className={styles.revealedHeading}>
         Copy this link now{created.email === null ? '' : ` for ${created.email}`}
       </h2>
@@ -231,7 +245,7 @@ function InviteTable({
                   <button
                     className={`button-secondary ${styles.compactButton}`}
                     type="button"
-                    disabled={isBusy}
+                    aria-disabled={isBusy}
                     onClick={() => onRevoke(invite.id)}
                   >
                     Revoke

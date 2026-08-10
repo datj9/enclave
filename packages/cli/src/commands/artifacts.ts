@@ -4,6 +4,7 @@ import { displayTitle } from '../display.ts'
 import {
   IdResolutionError,
   InvalidIdError,
+  MIN_PREFIX_LENGTH,
   resolveArtifactId,
   shortId,
   type ArtifactSummary,
@@ -14,8 +15,11 @@ const VISIBILITIES = ['private', 'org', 'public'] as const
 
 export type Visibility = (typeof VISIBILITIES)[number]
 
-/** Wide enough for the longest level name, so the list column stays aligned. */
-const VISIBILITY_COLUMN_WIDTH = 7
+const TITLE_HEADER = 'TITLE'
+/** Caps the row at 8 + 2 + 40 + 2 + 10 columns, so `list` fits an 80-column terminal. */
+const MAX_TITLE_WIDTH = 40
+/** ASCII: nothing in this package establishes that the terminal can render a wider glyph. */
+const ELLIPSIS = '...'
 const MAX_PAGES = 100
 
 export interface ArtifactView {
@@ -105,11 +109,21 @@ function requireClient(host: string, isInsecureAllowed = false): ApiClient {
   return apiClient(host, token, isInsecureAllowed)
 }
 
+/** `main` hands over a normalised `https://host`; a caller that resolved its own passes a bare
+ *  name. Both spellings have to reach a URL. */
+function originOf(host: string): string {
+  return host.includes('://') ? host : `https://${host}`
+}
+
+function artifactPageUrl(host: string, id: string): string {
+  return `${originOf(host)}/a/${id}`
+}
+
 /**
  * A 404 is what the server returns for another user's artifact, deliberately. Printing "forbidden"
  * would confirm it exists, so every 404 reads the same as a typo.
  */
-function reportFailure(error: unknown, given?: string): number {
+function reportFailure(error: unknown, host: string, given?: string): number {
   if (error instanceof ApiError && error.status === 404) {
     fail(given === undefined ? '✗ not found' : `✗ not found: ${given}`)
     return EXIT_FAILED
@@ -119,6 +133,23 @@ function reportFailure(error: unknown, given?: string): number {
   if (error instanceof InvalidIdError) {
     fail(`✗ ${error.message}`)
     return EXIT_USAGE
+  }
+  if (error instanceof ApiError && error.status === 401) {
+    fail('✗ the API token was rejected — it may be expired, revoked, or minted for another host')
+    fail(`  log in again: enclave login --host ${host}`)
+    return EXIT_FAILED
+  }
+  // Kept off the 401 branch on purpose: a token that authenticated but lacks a scope is refused
+  // with 403, and logging in again with that same token changes nothing.
+  if (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.message.toLowerCase().includes('scope')
+  ) {
+    fail(`✗ ${error.message}`)
+    fail(`  mint a token with that scope at ${originOf(host)}/settings/tokens,`)
+    fail(`  then: enclave login --host ${host}`)
+    return EXIT_FAILED
   }
   if (
     error instanceof ApiError ||
@@ -181,29 +212,48 @@ async function readArtifacts(client: ApiClient, options: ListOptions): Promise<A
   }
 }
 
+function fitTitle(title: string): string {
+  if (title.length <= MAX_TITLE_WIDTH) return title
+  return `${title.slice(0, MAX_TITLE_WIDTH - ELLIPSIS.length)}${ELLIPSIS}`
+}
+
+/**
+ * Four unlabelled columns wrapping mid-URL is what this replaces. `viewUrl` is derivable from the
+ * id and 60 columns wide, so human mode drops it — `show` prints it, `--json` still carries it.
+ * Visibility goes last unpadded: padding the final column emits trailing whitespace on every row.
+ */
 function printArtifacts(page: ArtifactPage): void {
   if (page.items.length === 0) {
     write('no artifacts')
     return
   }
 
-  const titles = page.items.map((item) => displayTitle(item.title))
-  const titleWidth = Math.max(...titles.map((title) => title.length))
+  const titles = page.items.map((item) => fitTitle(displayTitle(item.title)))
+  const titleWidth = titles.reduce(
+    (widest, title) => Math.max(widest, title.length),
+    TITLE_HEADER.length,
+  )
+
+  write(`${'ID'.padEnd(MIN_PREFIX_LENGTH)}  ${TITLE_HEADER.padEnd(titleWidth)}  VISIBILITY`)
   page.items.forEach((item, index) => {
     const title = (titles[index] ?? '').padEnd(titleWidth)
-    const visibility = item.visibility.padEnd(VISIBILITY_COLUMN_WIDTH)
-    write(`${shortId(item.id)}  ${title}  ${visibility}  ${item.viewUrl}`)
+    write(`${shortId(item.id)}  ${title}  ${item.visibility}`)
   })
 
   if (page.nextCursor !== null) write(`\nmore: enclave list --cursor ${page.nextCursor}`)
 }
 
-function printArtifact(artifact: ArtifactView): void {
+/**
+ * `url` is the `/a/{id}` page. The artifact origin 404s without the grant cookie `/enter` mints,
+ * so it is labelled as provenance rather than printed as somewhere to send anyone.
+ */
+function printArtifact(host: string, artifact: ArtifactView): void {
   write(`id          ${artifact.id}`)
   write(`title       ${displayTitle(artifact.title)}`)
   write(`visibility  ${artifact.visibility}`)
   write(`created     ${artifact.createdAt}`)
-  write(`url         ${artifact.viewUrl}`)
+  write(`url         ${artifactPageUrl(host, artifact.id)}`)
+  write(`served from ${artifact.viewUrl}`)
 }
 
 export async function runList(options: ListOptions): Promise<number> {
@@ -215,7 +265,7 @@ export async function runList(options: ListOptions): Promise<number> {
     else printArtifacts(page)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error)
+    return reportFailure(error, options.host)
   }
 }
 
@@ -226,10 +276,10 @@ export async function runShow(options: ShowOptions): Promise<number> {
     const artifact = await client.get<ArtifactView>(`/api/v1/artifacts/${id}`)
 
     if (options.isJson) writeJson(artifact)
-    else printArtifact(artifact)
+    else printArtifact(options.host, artifact)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error, options.id)
+    return reportFailure(error, options.host, options.id)
   }
 }
 
@@ -251,7 +301,7 @@ export async function runRename(options: RenameOptions): Promise<number> {
     else write(`✓ ${shortId(artifact.id)} renamed to "${displayTitle(artifact.title)}"`)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error, options.id)
+    return reportFailure(error, options.host, options.id)
   }
 }
 
@@ -276,7 +326,7 @@ export async function runPrivacy(options: PrivacyOptions): Promise<number> {
     else printPrivacyChange(before, after)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error, options.id)
+    return reportFailure(error, options.host, options.id)
   }
 }
 
@@ -308,7 +358,7 @@ export async function runRemove(options: RemoveOptions): Promise<number> {
     write(`  restore with: enclave restore ${id}`)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error, options.id)
+    return reportFailure(error, options.host, options.id)
   }
 }
 
@@ -326,6 +376,6 @@ export async function runRestore(options: RestoreOptions): Promise<number> {
     else write(`✓ restored ${shortId(artifact.id)}  ${displayTitle(artifact.title)}`)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error, options.id)
+    return reportFailure(error, options.host, options.id)
   }
 }

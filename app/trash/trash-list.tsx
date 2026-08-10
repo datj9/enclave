@@ -27,6 +27,7 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
   const isMountedForLocalTime = useIsMountedForLocalTime()
 
   async function restore(artifactId: string): Promise<void> {
+    if (busyId !== null) return
     setBusyId(artifactId)
     setErrorMessage(null)
 
@@ -79,7 +80,7 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
             <button
               className="button-secondary"
               type="button"
-              disabled={busyId !== null}
+              aria-disabled={busyId !== null}
               data-testid="trash-restore"
               onClick={() => void restore(item.id)}
             >

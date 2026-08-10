@@ -12,6 +12,9 @@ import { USER_AGENT } from '../version.ts'
  */
 const REQUIRED_SCOPES = ['artifacts:read', 'artifacts:write', 'shares:write'] as const
 
+/** Matches `api-client.ts`: the probe carries metadata only, and Node's `fetch` waits forever. */
+const PROBE_TIMEOUT_MS = 30_000
+
 const ESCAPE = '\x1b'
 
 /**
@@ -83,6 +86,7 @@ export async function runLogin(
     response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
       headers: { authorization: `Bearer ${resolvedToken}`, 'user-agent': USER_AGENT },
       redirect: 'manual',
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     })
   } catch {
     process.stderr.write(`could not reach ${host}\n`)

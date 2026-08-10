@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PushCoreModule from '../push-core/src/index.ts'
 
-import { push } from '../push-core/src/index.ts'
-import type { PushResult } from '../push-core/src/index.ts'
+import { push, PushError } from '../push-core/src/index.ts'
+import type { PushResult, UploadPlan } from '../push-core/src/index.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
 import { USER_AGENT } from './src/version.ts'
@@ -178,7 +178,26 @@ describe('push command', () => {
     expect(exitCode).toBe(0)
     expect(push).not.toHaveBeenCalled()
     expect(stdout).toContain('skipped 1 files:')
-    expect(stdout).toContain('app.js.map        unsupported (.map)')
+    // The invariant, not a fixed column: what matters is that a gap separates path from reason.
+    expect(stdout).toMatch(/^ {2}app\.js\.map {2,}unsupported \(\.map\)$/m)
+  })
+
+  it('keeps a path longer than the old fixed column off its own reason', async () => {
+    writeFileSync(join(projectDirectory, 'application-bundle.js.map'), '{}')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stdout).not.toContain('.mapunsupported')
+    expect(stdout).toMatch(/^ {2}application-bundle\.js\.map {2}unsupported \(\.map\)$/m)
+    // The narrower path is padded out to the widest one, so the reasons still line up.
+    expect(stdout).toMatch(/^ {2}app\.js\.map {17}unsupported \(\.map\)$/m)
   })
 
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
@@ -509,6 +528,129 @@ describe('push command', () => {
       expect(exitCode).toBe(2)
       expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
         error: { code: 'NOT_A_DIRECTORY' },
+      })
+    })
+  })
+
+  describe('the success block hands over an address that works', () => {
+    async function pushSuccessfully(visibility?: 'private' | 'org' | 'public'): Promise<number> {
+      return runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson: false,
+        ...(visibility === undefined ? {} : { visibility }),
+      })
+    }
+
+    it('prints the /a/<id> page, not the artifact origin that 404s without a grant', async () => {
+      expect(await pushSuccessfully()).toBe(0)
+
+      expect(stdout).toContain(`→ https://${HOST}/a/${SUCCESS_RESULT.artifactId}`)
+      expect(stdout).not.toContain('.artifacts.')
+    })
+
+    it('names the next action instead of ending on a bare URL', async () => {
+      expect(await pushSuccessfully()).toBe(0)
+
+      expect(stdout).toContain('private — only you can open that link')
+      expect(stdout).toContain('enclave share create 3f2a91c4 --expires 7d')
+      expect(stdout).toContain('enclave privacy 3f2a91c4 org')
+    })
+
+    it('drops the privacy line when --visibility said what to do', async () => {
+      expect(await pushSuccessfully('org')).toBe(0)
+
+      expect(stdout).not.toContain('only you can open that link')
+      expect(stdout).toContain('enclave share create 3f2a91c4 --expires 7d')
+    })
+
+    it('never proposes a downgrade to org after an already-open push', async () => {
+      expect(await pushSuccessfully('public')).toBe(0)
+
+      expect(stdout).not.toContain('enclave privacy 3f2a91c4 org')
+      expect(stdout).toContain('enclave share create 3f2a91c4 --expires 7d')
+    })
+
+    it('leaves viewUrl in the --json result, which is a pinned contract', async () => {
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson: true,
+      })
+
+      expect(exitCode).toBe(0)
+      expect((JSON.parse(stdout) as PushResult).viewUrl).toBe(SUCCESS_RESULT.viewUrl)
+    })
+  })
+
+  describe('the upload says it is happening', () => {
+    function announcementOf(plan: UploadPlan): string {
+      const onUploadStart = vi.mocked(push).mock.calls[0]?.[0]?.onUploadStart
+      if (onUploadStart === undefined) throw new Error('no onUploadStart was passed')
+      onUploadStart(plan)
+      return stderr
+    }
+
+    async function pushOnce(isJson: boolean): Promise<number> {
+      return runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson,
+      })
+    }
+
+    it('writes the file count, size and host to stderr, never to stdout', async () => {
+      expect(await pushOnce(false)).toBe(0)
+
+      const announcement = announcementOf({ fileCount: 12, totalBytes: 348_160 })
+      expect(announcement).toContain(`uploading 12 files (340 KB) to https://${HOST}`)
+      expect(stdout).not.toContain('uploading')
+    })
+
+    it('stays quiet under --json, which promises stdout is the result and nothing else', async () => {
+      expect(await pushOnce(true)).toBe(0)
+
+      expect(vi.mocked(push).mock.calls[0]?.[0]?.onUploadStart).toBeUndefined()
+      expect(JSON.parse(stdout) as PushResult).toEqual(SUCCESS_RESULT)
+    })
+  })
+
+  describe('a token the server rejects mid-push', () => {
+    beforeEach(() => {
+      vi.mocked(push).mockRejectedValue(new PushError('UNAUTHORIZED', 'The API token is not valid'))
+    })
+
+    it('names the command that fixes it, as the no-token path already does', async () => {
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(1)
+      expect(stderr).toContain(`enclave login --host https://${HOST}`)
+    })
+
+    it('adds nothing to the --json envelope, which still has to parse', async () => {
+      const exitCode = await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson: true,
+      })
+
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+        error: { code: 'UNAUTHORIZED' },
       })
     })
   })

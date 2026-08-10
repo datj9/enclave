@@ -199,3 +199,9 @@
   gap: var(--space-2xs);
   margin-top: var(--space-sm);
 }
+
+.pagerNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}

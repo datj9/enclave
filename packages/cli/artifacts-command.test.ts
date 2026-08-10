@@ -73,6 +73,8 @@ const HOST = 'enclave.example.com'
 const FULL_ID = '3f2a91c4-7d1e-4a5b-9c3d-0e1f2a3b4c5d'
 const OTHER_ID = '3f2a91c4-0000-4a5b-9c3d-9f8e7d6c5b4a'
 const VIEW_URL = 'https://3f2a91c4.artifacts.example.com'
+/** Taken verbatim off a live instance: accents, an emoji and runs of spaces in one title. */
+const AWKWARD_TITLE = 'undefined-push- spaces ünïcode 🎉 título'
 
 const KANBAN = {
   id: FULL_ID,
@@ -272,6 +274,67 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
   })
 })
 
+/**
+ * Every row used to be 145 display columns — a title padded to the widest in the whole result set
+ * plus a 60-column URL derivable from the id — and nothing said what the columns were.
+ */
+describe('list labels its columns and fits an 80-column terminal', () => {
+  function firstLine(): string {
+    return output().split('\n')[0] ?? ''
+  }
+
+  it('prints a header above the rows', async () => {
+    respondWith({ 'GET /api/v1/artifacts': { items: [KANBAN, PRICING], nextCursor: null } })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    // TITLE starts where the 8-character short id and its two-space gap end.
+    expect(firstLine()).toMatch(/^ID {8}TITLE/)
+    expect(firstLine()).toContain('VISIBILITY')
+  })
+
+  it('drops the artifact-origin URL, which show prints and --json still carries', async () => {
+    respondWith({ 'GET /api/v1/artifacts': { items: [KANBAN], nextCursor: null } })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(output()).not.toContain(VIEW_URL)
+    expect(output()).toContain('3f2a91c4')
+    expect(output()).toContain('private')
+  })
+
+  it('truncates past 40 characters and keeps every line inside 80 columns', async () => {
+    const longTitle = 'A'.repeat(80)
+    respondWith({
+      'GET /api/v1/artifacts': {
+        items: [
+          { ...KANBAN, title: longTitle },
+          { ...PRICING, title: AWKWARD_TITLE },
+        ],
+        nextCursor: null,
+      },
+    })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(output()).toContain('...')
+    expect(output()).not.toContain(longTitle)
+    // 8 + 2 + 40 + 2 + the 10-character VISIBILITY header is the widest a line can be.
+    for (const line of output().trimEnd().split('\n')) {
+      expect(line.length).toBeLessThanOrEqual(62)
+    }
+  })
+
+  it('leaves the untruncated title in --json, which scripts and screen readers read', async () => {
+    const longTitle = 'A'.repeat(80)
+    respondWith({
+      'GET /api/v1/artifacts': { items: [{ ...KANBAN, title: longTitle }], nextCursor: null },
+    })
+
+    expect(await runList({ host: HOST, isJson: true })).toBe(0)
+    expect(JSON.parse(output()) as { items: Record<string, unknown>[] }).toMatchObject({
+      items: [{ title: longTitle, viewUrl: VIEW_URL }],
+    })
+  })
+})
+
 describe('exit codes distinguish a bad argument from a failed lookup', () => {
   it('exits 2 for a prefix too short to resolve, like every other unusable value', async () => {
     expect(await runShow({ host: HOST, id: 'abc', isJson: false })).toBe(2)
@@ -303,6 +366,48 @@ describe('AC 2 — show', () => {
     expect(output()).toContain('private')
     expect(output()).toContain('2026-08-02T14:31:09.221Z')
     expect(output()).toContain(VIEW_URL)
+  })
+
+  it('gives url the /a/<id> page and labels the artifact origin as provenance', async () => {
+    respondWith({ [`GET /api/v1/artifacts/${FULL_ID}`]: KANBAN })
+
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(0)
+    expect(output()).toContain(`url         https://${HOST}/a/${FULL_ID}`)
+    expect(output()).toContain(`served from ${VIEW_URL}`)
+  })
+})
+
+/**
+ * `share list` already answered a rejected token with the command that fixes it; the six commands
+ * here fell through to "✗ The API token is not valid" and named nothing.
+ */
+describe('a rejected token names the command that fixes it', () => {
+  it('points a 401 at enclave login and leaves stdout empty', async () => {
+    harness.setResponder(() => {
+      throw new ApiError(401, 'UNAUTHORIZED', 'The API token is not valid')
+    })
+
+    expect(await runList({ host: HOST, isJson: false })).toBe(1)
+    expect(errorOutput()).toContain('enclave login --host enclave.example.com')
+    expect(output()).toBe('')
+  })
+
+  it('names the scope on a 403 instead of a re-login that would change nothing', async () => {
+    harness.setResponder(() => {
+      throw new ApiError(403, 'FORBIDDEN', 'Token lacks scope artifacts:write')
+    })
+
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' })).toBe(1)
+    expect(errorOutput()).toContain('artifacts:write')
+    expect(errorOutput()).toContain('mint a token with that scope')
+    expect(errorOutput()).not.toContain('log in again')
+  })
+
+  it('still reports a 404 as not found, naming what was asked for', async () => {
+    notFoundForEverything()
+
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(1)
+    expect(errorOutput()).toContain(`not found: ${FULL_ID}`)
   })
 })
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { Dialog } from '@base-ui-components/react/dialog'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
   formatInstantLocal,
@@ -25,6 +25,7 @@ import styles from './share-dialog.module.css'
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
 const REVOKE_FAILED = 'That link could not be revoked.'
+const CREATED_ANNOUNCEMENT = 'Share link created. Copy it now — this is the only time it is shown.'
 
 interface CreateResponse {
   readonly data: { readonly shareId: string; readonly token: string; readonly url: string }
@@ -57,6 +58,11 @@ export function ShareDialog({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const isMountedForLocalTime = useIsMountedForLocalTime()
+  const createdRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (createdUrl !== null) createdRef.current?.focus()
+  }, [createdUrl])
 
   async function refreshShares(): Promise<void> {
     const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
@@ -67,6 +73,7 @@ export function ShareDialog({
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
+    if (isBusy) return
     const form = new FormData(event.currentTarget)
     setIsBusy(true)
     setErrorMessage(null)
@@ -94,6 +101,7 @@ export function ShareDialog({
   }
 
   async function handleRevoke(shareId: string): Promise<void> {
+    if (isBusy) return
     setIsBusy(true)
     setErrorMessage(null)
 
@@ -130,6 +138,11 @@ export function ShareDialog({
             that version even after you publish newer ones.
           </Dialog.Description>
 
+          {/* Mounted empty and filled on create: a region that arrives with its text is not read. */}
+          <p className="sr-only" role="status">
+            {createdUrl === null ? '' : CREATED_ANNOUNCEMENT}
+          </p>
+
           {errorMessage !== null && (
             <p className="form-error" role="alert">
               {errorMessage}
@@ -137,7 +150,7 @@ export function ShareDialog({
           )}
 
           {createdUrl !== null && (
-            <section className={styles.created} aria-live="polite">
+            <section className={styles.created} ref={createdRef} tabIndex={-1}>
               <p className={styles.createdHeading}>Copy this link now</p>
               <p className={styles.createdBody}>
                 This is the only time it is shown. Nothing can recover it afterwards — create
@@ -221,7 +234,12 @@ function CreateShareForm({
         <input className="input" id="share-expires" name="expiresAt" type="datetime-local" />
       </div>
 
-      <button className="button-primary" type="submit" disabled={isBusy} data-testid="share-create">
+      <button
+        className="button-primary"
+        type="submit"
+        aria-disabled={isBusy}
+        data-testid="share-create"
+      >
         Create link
       </button>
     </form>
@@ -270,7 +288,7 @@ function ShareList({
               <button
                 className={styles.revoke}
                 type="button"
-                disabled={isBusy}
+                aria-disabled={isBusy}
                 data-testid="share-revoke"
                 onClick={() => onRevoke(share.shareId)}
               >

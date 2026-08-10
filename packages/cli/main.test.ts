@@ -178,6 +178,77 @@ describe('a command name is required', () => {
   })
 })
 
+/**
+ * `push --help`, `rm --help` and `share create --help` were byte-identical: one 29-line synopsis
+ * answering every question. `--help` is the only documentation at the terminal.
+ */
+describe('per-command --help', () => {
+  const LABELS: readonly string[][] = [
+    ['version'],
+    ['login'],
+    ['logout'],
+    ['push'],
+    ['list'],
+    ['show'],
+    ['rename'],
+    ['privacy'],
+    ['rm'],
+    ['restore'],
+    ['share'],
+    ['share', 'create'],
+    ['share', 'list'],
+    ['share', 'revoke'],
+  ]
+
+  it('answers every command label on stdout without running the command', async () => {
+    for (const words of LABELS) {
+      written = []
+      writtenToStderr = []
+
+      expect(await main([...words, '--help'])).toBe(0)
+      expect(stdout()).toContain(`enclave ${words.join(' ')} —`)
+      expect(stderr()).toBe('')
+    }
+
+    expect(runList).not.toHaveBeenCalled()
+    expect(runRemove).not.toHaveBeenCalled()
+    expect(runShareCreate).not.toHaveBeenCalled()
+  })
+
+  it('answers push with the rules that exist nowhere else at the terminal', async () => {
+    expect(await main(['push', '--help'])).toBe(0)
+
+    const topic = stdout()
+    expect(topic).toContain('index.html')
+    expect(topic).toContain('--new')
+    expect(topic).toContain('2 MB')
+    expect(topic).toContain('Republishing is not implemented yet')
+  })
+
+  it('gives rm its own topic rather than push s', async () => {
+    await main(['rm', ARTIFACT_ID, '--help'])
+    const removeTopic = stdout()
+
+    written = []
+    await main(['push', './dist', '--help'])
+    const pushTopic = stdout()
+
+    expect(removeTopic).not.toContain('--dry-run')
+    expect(removeTopic).not.toContain('index.html')
+    expect(removeTopic).not.toBe(pushTopic)
+  })
+
+  it('keeps the banner for a command it has no topic for', async () => {
+    expect(await main(['badcmd', '--help'])).toBe(0)
+    expect(stdout()).toContain('enclave — publish and manage artifacts')
+  })
+
+  it('does not treat an inherited Object member as a help topic', async () => {
+    expect(await main(['toString', '--help'])).toBe(0)
+    expect(stdout()).toContain('enclave — publish and manage artifacts')
+  })
+})
+
 describe('the usage banner documents every flag a command accepts', () => {
   it.each(['rename', 'privacy', 'rm', 'restore'])('documents --json on %s', async (command) => {
     await main(['--help'])

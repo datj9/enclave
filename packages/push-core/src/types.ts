@@ -13,6 +13,12 @@ export interface BundleFile {
 
 export type Visibility = 'private' | 'org' | 'public'
 
+/** What is about to go on the wire, measured after the bundle passed validation. */
+export interface UploadPlan {
+  readonly fileCount: number
+  readonly totalBytes: number
+}
+
 export interface PushOptions {
   readonly directory: string
   readonly host: string
@@ -21,6 +27,8 @@ export interface PushOptions {
   readonly visibility?: Visibility
   readonly isInsecureAllowed?: boolean
   readonly userAgent?: string
+  /** `push` already holds the files, so a caller announcing the upload need not re-read the directory. */
+  readonly onUploadStart?: (plan: UploadPlan) => void
 }
 
 export interface PushResult {

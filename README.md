@@ -85,12 +85,15 @@ than let that happen, `push` drops what the server would refuse and names everyt
 ```
 $ enclave push ./dist
 skipped 3 files:
-  app.js.map        unsupported (.map)
-  favicon.ico       unsupported (.ico)
-  fonts/Inter.ttf   unsupported (.ttf)
+  app.js.map       unsupported (.map)
+  favicon.ico      unsupported (.ico)
+  fonts/Inter.ttf  unsupported (.ttf)
 ✓ 2 files, 40 KB
 ✓ created 3f2a91c4  v1
-→ https://3f2a91c4-….artifacts.example.com
+→ https://enclave.example.com/a/3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c
+  private — only you can open that link
+  share it:  enclave share create 3f2a91c4 --expires 7d
+  or open to the instance:  enclave privacy 3f2a91c4 org
 ```
 
 `--dry-run` shows that split without uploading; `.enclaveignore` (gitignore syntax) drops more.

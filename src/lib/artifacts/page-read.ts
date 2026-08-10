@@ -54,6 +54,20 @@ async function authorizeAsViewer(
   return authorized === null ? null : { viewerRef: ANONYMOUS_VIEWER_REF, authorized }
 }
 
+/**
+ * The title on its own, for `/s/{token}`: that page is authorized by the link rather than by a
+ * session, so it cannot go through `readArtifactPage`. Call it only after the gate said yes.
+ */
+export async function readArtifactTitle(artifactId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ title: artifacts.title })
+    .from(artifacts)
+    .where(eq(artifacts.id, artifactId))
+    .limit(1)
+
+  return row?.title ?? null
+}
+
 export const readArtifactPage = cache(
   async (artifactId: string): Promise<ArtifactPageRead> => {
     const sessionUser = await getSessionUser()

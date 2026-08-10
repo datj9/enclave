@@ -14,7 +14,7 @@
 .row {
   padding-bottom: var(--space-md);
   border-bottom: 1px solid var(--color-rule);
-  /* Runs once per mount, so a sort or a page change never re-animates the rows. */
+  /* Runs once per mount; the delay is frozen to first paint so Load more never restages. */
   animation: row-enter var(--dur-fast) var(--ease-out) both;
 }
 
@@ -57,6 +57,17 @@
 
 .separator {
   color: var(--color-rule);
+}
+
+.pager {
+  display: flex;
+  margin-top: var(--space-md);
+}
+
+.pagerNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
 }
 
 .path {

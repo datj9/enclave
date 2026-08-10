@@ -1,17 +1,31 @@
-import type { ArtifactListItem } from '@/lib/artifacts/list'
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+
+import type { ArtifactListItem, ArtifactListPage } from '@/lib/artifacts/list'
 import styles from './artifact-list.module.css'
 
 /**
  * The owner's artifact list. Motion is a stagger on first paint only, 50 ms per row, capped so a
  * long list does not make the last row wait — see docs/motion.md § This project's surfaces. No
- * hover lift, and nothing re-animates on sort or pagination because the CSS animation runs once
- * per mount.
+ * hover lift, and a row appended by Load more enters with no delay at all, so paging never
+ * restages the list.
  */
 
 const STAGGER_STEP_MS = 50
 const MAX_STAGGERED_ROWS = 8
 
+const LOAD_FAILED = 'Those artifacts did not load. Try again.'
+
 const VISIBILITY_LABEL = { private: 'Only me', org: 'Organization', public: 'Public' } as const
+
+interface ArtifactListResponse {
+  readonly data: ArtifactListPage
+}
+
+function allLoadedText(count: number): string {
+  return `All ${String(count)} artifacts loaded.`
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -20,7 +34,61 @@ function formatBytes(bytes: number): string {
   return `${(kibibytes / 1024).toFixed(1)} MB`
 }
 
-export function ArtifactList({ items }: { items: readonly ArtifactListItem[] }) {
+/** `naming.ts` builds this from `env`, which never reaches the browser — hence the origin prop. */
+function artifactPageUrl(appUrl: string, artifactId: string): string {
+  return new URL(`/a/${artifactId}`, appUrl).toString()
+}
+
+export function ArtifactList({
+  initialItems,
+  initialCursor,
+  appUrl,
+}: {
+  readonly initialItems: readonly ArtifactListItem[]
+  readonly initialCursor: string | null
+  readonly appUrl: string
+}) {
+  // Seeded once: React ignores later prop changes, so a soft navigation keeps the loaded list.
+  const [items, setItems] = useState<readonly ArtifactListItem[]>(initialItems)
+  const [cursor, setCursor] = useState(initialCursor)
+  const [isBusy, setIsBusy] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // Appended rows mount fresh and would otherwise inherit an entrance delay meant for first paint.
+  const [firstPaintCount] = useState(initialItems.length)
+  const pagerNoteRef = useRef<HTMLParagraphElement | null>(null)
+  const hasPagedRef = useRef(false)
+
+  async function loadMore(): Promise<void> {
+    // `aria-disabled` keeps focus on the button but still fires the click.
+    if (isBusy || cursor === null) return
+    hasPagedRef.current = true
+    setIsBusy(true)
+    setErrorMessage(null)
+
+    try {
+      const response = await fetch(`/api/v1/artifacts?cursor=${encodeURIComponent(cursor)}`)
+      if (!response.ok) {
+        setErrorMessage(LOAD_FAILED)
+        return
+      }
+
+      const body = (await response.json()) as ArtifactListResponse
+      setItems((previous) => [...previous, ...body.data.items])
+      setCursor(body.data.nextCursor)
+    } catch {
+      setErrorMessage(LOAD_FAILED)
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  // Guarded on `hasPagedRef` so an owner with a single page never gets focus stolen on first paint.
+  useEffect(() => {
+    if (cursor === null && hasPagedRef.current) {
+      pagerNoteRef.current?.focus()
+    }
+  }, [cursor])
+
   return (
     <section>
       <h1 className={styles.heading}>Artifacts</h1>
@@ -30,7 +98,10 @@ export function ArtifactList({ items }: { items: readonly ArtifactListItem[] }) 
             key={item.id}
             className={styles.row}
             style={{
-              animationDelay: `${Math.min(index, MAX_STAGGERED_ROWS) * STAGGER_STEP_MS}ms`,
+              animationDelay:
+                index < firstPaintCount
+                  ? `${Math.min(index, MAX_STAGGERED_ROWS) * STAGGER_STEP_MS}ms`
+                  : '0ms',
             }}
           >
             <a className={styles.link} href={`/a/${item.id}`}>
@@ -51,10 +122,45 @@ export function ArtifactList({ items }: { items: readonly ArtifactListItem[] }) 
               </span>
               <span className="tabular">{formatBytes(item.totalBytes)}</span>
             </p>
-            <p className={styles.path}>{item.viewUrl}</p>
+            <p className={styles.path}>{artifactPageUrl(appUrl, item.id)}</p>
           </li>
         ))}
       </ul>
+
+      {errorMessage !== null && (
+        <p className="form-error" role="alert">
+          {errorMessage}
+        </p>
+      )}
+
+      {/* Mounted empty and filled on completion: a region that arrives with its text is not read. */}
+      {(cursor !== null || items.length > firstPaintCount) && (
+        <div className={styles.pager}>
+          <p className="sr-only" role="status" data-testid="artifacts-pager-status">
+            {cursor === null ? allLoadedText(items.length) : ''}
+          </p>
+          {cursor !== null ? (
+            <button
+              className="button-secondary"
+              type="button"
+              aria-disabled={isBusy}
+              data-testid="artifacts-load-more"
+              onClick={() => void loadMore()}
+            >
+              Load more
+            </button>
+          ) : (
+            <p
+              className={styles.pagerNote}
+              ref={pagerNoteRef}
+              tabIndex={-1}
+              data-testid="artifacts-pager-note"
+            >
+              {allLoadedText(items.length)}
+            </p>
+          )}
+        </div>
+      )}
     </section>
   )
 }

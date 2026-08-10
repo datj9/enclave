@@ -30,6 +30,9 @@ export default async function TrashPage() {
 
   return (
     <div className={styles.shell}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave</p>
         <a className="button-secondary" href="/dashboard">
@@ -37,7 +40,7 @@ export default async function TrashPage() {
         </a>
       </header>
 
-      <main className={styles.main}>
+      <main className={styles.main} id="main" tabIndex={-1}>
         <h1 className={styles.heading}>Trash</h1>
         <p className={styles.caption}>
           Deleted artifacts stay here for {env.TRASH_RETENTION_DAYS} days, then they and their files

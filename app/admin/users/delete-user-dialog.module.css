@@ -1,0 +1,12 @@
+/* The only irreversible one of three otherwise identical row buttons. */
+.trigger {
+  padding: var(--space-3xs) var(--space-2xs);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  background: var(--color-paper);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}

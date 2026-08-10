@@ -15,6 +15,7 @@ import { runLogout } from './commands/logout.ts'
 import { runPush } from './commands/push.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './commands/shares.ts'
 import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
+import { HELP_BY_LABEL } from './help.ts'
 import { cliVersion, UNKNOWN_VERSION } from './version.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
@@ -35,6 +36,8 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
   enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
   enclave share list   <id> [--json]
   enclave share revoke <shareId>
+
+Per-command detail, including what a bundle may contain: enclave <command> --help
 
 Host resolution: --host, else ENCLAVE_HOST. \`push\` also falls back to .enclave.json.
 Credentials: ENCLAVE_TOKEN, else ~/.config/enclave/credentials.json.
@@ -360,6 +363,18 @@ function commandLabel(positionals: readonly string[]): string {
   return command === 'share' ? `share ${positionals[1] ?? ''}`.trim() : command
 }
 
+/**
+ * Resolved before `specFor`, which is what keeps `enclave share --help` on the share topic rather
+ * than the exit-2 unknown-subcommand refusal that would otherwise reach it first. Own-property
+ * lookups only, for the same reason `specFor` uses them: `toString` is not a command.
+ */
+function helpFor(positionals: readonly string[]): number {
+  const label = commandLabel(positionals)
+  if (!Object.hasOwn(HELP_BY_LABEL, label)) return usage()
+  process.stdout.write(HELP_BY_LABEL[label] ?? '')
+  return EXIT_OK
+}
+
 /** Own-property lookups only: inherited members like `toString` are not commands. */
 function specFor(positionals: readonly string[]): CommandSpec | undefined {
   const command = positionals[0]
@@ -423,12 +438,13 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const { values, positionals, tokens } = parsed
   const command = positionals[0]
-  if (values.help) return usage()
   // Flags with no command are a malformed invocation, not a request for help: answering on stdout
   // at exit 0 tells `enclave --json | jq` the run succeeded and then hands the parser prose.
   if (command === undefined) {
-    return argv.length === 0 ? usage() : usage('no command — see the commands above')
+    if (values.help || argv.length === 0) return usage()
+    return usage('no command — see the commands above')
   }
+  if (values.help) return helpFor(positionals)
 
   try {
     const spec = specFor(positionals)

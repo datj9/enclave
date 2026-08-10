@@ -14,7 +14,13 @@ import styles from './share-dialog.module.css'
 
 const CONFIRMATION_MS = 1600
 
-export function CopyLinkButton({ url }: { readonly url: string }) {
+export function CopyLinkButton({
+  url,
+  testId = 'share-copy',
+}: {
+  readonly url: string
+  readonly testId?: string
+}) {
   const [hasCopied, setHasCopied] = useState(false)
 
   useEffect(() => {
@@ -39,7 +45,7 @@ export function CopyLinkButton({ url }: { readonly url: string }) {
       className={styles.copy}
       type="button"
       data-copied={hasCopied}
-      data-testid="share-copy"
+      data-testid={testId}
       onClick={() => void copy()}
     >
       {hasCopied ? <CheckIcon /> : <LinkIcon />}

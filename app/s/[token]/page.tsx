@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { authorizeArtifactRead, shareViewerRef } from '@/lib/artifacts/authorize'
 import { artifactViewUrl } from '@/lib/artifacts/naming'
+import { readArtifactTitle } from '@/lib/artifacts/page-read'
 import { signHandoffToken } from '@/lib/handoff'
 import { resolveShareLinkByToken } from '@/lib/shares/links'
 import { ArtifactFrame } from '../../a/[id]/artifact-frame'
@@ -42,6 +43,8 @@ export default async function SharedArtifactPage({
   const authorized = await authorizeArtifactRead(resolved.link.artifactId, viewerRef)
   if (authorized === null) notFound()
 
+  const title = await readArtifactTitle(authorized.artifactId)
+
   const handoffToken = await signHandoffToken({
     artifactId: authorized.artifactId,
     versionId: authorized.versionId,
@@ -50,13 +53,19 @@ export default async function SharedArtifactPage({
 
   return (
     <div className={styles.shell}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className={styles.bar}>
         <p className={styles.brand}>enclave</p>
         <p className={styles.note}>Shared with you · read-only</p>
       </header>
-      <ArtifactFrame
-        enterUrl={`${artifactViewUrl(authorized.artifactId)}__enter?t=${encodeURIComponent(handoffToken)}`}
-      />
+      <main className={styles.main} id="main" tabIndex={-1}>
+        <h1 className={styles.title}>{title}</h1>
+        <ArtifactFrame
+          enterUrl={`${artifactViewUrl(authorized.artifactId)}__enter?t=${encodeURIComponent(handoffToken)}`}
+        />
+      </main>
     </div>
   )
 }

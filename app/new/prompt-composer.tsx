@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
+import { CopyLinkButton } from '../a/[id]/copy-link-button'
 import { useGeneration, type StreamedFile } from './use-generation'
 import styles from './prompt-composer.module.css'
 
@@ -43,6 +44,28 @@ function FilePanel({ file }: { file: StreamedFile }) {
       </header>
       <pre className={styles.fileBody}>{file.text}</pre>
     </section>
+  )
+}
+
+/** The artifact origin 404s without a grant cookie, so the address handed out is the app page. */
+function ResultPanel({ artifactId }: { readonly artifactId: string }) {
+  // Only ever rendered after a generation finished in the browser, so `window` is there.
+  const pageUrl = new URL(`/a/${artifactId}`, window.location.origin).toString()
+
+  return (
+    <div className={styles.result}>
+      <a className="button-primary" href={`/a/${artifactId}`}>
+        Open artifact
+      </a>
+      {/* Text only — `status` is atomic, so a button relabelling inside it re-announces the panel. */}
+      <p className={styles.resultUrl} role="status">
+        {pageUrl}
+      </p>
+      <CopyLinkButton url={pageUrl} testId="result-copy" />
+      <p className={styles.resultCaption}>
+        Only you can open it. Choose who else can from the artifact page.
+      </p>
+    </div>
   )
 }
 
@@ -157,14 +180,7 @@ export function PromptComposer() {
         </div>
       ) : null}
 
-      {state.result !== null ? (
-        <div className={styles.result} role="status">
-          <a className="button-primary" href={`/a/${state.result.artifactId}`}>
-            Open artifact
-          </a>
-          <p className={styles.resultUrl}>{state.result.viewUrl}</p>
-        </div>
-      ) : null}
+      {state.result !== null ? <ResultPanel artifactId={state.result.artifactId} /> : null}
     </div>
   )
 }

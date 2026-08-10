@@ -96,12 +96,33 @@ test.describe('public visibility, and the metadata that comes with it', () => {
     }
   })
 
-  test('the owner can choose Public from the privacy switch', async ({ browser }) => {
+  test('choosing Public asks first, and only the confirmation publishes', async ({ browser }) => {
     const ownerContext = await browser.newContext()
     try {
       await signInAsAdmin(ownerContext.request)
       const page = await ownerContext.newPage()
       await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
+
+      let patchCount = 0
+      page.on('request', (request) => {
+        if (
+          request.url().endsWith(`/api/v1/artifacts/${artifactId}`) &&
+          request.method() === 'PATCH'
+        ) {
+          patchCount += 1
+        }
+      })
+
+      await page.getByRole('radio', { name: 'Public' }).click()
+
+      await expect(page.getByTestId('publish-public-dialog')).toBeVisible()
+      // An open modal marks the rest of the page `aria-hidden`, which takes the radios out of the
+      // accessibility tree `getByRole` searches — the CSS engine still reaches them.
+      await expect(page.locator('[role="radio"]', { hasText: 'Public' })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      )
+      expect(patchCount).toBe(0)
 
       const [patch] = await Promise.all([
         page.waitForResponse(
@@ -109,7 +130,7 @@ test.describe('public visibility, and the metadata that comes with it', () => {
             response.url().endsWith(`/api/v1/artifacts/${artifactId}`) &&
             response.request().method() === 'PATCH',
         ),
-        page.getByRole('radio', { name: 'Public' }).click(),
+        page.getByTestId('publish-public-confirm').click(),
       ])
 
       expect(patch.status()).toBe(200)
@@ -117,6 +138,7 @@ test.describe('public visibility, and the metadata that comes with it', () => {
         'aria-checked',
         'true',
       )
+      expect(patchCount).toBe(1)
     } finally {
       await ownerContext.close()
     }
@@ -194,10 +216,7 @@ test.describe('public visibility, and the metadata that comes with it', () => {
       const page = await ownerContext.newPage()
       await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
 
-      await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
-        'content',
-        /noindex/,
-      )
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /noindex/)
     } finally {
       await ownerContext.close()
     }

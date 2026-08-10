@@ -81,7 +81,7 @@ a {
 .input {
   width: 100%;
   padding: var(--space-2xs) var(--space-xs);
-  border: 1px solid var(--color-rule);
+  border: 1px solid var(--color-control-border);
   border-radius: var(--radius-input);
   background: var(--color-paper);
   color: var(--color-ink);
@@ -114,13 +114,14 @@ a {
 }
 
 .button-secondary {
-  border: 1px solid var(--color-rule);
+  border: 1px solid var(--color-control-border);
   color: var(--color-ink);
 }
 
-/* motion.md § Physicality — press feedback, 0.95–0.98 range */
-.button-primary:active,
-.button-secondary:active {
+/* motion.md § Physicality — press feedback, 0.95–0.98 range.
+   An `aria-disabled` button is still pressable, and motion on an inert control reads as a live one. */
+.button-primary:not([aria-disabled='true']):active,
+.button-secondary:not([aria-disabled='true']):active {
   transform: scale(0.97);
 }
 
@@ -131,16 +132,52 @@ a {
   cursor: not-allowed;
 }
 
+/* `aria-disabled` stays focusable and still fires its handler, so it keeps a 3:1 boundary. */
+.button-primary[aria-disabled='true'],
+.button-secondary[aria-disabled='true'] {
+  color: var(--color-ink-2);
+  border-color: var(--color-control-border);
+  cursor: not-allowed;
+}
+
 .form-error {
   color: var(--color-accent);
   font-size: var(--text-sm);
 }
 
+/* Out of flow, so a permanently-mounted live region adds no gap to a flex or grid parent. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Off-screen rather than clipped like .sr-only, so focus can bring it back as a real control. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip-link:focus {
+  left: var(--space-md);
+  top: var(--space-2xs);
+  z-index: var(--z-sticky);
+  padding: var(--space-2xs) var(--space-sm);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-input);
+  background: var(--color-paper);
+}
+
 /* motion.md § Accessibility — drop transform motion, keep opacity and colour.
    Functional motion (skeletons, streaming indicators) is deliberately left running. */
 @media (prefers-reduced-motion: reduce) {
-  .button-primary:active,
-  .button-secondary:active {
+  /* Selector matched to the press rule above — a shorter one loses on specificity. */
+  .button-primary:not([aria-disabled='true']):active,
+  .button-secondary:not([aria-disabled='true']):active {
     transform: none;
   }
 }
