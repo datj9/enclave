@@ -243,6 +243,27 @@ describe.skipIf(!database)('countLiveShareLinks', () => {
       expect(body.data.liveCount).toBe(2)
     })
 
+    /**
+     * Issue #30's worked example, through the call the owner page actually renders from: four rows,
+     * one of them unrevoked with an expiry already past. A count taken by filtering the returned
+     * rows on `revokedAt` alone would read 3.
+     */
+    it('excludes an expired-but-unrevoked link from the count it lists beside the rows', async () => {
+      const scoped = await createArtifactWithVersions(1)
+      const versionId = scoped.versionIds[0] ?? ''
+
+      await seedLink(scoped.id, versionId)
+      await seedLink(scoped.id, versionId, { expiresIn: '3 weeks' })
+      await seedLink(scoped.id, versionId, { revokedAt: 'now' })
+      await seedLink(scoped.id, versionId, { expiresIn: '-6 days' })
+
+      const listed = await listShareLinks(scoped.id, `user:${ownerId}`)
+
+      expect(listed.items).toHaveLength(4)
+      expect(listed.items.filter((item) => item.revokedAt === null)).toHaveLength(3)
+      expect(listed.liveCount).toBe(2)
+    })
+
     it('reports zero for an artifact whose only link was revoked', async () => {
       const scoped = await createArtifactWithVersions(1)
       await seedLink(scoped.id, scoped.versionIds[0] ?? '', { revokedAt: 'now' })

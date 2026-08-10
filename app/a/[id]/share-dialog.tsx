@@ -32,7 +32,7 @@ interface CreateResponse {
 }
 
 interface ListResponse {
-  readonly data: { readonly items: readonly ShareLinkSummary[] }
+  readonly data: { readonly items: readonly ShareLinkSummary[]; readonly liveCount: number }
 }
 
 /** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
@@ -48,12 +48,17 @@ export function ShareDialog({
   artifactId,
   versions,
   initialShares,
+  initialLiveCount,
 }: {
   readonly artifactId: string
   readonly versions: readonly ShareableVersion[]
   readonly initialShares: readonly ShareLinkSummary[]
+  readonly initialLiveCount: number
 }) {
   const [shares, setShares] = useState(initialShares)
+  // Counted in Postgres against its own `now()`: an unrevoked link whose expiry has passed opens
+  // nothing, so the badge must not offer it as one that does.
+  const [liveShareCount, setLiveShareCount] = useState(initialLiveCount)
   const [createdUrl, setCreatedUrl] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
@@ -69,6 +74,7 @@ export function ShareDialog({
     if (!response.ok) return
     const body = (await response.json()) as ListResponse
     setShares(body.data.items)
+    setLiveShareCount(body.data.liveCount)
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -121,12 +127,10 @@ export function ShareDialog({
     }
   }
 
-  const activeShareCount = shares.filter((share) => share.revokedAt === null).length
-
   return (
     <Dialog.Root>
       <Dialog.Trigger className="button-secondary" data-testid="share-open">
-        Share{activeShareCount === 0 ? '' : ` · ${activeShareCount}`}
+        Share{liveShareCount === 0 ? '' : ` · ${liveShareCount}`}
       </Dialog.Trigger>
 
       <Dialog.Portal>

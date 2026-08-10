@@ -2,8 +2,9 @@
 
 import { Dialog } from '@base-ui-components/react/dialog'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
+import { deleteConfirmBody } from '@/lib/artifacts/delete-copy'
 import { css } from '@/lib/ui/class-name'
 import styles from './delete-dialog.module.css'
 
@@ -18,18 +19,51 @@ import styles from './delete-dialog.module.css'
 
 const DELETE_FAILED = 'That artifact could not be deleted.'
 
+interface ShareListResponse {
+  readonly data: { readonly liveCount: number }
+}
+
 export function DeleteDialog({
   artifactId,
-  activeShareCount,
+  initialLiveShareCount,
   retentionDays,
 }: {
   readonly artifactId: string
-  readonly activeShareCount: number
+  readonly initialLiveShareCount: number
   readonly retentionDays: number
 }) {
   const router = useRouter()
+  const [liveShareCount, setLiveShareCount] = useState(initialLiveShareCount)
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // The count check is a round trip; reopening before it lands would fire a second one.
+  const isCountingShareLinks = useRef(false)
+
+  /**
+   * The Share dialog sits on this same page and can revoke a link without a reload, so the number
+   * the server rendered may already be wrong. A failed read falls back to it rather than to zero —
+   * a warning that was true at page load beats claiming there is nothing to lose.
+   */
+  async function readLiveShareCount(): Promise<number> {
+    try {
+      const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
+      if (!response.ok) return liveShareCount
+      return ((await response.json()) as ShareListResponse).data.liveCount
+    } catch {
+      return liveShareCount
+    }
+  }
+
+  async function refreshLiveShareCount(): Promise<void> {
+    if (isCountingShareLinks.current) return
+    isCountingShareLinks.current = true
+
+    try {
+      setLiveShareCount(await readLiveShareCount())
+    } finally {
+      isCountingShareLinks.current = false
+    }
+  }
 
   async function handleDelete(): Promise<void> {
     if (isBusy) return
@@ -52,7 +86,11 @@ export function DeleteDialog({
   }
 
   return (
-    <Dialog.Root>
+    <Dialog.Root
+      onOpenChange={(isOpen) => {
+        if (isOpen) void refreshLiveShareCount()
+      }}
+    >
       <Dialog.Trigger className={css(styles.trigger)} data-testid="delete-open">
         Delete
       </Dialog.Trigger>
@@ -62,11 +100,7 @@ export function DeleteDialog({
         <Dialog.Popup className={css(styles.popup)} data-testid="delete-dialog">
           <Dialog.Title className={css(styles.title)}>Delete this artifact?</Dialog.Title>
           <Dialog.Description className={css(styles.description)}>
-            It leaves your list and stops opening for everyone, you included.{' '}
-            {activeShareCount === 0
-              ? 'It has no live share links.'
-              : `Its ${activeShareCount} live share ${activeShareCount === 1 ? 'link' : 'links'} stop working immediately, and restoring does not bring ${activeShareCount === 1 ? 'it' : 'them'} back.`}{' '}
-            You have {retentionDays} days to restore it from the trash before it is erased for good.
+            {deleteConfirmBody(liveShareCount, retentionDays)}
           </Dialog.Description>
 
           {errorMessage !== null && (
