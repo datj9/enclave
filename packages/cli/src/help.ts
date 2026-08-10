@@ -5,7 +5,7 @@
  * The facts here are read from the code, not from the README, because the terminal is the only
  * documentation a user has mid-task: bundle rules from `src/lib/bundle/rules.ts`, the 2 MB ceiling
  * and the always-ignored segments from `push-core/src/collect.ts`, host precedence and the
- * republish refusal from `commands/push.ts`.
+ * republish rules from `commands/push.ts`.
  */
 
 const JSON_FLAG =
@@ -57,10 +57,15 @@ Examples:
 const PUSH_HELP = `enclave push — publish a directory, or append a version to the artifact it tracks
 
   enclave push <dir> [--title <t>] [--visibility private|org|public]
-                     [--new] [--force] [--dry-run] [--json] [--host <host>] [--insecure]
+                     [--artifact <id>] [--new] [--force] [--dry-run] [--json]
+                     [--host <host>] [--insecure]
 
   --title      the artifact title; defaults to the name of <dir>
   --visibility private (the default), org, or public
+  --artifact   append to this artifact by id, for a directory with no
+               .enclave.json — a fresh CI checkout, or a wiped build output.
+               A full uuid needs no lookup; a prefix of 8+ characters is
+               matched against your artifacts and so also needs artifacts:read
   --new        publish a second, separate artifact from a directory that already
                has a .enclave.json
   --force      republish even when the server holds a newer version than the one
@@ -75,13 +80,17 @@ What goes up:
   .enclaveignore inside <dir> skips more: one glob per line, # comments,
     * matches within a path segment, ** crosses them, a leading / anchors
 
-Republishing is not implemented yet. A second plain push in a directory that
-already holds a .enclave.json is refused; --new publishes a separate artifact.
+Republishing: a second push in a directory holding a .enclave.json appends a
+version to the artifact it names, at the same address. It is refused when the
+server has moved past the version that file records — --force publishes anyway.
+Title and visibility belong to the artifact; use rename and privacy, not a push.
 
 Host precedence: --host, then ENCLAVE_HOST, then the .enclave.json in <dir>.
 
 Examples:
   enclave push ./dist --title "Release notes"
+  enclave push ./dist
+  enclave push ./dist --artifact 8aba3576 --force
   enclave push ./dist --dry-run
 `
 

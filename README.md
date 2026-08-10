@@ -95,6 +95,18 @@ $ enclave push ./dist
 
 `--force` drops that guard. A share link pinned to a version keeps serving that version regardless.
 
+`.enclave.json` lives inside the directory you push, so a build that wipes `./dist` takes the state
+file with it and the next push would create a duplicate. In CI, name the artifact instead — nothing
+then has to survive the build:
+
+```bash
+enclave push ./dist --artifact 3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c
+```
+
+With no state file there is nothing to compare against, so that push appends unconditionally. A full
+uuid costs no lookup and needs only `artifacts:write`; a prefix is resolved against your artifacts
+and also needs `artifacts:read`.
+
 A bundle is validated as a unit, so a single disallowed file would reject the whole upload. Rather
 than let that happen, `push` drops what the server would refuse and names everything it skipped:
 
@@ -123,7 +135,7 @@ enclave version  [--json]              (also -v, -V, --version)
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                       [--new] [--force] [--dry-run] [--json]
+                       [--artifact <id>] [--new] [--force] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title>

@@ -86,6 +86,30 @@ Change them with `enclave rename` and `enclave privacy`.
 
 A share link pinned to a version keeps serving that version after a newer one is published.
 
+### Publishing from CI, where there is no state file
+
+`.enclave.json` lives *inside* the directory you push, which is usually a build output — gitignored,
+and wiped by the build step that recreates it. A fresh checkout therefore has no state file, and a
+plain `push` would create a **duplicate artifact at a new address** rather than a new version.
+
+`--artifact` names the target directly, so nothing has to survive the build:
+
+```bash
+npm run build
+enclave push ./dist --artifact 3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c
+```
+
+With no state file there is no local version to compare against, so that push appends
+unconditionally — the guard has nothing to guard. When a state file *is* present and names the same
+artifact, the guard applies as usual and `--force` still overrides it. Naming a **different**
+artifact than the state file is refused rather than guessed.
+
+A full uuid is used as-is and costs no extra request, so this path needs only `artifacts:write`.
+A prefix of eight characters or more is matched against your own artifacts, which additionally needs
+`artifacts:read`.
+
+`--artifact` and `--new` contradict each other and are rejected as a pair.
+
 ## Commands
 
 ```
@@ -94,7 +118,7 @@ enclave login    [--host <host>] [--token <token>]
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                       [--new] [--force] [--dry-run] [--json]
+                       [--artifact <id>] [--new] [--force] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title> [--json]

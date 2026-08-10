@@ -25,7 +25,7 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
   enclave logout   [--host <host>]
 
   enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                         [--new] [--force] [--dry-run] [--json]
+                         [--artifact <id>] [--new] [--force] [--dry-run] [--json]
   enclave list     [--limit <n>] [--cursor <c>] [--json]
   enclave show     <id> [--json]
   enclave rename   <id> <title> [--json]
@@ -56,6 +56,7 @@ const OPTION_CONFIG = {
   token: { type: 'string' },
   title: { type: 'string' },
   visibility: { type: 'string' },
+  artifact: { type: 'string' },
   limit: { type: 'string' },
   cursor: { type: 'string' },
   version: { type: 'string' },
@@ -73,6 +74,7 @@ interface ParsedValues {
   readonly token?: string
   readonly title?: string
   readonly visibility?: string
+  readonly artifact?: string
   readonly limit?: string
   readonly cursor?: string
   readonly version?: string
@@ -259,7 +261,7 @@ const COMMANDS: Readonly<Record<string, CommandSpec>> = {
   },
 
   push: {
-    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'new', 'force', 'dry-run', 'json'],
+    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'artifact', 'new', 'force', 'dry-run', 'json'],
     run: (positionals, values) => {
       requireArity(positionals, 1)
       const visibility = parseVisibility(values.visibility)
@@ -273,6 +275,7 @@ const COMMANDS: Readonly<Record<string, CommandSpec>> = {
         ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
         ...(values.title === undefined ? {} : { title: values.title }),
         ...(visibility === undefined ? {} : { visibility }),
+        ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
       })
     },
   },

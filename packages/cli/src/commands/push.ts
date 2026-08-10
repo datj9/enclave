@@ -11,7 +11,9 @@ import {
 } from '../../../push-core/src/index.ts'
 import type { PushResult, SkippedFile, SkipReason, UploadPlan } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
+import { apiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
+import { InvalidIdError, resolveArtifactId, shortId } from '../ids.ts'
 import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
 import type { ProjectState } from '../state.ts'
 import { USER_AGENT } from '../version.ts'
@@ -23,6 +25,9 @@ export interface PushCommandOptions {
   readonly visibility?: Visibility
   readonly isNew: boolean
   readonly isForced: boolean
+  /** A full uuid or an unambiguous prefix. Names the artifact to append to when the directory
+   *  carries no state file — a fresh CI checkout, or a build step that wiped it. */
+  readonly artifactRef?: string
   readonly isDryRun: boolean
   readonly isJson: boolean
   readonly isInsecureAllowed?: boolean
@@ -316,7 +321,75 @@ function reportLegacyState(options: PushCommandOptions): number {
   return 1
 }
 
+/** Where the append is aimed, and what it will refuse to overwrite. `null` means create. */
+interface RepublishTarget {
+  readonly artifactId: string
+  readonly expectedVersionNo?: number
+}
+
+/** `--artifact` names one artifact and `--new` insists on a different one, so the pair has no
+ *  meaning. Malformed invocation, not a failed one. */
+function refuseContradictoryFlags(options: PushCommandOptions): number | null {
+  if (options.artifactRef === undefined || !options.isNew) return null
+  const text = '--artifact names an artifact to append to; --new insists on a fresh one'
+  reportError(options.isJson, 'CONTRADICTORY_FLAGS', text, `✗ ${text}`)
+  return 2
+}
+
+/**
+ * The resolved id, or an exit code. A full uuid costs no request, which is what keeps the everyday
+ * `--artifact` push on `artifacts:write` alone; a prefix is matched against the caller's listing
+ * and so also needs `artifacts:read`.
+ */
+async function resolveRepublishTarget(
+  options: PushCommandOptions,
+  state: ProjectState | null,
+  host: string,
+  token: string,
+): Promise<RepublishTarget | number | null> {
+  if (options.isNew) return null
+
+  const guard =
+    state === null || options.isForced ? {} : { expectedVersionNo: state.lastPushedVersionNo }
+
+  if (options.artifactRef === undefined) {
+    return state === null ? null : { artifactId: state.artifactId, ...guard }
+  }
+
+  let artifactId: string
+  try {
+    artifactId = await resolveArtifactId(
+      apiClient(host, token, options.isInsecureAllowed ?? false),
+      options.artifactRef,
+    )
+  } catch (error) {
+    const text = messageOf(error)
+    reportError(options.isJson, 'INVALID_ARTIFACT', text, `✗ ${text}`)
+    return error instanceof InvalidIdError ? 2 : 1
+  }
+
+  if (state !== null && state.artifactId !== artifactId) {
+    const text =
+      `--artifact names ${shortId(artifactId)} but .enclave.json tracks ` +
+      `${shortId(state.artifactId)}`
+    reportError(
+      options.isJson,
+      'ARTIFACT_MISMATCH',
+      text,
+      `✗ ${text}\n  delete the state file, or drop --artifact to keep pushing to it`,
+    )
+    return 1
+  }
+
+  // No state file means nothing to compare against, so the append is unconditional. This is the
+  // fresh-checkout case `--artifact` exists for; the guard returns as soon as state is written.
+  return { artifactId, ...guard }
+}
+
 export async function runPush(options: PushCommandOptions): Promise<number> {
+  const contradiction = refuseContradictoryFlags(options)
+  if (contradiction !== null) return contradiction
+
   const unusableDirectory = refuseUnusableDirectory(options)
   if (unusableDirectory !== null) return unusableDirectory
 
@@ -329,8 +402,9 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 1
   }
 
-  // --new already says this directory is its own artifact, which is the answer the guard asks for.
-  if (state === null && !options.isNew && existsSync(legacyStatePath(options.directory))) {
+  // --new and --artifact both already answer the question this guard asks: which artifact.
+  const isTargetStated = options.isNew || options.artifactRef !== undefined
+  if (state === null && !isTargetStated && existsSync(legacyStatePath(options.directory))) {
     return reportLegacyState(options)
   }
 
@@ -341,10 +415,6 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   const mismatch = refuseMismatchedHost(state, canonicalHost, options)
   if (mismatch !== null) return mismatch
 
-  // A state file names the artifact this directory already publishes to, so the push appends a
-  // version to it. `--new` deliberately ignores it and creates a separate artifact.
-  const republishTarget = options.isNew ? null : state
-
   const token = tokenFor(canonicalHost)
   if (token === null) {
     const text = `run: enclave login --host ${canonicalHost}`
@@ -353,6 +423,13 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   }
 
   if (options.isDryRun) return reportDryRun(options)
+
+  // After the dry run, which promises to make no request: resolving an `--artifact` prefix is one.
+  // A state file names the artifact this directory already publishes to, so the push appends a
+  // version to it. `--new` deliberately ignores it and creates a separate artifact.
+  const target = await resolveRepublishTarget(options, state, canonicalHost, token)
+  if (typeof target === 'number') return target
+  const republishTarget = target
 
   const isProgressVisible = !options.isJson
 
@@ -366,15 +443,8 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
       visibility: options.visibility ?? 'private',
       isInsecureAllowed: options.isInsecureAllowed ?? false,
       userAgent: USER_AGENT,
-      ...(republishTarget === null
-        ? {}
-        : {
-            artifactId: republishTarget.artifactId,
-            // --force drops the guard, which is what makes the server append unconditionally.
-            ...(options.isForced
-              ? {}
-              : { expectedVersionNo: republishTarget.lastPushedVersionNo }),
-          }),
+      // Already carries the guard, or deliberately does not — see resolveRepublishTarget.
+      ...(republishTarget ?? {}),
       ...(isProgressVisible
         ? {
             onUploadStart: (plan: UploadPlan): void => {
