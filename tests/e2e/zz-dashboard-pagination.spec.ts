@@ -22,6 +22,8 @@ const INDEX_HTML = '<!doctype html><title>pagination filler</title>'
 const TARGET_TOTAL = 21
 /** Presses are capped so a broken pager fails loudly instead of hanging the whole suite. */
 const MAX_PAGING_PRESSES = 5
+/** A page load on a cold CI runner is slower than Playwright's 5s assertion default. */
+const PAGE_LOAD_TIMEOUT_MS = 20_000
 
 interface ListEnvelope {
   readonly data: {
@@ -110,17 +112,20 @@ test.describe('dashboard pager focus and completion announcement', () => {
     const loadMore = page.getByTestId('artifacts-load-more')
     await expect(loadMore).toBeVisible()
 
+    const rows = page.locator('a[href^="/a/"]')
+
     for (let press = 0; press < MAX_PAGING_PRESSES; press += 1) {
       if (!(await loadMore.isVisible())) break
+      const rowsBefore = await rows.count()
       await loadMore.focus()
       await page.keyboard.press('Enter')
-      // The press either lands on a new page (the button re-enables) or the last one (it detaches).
+      // Observable progress, not a transient busy flag: either rows arrived or the pager finished.
       await expect
-        .poll(async () => {
-          if (!(await loadMore.isVisible())) return 'detached'
-          return (await loadMore.getAttribute('aria-disabled')) === 'true' ? 'busy' : 'enabled'
-        })
-        .toMatch(/detached|enabled/)
+        .poll(
+          async () => (await rows.count()) > rowsBefore || !(await loadMore.isVisible()),
+          { timeout: PAGE_LOAD_TIMEOUT_MS },
+        )
+        .toBe(true)
     }
     expect(
       await loadMore.isVisible(),
