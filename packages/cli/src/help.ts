@@ -54,7 +54,7 @@ Examples:
   ENCLAVE_HOST=enclave.example.com enclave logout
 `
 
-const PUSH_HELP = `enclave push — publish a directory as a new artifact
+const PUSH_HELP = `enclave push — publish a directory, or append a version to the artifact it tracks
 
   enclave push <dir> [--title <t>] [--visibility private|org|public]
                      [--new] [--force] [--dry-run] [--json] [--host <host>] [--insecure]

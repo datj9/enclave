@@ -75,9 +75,25 @@ scopes — `artifacts:read`, `artifacts:write`, `shares:write` — and is stored
 loosened. `ENCLAVE_TOKEN` overrides the file, which is what CI wants.
 
 `push` writes `.enclave.json` beside the directory it published, recording which artifact that
-directory maps to. **Commit it.** It holds no secret, and it is what lets a second machine or a CI
-job push a new *version* of the same artifact instead of a duplicate. `--new` forces a fresh
-artifact when you do want one.
+directory maps to and which version it last pushed. **Commit it.** It holds no secret, and it is
+what lets a second machine or a CI job push a new *version* of the same artifact instead of a
+duplicate. `--new` forces a fresh artifact when you do want one.
+
+A second push appends a version to that artifact and prints `✓ updated 3f2a91c4  v2` — the id and
+the URL do not change, so a link you already shared starts serving the new content. `title` and
+`visibility` stay where they are; change them with `rename` and `privacy`, not with a push.
+
+When the server holds a newer version than `.enclave.json` records, because someone pushed from
+another machine, the push is refused before anything uploads:
+
+```
+$ enclave push ./dist
+✗ server is at v5, you last pushed v2
+  refusing to overwrite a newer version
+  re-run with --force to publish anyway
+```
+
+`--force` drops that guard. A share link pinned to a version keeps serving that version regardless.
 
 A bundle is validated as a unit, so a single disallowed file would reject the whole upload. Rather
 than let that happen, `push` drops what the server would refuse and names everything it skipped:
@@ -107,7 +123,7 @@ enclave version  [--json]              (also -v, -V, --version)
 enclave logout   [--host <host>]
 
 enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                       [--new] [--dry-run] [--json]
+                       [--new] [--force] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
 enclave rename   <id> <title>
