@@ -9,7 +9,7 @@ import {
   push,
   PushError,
 } from '../../../push-core/src/index.ts'
-import type { PushResult, SkippedFile, UploadPlan } from '../../../push-core/src/index.ts'
+import type { PushResult, SkippedFile, SkipReason, UploadPlan } from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { tokenFor } from '../credentials.ts'
 import { legacyStatePath, readState, StateError, statePath, writeState } from '../state.ts'
@@ -65,17 +65,21 @@ function kilobytesOf(directory: string, paths: readonly string[]): number {
   return Math.round(totalBytes / BYTES_PER_KILOBYTE)
 }
 
-const SKIP_REASONS: readonly unknown[] = [
-  'unsupported_extension',
-  'invalid_path',
-  'ignored',
-  'too_large',
-]
+/** A Record, not a list: a new SkipReason breaks this literal instead of falling through
+ *  to `[object Object]`. */
+const SKIP_REASONS: Readonly<Record<SkipReason, true>> = {
+  unsupported_extension: true,
+  invalid_path: true,
+  ignored: true,
+  too_large: true,
+}
 
 function isSkippedFile(value: unknown): value is SkippedFile {
   if (typeof value !== 'object' || value === null) return false
   const { path, reason } = value as { path?: unknown; reason?: unknown }
-  return typeof path === 'string' && SKIP_REASONS.includes(reason)
+  return (
+    typeof path === 'string' && typeof reason === 'string' && Object.hasOwn(SKIP_REASONS, reason)
+  )
 }
 
 /**
