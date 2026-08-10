@@ -79,12 +79,14 @@ export function createUnreachableStore(): ObjectStore {
 
 export const TEST_OWNER_EMAIL = 'integration-owner@example.test'
 
-export async function createTestOwner(): Promise<string> {
-  await db.delete(users).where(eq(users.email, TEST_OWNER_EMAIL))
+/** Vitest runs test files in parallel, so a file that shares this row with another races it into
+ *  the `created_by` foreign key. Pass an email of your own to get an owner nobody else deletes. */
+export async function createTestOwner(email: string = TEST_OWNER_EMAIL): Promise<string> {
+  await db.delete(users).where(eq(users.email, email))
 
   const [owner] = await db
     .insert(users)
-    .values({ email: TEST_OWNER_EMAIL, passwordHash: null, role: 'member', isActive: true })
+    .values({ email, passwordHash: null, role: 'member', isActive: true })
     .returning({ id: users.id })
 
   if (owner === undefined) throw new Error('could not create the integration test owner')

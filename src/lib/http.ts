@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'PROVIDER_REFUSED'
   | 'MALFORMED_MODEL_OUTPUT'
   | 'STORAGE_UNAVAILABLE'
+  | 'VERSION_CONFLICT'
   | 'INTERNAL_ERROR'
 
 export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
@@ -38,6 +39,7 @@ export const ERROR_STATUS: Readonly<Record<ErrorCode, number>> = {
   PROVIDER_REFUSED: 422,
   MALFORMED_MODEL_OUTPUT: 502,
   STORAGE_UNAVAILABLE: 503,
+  VERSION_CONFLICT: 409,
   INTERNAL_ERROR: 500,
 }
 
