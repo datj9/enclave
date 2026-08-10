@@ -170,6 +170,34 @@ async function waitForGenerationToSettle(
   }
 }
 
+/** Poll for state a background task sets, so a missed signal fails the test instead of hanging it. */
+async function expectEventually(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (condition()) return
+    if (Date.now() > deadline) throw new Error(message)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+interface Deferred {
+  readonly promise: Promise<void>
+  readonly resolve: () => void
+}
+
+function createDeferred(): Deferred {
+  let resolve: (() => void) | undefined
+  const promise = new Promise<void>((resolveDeferred) => {
+    resolve = resolveDeferred
+  })
+  if (resolve === undefined) throw new Error('the promise executor did not run synchronously')
+  return { promise, resolve }
+}
+
 describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
   let ownerId = ''
   let store: ObjectStore
@@ -460,32 +488,46 @@ describe.skipIf(!servicesReady)('POST /api/v1/generate', () => {
 
   it('finalizes the provider generator when a mid-stream reader cancel aborts the pump', async () => {
     const providerState = { hasFinalized: false }
-    const slowSecondDeltaProvider: ArtifactProvider = {
+    const reachedSuspension = createDeferred()
+    const resumeGate = createDeferred()
+    const gatedSecondDeltaProvider: ArtifactProvider = {
       id: 'anthropic',
       async *generate() {
         try {
           yield WELL_FORMED[0] ?? ''
-          // Long enough that the reader cancel below always lands before this resumes, so the
-          // loop's next enqueue throws mid-stream and the generator is left suspended, not
-          // naturally completed — the only way `iterator.return` actually does anything.
-          await new Promise((resolve) => setTimeout(resolve, 50))
+          reachedSuspension.resolve()
+          await resumeGate.promise
           yield WELL_FORMED[1] ?? ''
         } finally {
           providerState.hasFinalized = true
         }
       },
     }
-    mocks.selection = selectionWith({ provider: slowSecondDeltaProvider })
+    mocks.selection = selectionWith({ provider: gatedSecondDeltaProvider })
 
     const response = await POST(generateRequest({ prompt: 'a countdown timer' }))
     const reader = response.body?.getReader()
     if (reader === undefined) throw new Error('the response has no readable body')
 
     await reader.read()
-    await reader.cancel()
+    await reachedSuspension.promise
 
-    await waitForGenerationToSettle(ownerId)
-    expect(providerState.hasFinalized).toBe(true)
+    // The gate has to open *after* the cancel, never before. `pumpStream` only reaches
+    // `iterator.return` by throwing, and it only throws once the second delta arrives to find a
+    // closed stream — so opening the gate first would let the generator finish on its own and
+    // leave `return` a no-op on a completed generator, quietly gutting the assertion. Awaiting
+    // `reachedSuspension` is what makes that ordering observable instead of assumed.
+    await reader.cancel()
+    resumeGate.resolve()
+
+    // `failed` rather than `succeeded` is the proof the enqueue threw mid-stream: on the natural
+    // path the pump would have gone on to persist the artifact.
+    const generation = await waitForGenerationToSettle(ownerId)
+    expect(generation.status).toBe('failed')
+    await expectEventually(
+      () => providerState.hasFinalized,
+      'the provider generator was never finalized',
+    )
   })
 
   it('never writes the prompt anywhere but the generations row', async () => {
