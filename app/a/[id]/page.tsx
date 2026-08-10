@@ -107,12 +107,11 @@ export default async function ArtifactViewerPage({
               artifactId={id}
               versions={shareState.versions}
               initialShares={shareState.shareLinks.items}
+              initialLiveCount={shareState.shareLinks.liveCount}
             />
             <DeleteDialog
               artifactId={id}
-              activeShareCount={
-                shareState.shareLinks.items.filter((share) => share.revokedAt === null).length
-              }
+              initialLiveShareCount={shareState.shareLinks.liveCount}
               retentionDays={env.TRASH_RETENTION_DAYS}
             />
           </div>
