@@ -3,6 +3,7 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 
+import { css } from '@/lib/ui/class-name'
 import type { Visibility } from '@/db/schema/artifacts'
 import styles from './privacy-switch.module.css'
 import publishStyles from './publish-dialog.module.css'
@@ -51,11 +52,6 @@ const ARROW_STEPS: Readonly<Record<string, number>> = {
   ArrowDown: 1,
   ArrowLeft: -1,
   ArrowUp: -1,
-}
-
-/** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
-function css(className: string | undefined): string {
-  return className ?? ''
 }
 
 function clipForIndex(activeIndex: number): string {
