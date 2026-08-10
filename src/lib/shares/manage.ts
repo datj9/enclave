@@ -8,6 +8,7 @@ import { recordAuditEvent } from '@/lib/audit'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
 import { databaseNowEpoch, epochToDate, tryEpochToDate } from './clock'
+import { countLiveShareLinks } from './live'
 import { loadShareLink } from './links'
 import { mintShareToken, shareLinkUrl } from './token'
 
@@ -42,6 +43,11 @@ export interface ShareLinkSummary {
 export interface ShareLinkListResult {
   readonly items: readonly ShareLinkSummary[]
   readonly databaseNow: string
+  /**
+   * How many of `items` still open the artifact. Its own statement rather than a filter over the
+   * rows above, so the count and the `now()` it is judged against are one reading (§7).
+   */
+  readonly liveCount: number
 }
 
 export interface CreateShareLinkInput {
@@ -207,6 +213,7 @@ export async function listShareLinks(
       createdAt: row.createdAt.toISOString(),
     })),
     databaseNow,
+    liveCount: await countLiveShareLinks(artifactId),
   }
 }
 
