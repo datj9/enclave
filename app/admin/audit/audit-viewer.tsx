@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { AUDIT_ACTIONS } from '@/db/schema/audit-log'
 import type { AuditEntry, AuditPage } from '@/lib/admin/audit-read'
@@ -21,6 +21,10 @@ export interface ActorOption {
 }
 
 const GENERIC_FAILURE = 'That query did not work. Check the filters and try again.'
+
+function allLoadedText(count: number): string {
+  return `All ${String(count)} entries loaded.`
+}
 
 const MOMENT_PARAMETERS: ReadonlySet<string> = new Set(['from', 'to'])
 
@@ -57,6 +61,8 @@ export function AuditViewer({
   const [filters, setFilters] = useState<FormData | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const [hasPaged, setHasPaged] = useState(false)
+  const pagerNoteRef = useRef<HTMLParagraphElement | null>(null)
 
   async function load(form: FormData, cursor: string | null): Promise<void> {
     setIsBusy(true)
@@ -84,13 +90,22 @@ export function AuditViewer({
     if (isBusy) return
     const form = new FormData(event.currentTarget)
     setFilters(form)
+    setHasPaged(false)
     void load(form, null)
   }
 
   function handleMore(): void {
     if (isBusy || page.nextCursor === null) return
+    setHasPaged(true)
     void load(filters ?? new FormData(), page.nextCursor)
   }
+
+  // Guarded on `hasPaged` so a fresh filter that happens to finish never claims a completion.
+  useEffect(() => {
+    if (page.nextCursor === null && hasPaged) {
+      pagerNoteRef.current?.focus()
+    }
+  }, [page.nextCursor, hasPaged])
 
   return (
     <>
@@ -157,16 +172,31 @@ export function AuditViewer({
 
       <AuditTable entries={entries} />
 
-      {page.nextCursor !== null && (
+      {(page.nextCursor !== null || hasPaged) && (
         <div className={styles.pager}>
-          <button
-            className="button-secondary"
-            type="button"
-            aria-disabled={isBusy}
-            onClick={handleMore}
-          >
-            Load more
-          </button>
+          <p className="sr-only" role="status" data-testid="audit-pager-status">
+            {page.nextCursor === null ? allLoadedText(entries.length) : ''}
+          </p>
+          {page.nextCursor !== null ? (
+            <button
+              className="button-secondary"
+              type="button"
+              aria-disabled={isBusy}
+              data-testid="audit-load-more"
+              onClick={handleMore}
+            >
+              Load more
+            </button>
+          ) : (
+            <p
+              className={styles.pagerNote}
+              ref={pagerNoteRef}
+              tabIndex={-1}
+              data-testid="audit-pager-note"
+            >
+              {allLoadedText(entries.length)}
+            </p>
+          )}
         </div>
       )}
     </>

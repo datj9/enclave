@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ArtifactListItem, ArtifactListPage } from '@/lib/artifacts/list'
 import styles from './artifact-list.module.css'
@@ -21,6 +21,10 @@ const VISIBILITY_LABEL = { private: 'Only me', org: 'Organization', public: 'Pub
 
 interface ArtifactListResponse {
   readonly data: ArtifactListPage
+}
+
+function allLoadedText(count: number): string {
+  return `All ${String(count)} artifacts loaded.`
 }
 
 function formatBytes(bytes: number): string {
@@ -51,10 +55,13 @@ export function ArtifactList({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   // Appended rows mount fresh and would otherwise inherit an entrance delay meant for first paint.
   const [firstPaintCount] = useState(initialItems.length)
+  const pagerNoteRef = useRef<HTMLParagraphElement | null>(null)
+  const hasPagedRef = useRef(false)
 
   async function loadMore(): Promise<void> {
     // `aria-disabled` keeps focus on the button but still fires the click.
     if (isBusy || cursor === null) return
+    hasPagedRef.current = true
     setIsBusy(true)
     setErrorMessage(null)
 
@@ -74,6 +81,13 @@ export function ArtifactList({
       setIsBusy(false)
     }
   }
+
+  // Guarded on `hasPagedRef` so an owner with a single page never gets focus stolen on first paint.
+  useEffect(() => {
+    if (cursor === null && hasPagedRef.current) {
+      pagerNoteRef.current?.focus()
+    }
+  }, [cursor])
 
   return (
     <section>
@@ -119,9 +133,12 @@ export function ArtifactList({
         </p>
       )}
 
-      {/* The slot outlives the button — unmounting it mid-press drops focus to <body>. */}
+      {/* Mounted empty and filled on completion: a region that arrives with its text is not read. */}
       {(cursor !== null || items.length > firstPaintCount) && (
         <div className={styles.pager}>
+          <p className="sr-only" role="status" data-testid="artifacts-pager-status">
+            {cursor === null ? allLoadedText(items.length) : ''}
+          </p>
           {cursor !== null ? (
             <button
               className="button-secondary"
@@ -133,8 +150,13 @@ export function ArtifactList({
               Load more
             </button>
           ) : (
-            <p className={styles.pagerNote} role="status">
-              All {items.length} artifacts loaded.
+            <p
+              className={styles.pagerNote}
+              ref={pagerNoteRef}
+              tabIndex={-1}
+              data-testid="artifacts-pager-note"
+            >
+              {allLoadedText(items.length)}
             </p>
           )}
         </div>
