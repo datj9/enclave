@@ -60,6 +60,21 @@ describe('credentials', () => {
     expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
   })
 
+  /** `login` already trims before deciding a token was entered; `tokenFor` has to agree, or a
+   *  trailing space in a .env file sends `Bearer    ` and hides a perfectly good stored token. */
+  it('tokenFor treats a whitespace-only ENCLAVE_TOKEN as absent', () => {
+    saveToken('enclave.example.com', 'from-the-file')
+    process.env['ENCLAVE_TOKEN'] = '   '
+
+    expect(tokenFor('enclave.example.com')).toBe('from-the-file')
+  })
+
+  it('tokenFor trims a padded ENCLAVE_TOKEN rather than sending the padding', () => {
+    process.env['ENCLAVE_TOKEN'] = '  from-the-environment  '
+
+    expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
+  })
+
   it('tokenFor returns null for an unknown host', () => {
     saveToken('enclave.example.com', 'first-secret')
 

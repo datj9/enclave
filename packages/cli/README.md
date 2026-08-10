@@ -62,10 +62,10 @@ enclave push     <dir> [--title <t>] [--visibility private|org|public]
                        [--new] [--dry-run] [--json]
 enclave list     [--limit <n>] [--cursor <c>] [--json]
 enclave show     <id> [--json]
-enclave rename   <id> <title>
-enclave privacy  <id> private|org|public
-enclave rm       <id>
-enclave restore  <id>
+enclave rename   <id> <title> [--json]
+enclave privacy  <id> private|org|public [--json]
+enclave rm       <id> [--json]
+enclave restore  <id> [--json]
 
 enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
 enclave share list   <id> [--json]
@@ -117,8 +117,9 @@ file was never going to be accepted. **The server is authoritative** and enforce
 
 ## Scripting
 
-Every command takes `--json`, which puts the raw API object on stdout and **nothing else** —
-errors and diagnostics always go to stderr, so `| jq` is safe on every path.
+Every command that returns an object takes `--json`, which puts the raw API object on stdout and
+**nothing else** — errors and diagnostics always go to stderr, so `| jq` is safe on every path.
+`login`, `logout` and `share revoke` have no object to return and reject the flag with exit 2.
 
 | Exit code | Meaning                                                                      |
 | --------- | ---------------------------------------------------------------------------- |

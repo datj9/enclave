@@ -1,6 +1,6 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
-import { IdResolutionError, resolveArtifactId, shortId } from '../ids.ts'
+import { IdResolutionError, InvalidIdError, resolveArtifactId, shortId } from '../ids.ts'
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 /**
@@ -102,6 +102,12 @@ function reportFailure(error: unknown): number {
   if (error instanceof ApiError) {
     fail(describeApiError(error))
     return EXIT_FAILED
+  }
+  // Before its parent: an id too short to look up is an unusable argument, which every other
+  // command answers with EXIT_USAGE.
+  if (error instanceof InvalidIdError) {
+    fail(error.message)
+    return EXIT_USAGE
   }
   if (error instanceof IdResolutionError) {
     fail(error.message)

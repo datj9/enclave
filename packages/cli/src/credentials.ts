@@ -68,7 +68,9 @@ function storedKeyFor(store: Record<string, HostCredential>, host: string): stri
 }
 
 export function tokenFor(host: string): string | null {
-  const fromEnvironment = process.env['ENCLAVE_TOKEN']
+  // Trimmed, so this agrees with `login`'s own "was a token entered?" test. Untrimmed, a trailing
+  // space in a .env file sends `Bearer    ` and silently bypasses a good stored credential.
+  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
   if (fromEnvironment !== undefined && fromEnvironment !== '') return fromEnvironment
   const store = readCredentials()
   const key = storedKeyFor(store, host)

@@ -309,10 +309,11 @@ describe('push command', () => {
       isJson: true,
     })
 
-    expect(exitCode).toBe(2)
-    expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
-      error: { code: 'INVALID_HOST' },
-    })
+    expect(exitCode).toBe(1)
+    const reported = JSON.parse(stderr) as { error: { code: string; message: string } }
+    expect(reported).toMatchObject({ error: { code: 'INVALID_STATE' } })
+    // The host appears nowhere on the command line, so the message has to say where it came from.
+    expect(reported.error.message).toContain('.enclave.json')
     expect(push).not.toHaveBeenCalled()
   })
 
@@ -435,9 +436,118 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(stderr).toContain('legacy')
     expect(stderr).toContain('mv ')
-    expect(stderr).toContain('rm ')
+    // Never `rm <parent>/.enclave.json`: the parent may be a live project whose state that is.
+    expect(stderr).not.toContain('rm ')
+    expect(stderr).toContain('--new')
     expect(push).not.toHaveBeenCalled()
+  })
+
+  it('lets --new past a parent state file instead of advising its deletion', async () => {
+    writeLegacyStateFile({
+      host: HOST,
+      artifactId: SUCCESS_RESULT.artifactId,
+      lastPushedVersionNo: 1,
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: true,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(push).toHaveBeenCalled()
+  })
+
+  describe('an unusable directory is refused before anything else happens', () => {
+    it('names the missing directory rather than blaming the server', async () => {
+      const exitCode = await runPush({
+        directory: join(workspace, 'does-not-exist'),
+        host: HOST,
+        isNew: false,
+        isDryRun: false,
+        isJson: true,
+      })
+
+      expect(exitCode).toBe(2)
+      expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+        error: { code: 'DIRECTORY_NOT_FOUND' },
+      })
+      expect(push).not.toHaveBeenCalled()
+    })
+
+    it('keeps the JSON envelope on the dry-run path', async () => {
+      const exitCode = await runPush({
+        directory: join(workspace, 'does-not-exist'),
+        host: HOST,
+        isNew: false,
+        isDryRun: true,
+        isJson: true,
+      })
+
+      expect(exitCode).toBe(2)
+      expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+        error: { code: 'DIRECTORY_NOT_FOUND' },
+      })
+    })
+
+    it('distinguishes a file from a missing path', async () => {
+      const file = join(workspace, 'bundle.html')
+      writeFileSync(file, '<!doctype html>')
+
+      const exitCode = await runPush({
+        directory: file,
+        host: HOST,
+        isNew: false,
+        isDryRun: true,
+        isJson: true,
+      })
+
+      expect(exitCode).toBe(2)
+      expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
+        error: { code: 'NOT_A_DIRECTORY' },
+      })
+    })
+  })
+
+  describe('refusal details stay readable in human mode', () => {
+    it('names the skipped file and why, instead of [object Object]', async () => {
+      const oversized = join(workspace, 'oversized')
+      mkdirSync(oversized)
+      writeFileSync(join(oversized, 'index.html'), 'x'.repeat(3 * 1024 * 1024))
+
+      const exitCode = await runPush({
+        directory: oversized,
+        host: HOST,
+        isNew: false,
+        isDryRun: true,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(1)
+      expect(stderr).not.toContain('[object Object]')
+      expect(stderr).toContain('index.html')
+      expect(stderr).toContain('too large')
+    })
+
+    it('omits the detail line when there is no detail to render', async () => {
+      const noIndex = join(workspace, 'no-index')
+      mkdirSync(noIndex)
+      writeFileSync(join(noIndex, 'about.html'), '<!doctype html>')
+
+      const exitCode = await runPush({
+        directory: noIndex,
+        host: HOST,
+        isNew: false,
+        isDryRun: true,
+        isJson: false,
+      })
+
+      expect(exitCode).toBe(1)
+      expect(stderr).not.toMatch(/skipped=\s*$/m)
+    })
   })
 })

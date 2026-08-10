@@ -27,10 +27,10 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
                          [--new] [--dry-run] [--json]
   enclave list     [--limit <n>] [--cursor <c>] [--json]
   enclave show     <id> [--json]
-  enclave rename   <id> <title>
-  enclave privacy  <id> private|org|public
-  enclave rm       <id>
-  enclave restore  <id>
+  enclave rename   <id> <title> [--json]
+  enclave privacy  <id> private|org|public [--json]
+  enclave rm       <id> [--json]
+  enclave restore  <id> [--json]
 
   enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
   enclave share list   <id> [--json]
@@ -423,7 +423,12 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const { values, positionals, tokens } = parsed
   const command = positionals[0]
-  if (values.help || command === undefined) return usage()
+  if (values.help) return usage()
+  // Flags with no command are a malformed invocation, not a request for help: answering on stdout
+  // at exit 0 tells `enclave --json | jq` the run succeeded and then hands the parser prose.
+  if (command === undefined) {
+    return argv.length === 0 ? usage() : usage('no command — see the commands above')
+  }
 
   try {
     const spec = specFor(positionals)

@@ -304,7 +304,7 @@ export async function runRemove(options: RemoveOptions): Promise<number> {
     }
     write(`✓ moved ${shortId(id)} to trash`)
     // The full id, not the prefix: a trashed artifact leaves GET /v1/artifacts, so a prefix has
-    // nothing left to resolve against until S21 adds trash listing.
+    // nothing left to resolve against.
     write(`  restore with: enclave restore ${id}`)
     return EXIT_OK
   } catch (error) {

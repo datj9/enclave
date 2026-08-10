@@ -65,6 +65,13 @@ async function errorFrom(response: Response): Promise<ApiError> {
  * The token is held in this closure and reaches exactly one place: the Authorization header.
  * It is never attached to an ApiError, so no caller can print it by echoing a failure.
  */
+/**
+ * Node's `fetch` waits forever. A host that accepts the connection and then says nothing — a
+ * captive portal, a hung proxy — otherwise leaves the CLI printing nothing, with no way to tell
+ * "slow" from "dead". These calls carry metadata only, so the ceiling can be short.
+ */
+const REQUEST_TIMEOUT_MS = 30_000
+
 export function apiClient(host: string, token: string, isInsecureAllowed = false): ApiClient {
   const baseUrl = baseUrlFor(host, isInsecureAllowed)
 
@@ -80,9 +87,13 @@ export function apiClient(host: string, token: string, isInsecureAllowed = false
       response = await fetch(`${baseUrl}${path}`, {
         method,
         headers,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        throw new ApiError(0, 'NETWORK_TIMEOUT', `${host} did not answer within 30s`, { host })
+      }
       throw new ApiError(0, 'NETWORK_ERROR', `Could not reach ${host}`, { host })
     }
 
