@@ -57,12 +57,14 @@ Examples:
 const PUSH_HELP = `enclave push — publish a directory as a new artifact
 
   enclave push <dir> [--title <t>] [--visibility private|org|public]
-                     [--new] [--dry-run] [--json] [--host <host>] [--insecure]
+                     [--new] [--force] [--dry-run] [--json] [--host <host>] [--insecure]
 
   --title      the artifact title; defaults to the name of <dir>
   --visibility private (the default), org, or public
   --new        publish a second, separate artifact from a directory that already
                has a .enclave.json
+  --force      republish even when the server holds a newer version than the one
+               .enclave.json records
   --dry-run    print what would be uploaded and skipped, and make no request
 ${JSON_FLAG}${HOST_FLAGS}
 What goes up:

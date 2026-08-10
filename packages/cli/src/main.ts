@@ -25,7 +25,7 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
   enclave logout   [--host <host>]
 
   enclave push     <dir> [--title <t>] [--visibility private|org|public]
-                         [--new] [--dry-run] [--json]
+                         [--new] [--force] [--dry-run] [--json]
   enclave list     [--limit <n>] [--cursor <c>] [--json]
   enclave show     <id> [--json]
   enclave rename   <id> <title> [--json]
@@ -61,6 +61,7 @@ const OPTION_CONFIG = {
   version: { type: 'string' },
   expires: { type: 'string' },
   new: { type: 'boolean', default: false },
+  force: { type: 'boolean', default: false },
   'dry-run': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
   help: { type: 'boolean', default: false },
@@ -77,6 +78,7 @@ interface ParsedValues {
   readonly version?: string
   readonly expires?: string
   readonly new: boolean
+  readonly force: boolean
   readonly 'dry-run': boolean
   readonly json: boolean
   readonly help: boolean
@@ -257,13 +259,14 @@ const COMMANDS: Readonly<Record<string, CommandSpec>> = {
   },
 
   push: {
-    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'new', 'dry-run', 'json'],
+    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'new', 'force', 'dry-run', 'json'],
     run: (positionals, values) => {
       requireArity(positionals, 1)
       const visibility = parseVisibility(values.visibility)
       return runPush({
         directory: requirePositional(positionals, 1, 'dir'),
         isNew: values.new,
+        isForced: values.force,
         isDryRun: values['dry-run'],
         isJson: values.json,
         isInsecureAllowed: values.insecure,

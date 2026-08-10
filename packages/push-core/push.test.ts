@@ -283,4 +283,84 @@ describe('push', () => {
 
     expect(error.code).toBe('UNEXPECTED_RESPONSE')
   })
+  describe('republish', () => {
+    const ARTIFACT_ID = '3f2a91c4-2f1e-4a0b-9d43-5c9d0f0a1b2c'
+    const APPENDED = {
+      versionId: 'd4c3b2a1-9999-4888-8777-666655554444',
+      versionNo: 3,
+      viewUrl: 'https://3f2a91c4.artifacts.example.com',
+    }
+
+    it('posts only files and the guard to the versions endpoint', async () => {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+      fetchMock.mockResolvedValue(jsonResponse(201, envelope(APPENDED)))
+
+      await push(
+        optionsFor({
+          host: 'h',
+          title: 'ignored on this path',
+          visibility: 'org',
+          artifactId: ARTIFACT_ID,
+          expectedVersionNo: 2,
+        }),
+      )
+
+      const { url, init } = requestOf(0)
+      expect(url).toBe(`https://h/api/v1/artifacts/${ARTIFACT_ID}/versions`)
+      expect(init.method).toBe('POST')
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      expect(body['expectedVersionNo']).toBe(2)
+      // The server rejects both as unknown fields — they belong to PATCH, not to a push.
+      expect(body).not.toHaveProperty('title')
+      expect(body).not.toHaveProperty('visibility')
+    })
+
+    it('omits the guard entirely when no expected version is given', async () => {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+      fetchMock.mockResolvedValue(jsonResponse(201, envelope(APPENDED)))
+
+      await push(optionsFor({ artifactId: ARTIFACT_ID }))
+
+      const body = JSON.parse(String(requestOf(0).init.body)) as Record<string, unknown>
+      expect(body).not.toHaveProperty('expectedVersionNo')
+    })
+
+    it('returns the version the server assigned, not a hard-coded 1', async () => {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+      fetchMock.mockResolvedValue(jsonResponse(201, envelope(APPENDED)))
+
+      const result = await push(optionsFor({ artifactId: ARTIFACT_ID, expectedVersionNo: 2 }))
+
+      expect(result).toMatchObject({ artifactId: ARTIFACT_ID, versionNo: 3 })
+    })
+
+    it('maps a 409 to VERSION_CONFLICT and keeps both version numbers', async () => {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+      fetchMock.mockResolvedValue(
+        jsonResponse(409, {
+          error: {
+            code: 'VERSION_CONFLICT',
+            message: 'The artifact has a newer version than expected',
+            details: { expectedVersionNo: 2, currentVersionNo: 5 },
+          },
+        }),
+      )
+
+      const error = await rejectionOf(optionsFor({ artifactId: ARTIFACT_ID, expectedVersionNo: 2 }))
+
+      expect(error.code).toBe('VERSION_CONFLICT')
+      expect(error.details).toMatchObject({ expectedVersionNo: 2, currentVersionNo: 5 })
+    })
+
+    it('throws UNEXPECTED_RESPONSE when the append response omits versionNo', async () => {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html>')
+      fetchMock.mockResolvedValue(
+        jsonResponse(201, envelope({ versionId: APPENDED.versionId, viewUrl: APPENDED.viewUrl })),
+      )
+
+      const error = await rejectionOf(optionsFor({ artifactId: ARTIFACT_ID }))
+
+      expect(error.code).toBe('UNEXPECTED_RESPONSE')
+    })
+  })
 })

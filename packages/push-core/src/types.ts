@@ -25,6 +25,10 @@ export interface PushOptions {
   readonly token: string
   readonly title?: string
   readonly visibility?: Visibility
+  /** Present => republish this artifact as a new version instead of creating one. */
+  readonly artifactId?: string
+  /** Omitted => unconditional republish, the --force path. Only meaningful with `artifactId`. */
+  readonly expectedVersionNo?: number
   readonly isInsecureAllowed?: boolean
   readonly userAgent?: string
   /** `push` already holds the files, so a caller announcing the upload need not re-read the directory. */

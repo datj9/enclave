@@ -22,6 +22,7 @@ export interface PushCommandOptions {
   readonly title?: string
   readonly visibility?: Visibility
   readonly isNew: boolean
+  readonly isForced: boolean
   readonly isDryRun: boolean
   readonly isJson: boolean
   readonly isInsecureAllowed?: boolean
@@ -144,8 +145,9 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Non-null is an exit code and means stop; null means the check passed. */
-function refuseExistingState(
+/** Non-null is an exit code and means stop; null means the check passed. A state file no longer
+ *  refuses the push — it directs it at the artifact it names — but it must still agree on host. */
+function refuseMismatchedHost(
   state: ProjectState | null,
   host: string,
   options: PushCommandOptions,
@@ -169,16 +171,7 @@ function refuseExistingState(
     return 1
   }
 
-  const shortId = state.artifactId.slice(0, SHORT_ID_LENGTH)
-  reportError(
-    options.isJson,
-    'STATE_EXISTS',
-    `.enclave.json exists (artifact ${shortId}); republishing lands in S15`,
-    `✗ .enclave.json exists (artifact ${shortId})\n` +
-      '  republishing lands in S15\n' +
-      '  use --new to create a separate artifact',
-  )
-  return 1
+  return null
 }
 
 type HostSource = 'flag' | 'environment' | 'state'
@@ -261,23 +254,42 @@ function reportDryRun(options: PushCommandOptions): number {
  * `/enter` mints, so printing it hands the user an address that is dead for everyone including
  * them. `viewUrl` stays in the `--json` result, which is a pinned contract.
  */
-function reportPushed(options: PushCommandOptions, host: string, result: PushResult): void {
+function reportPushed(
+  options: PushCommandOptions,
+  host: string,
+  result: PushResult,
+  isRepublish: boolean,
+): void {
   writeSkippedBlock(result.skipped)
   process.stdout.write(
     `✓ ${String(result.uploaded.length)} files, ` +
       `${String(kilobytesOf(options.directory, result.uploaded))} KB\n`,
   )
   const shortId = result.artifactId.slice(0, SHORT_ID_LENGTH)
-  process.stdout.write(`✓ created ${shortId}  v${String(result.versionNo)}\n`)
+  process.stdout.write(
+    `✓ ${isRepublish ? 'updated' : 'created'} ${shortId}  v${String(result.versionNo)}\n`,
+  )
   process.stdout.write(`→ ${host}/a/${result.artifactId}\n`)
   const isPrivate = options.visibility === undefined || options.visibility === 'private'
-  if (options.visibility === undefined) {
+  // Only true of a first push: a republish never changes the visibility it already has.
+  if (options.visibility === undefined && !isRepublish) {
     process.stdout.write('  private — only you can open that link\n')
   }
   process.stdout.write(`  share it:  enclave share create ${shortId} --expires 7d\n`)
-  if (isPrivate) {
+  if (isPrivate && !isRepublish) {
     process.stdout.write(`  or open to the instance:  enclave privacy ${shortId} org\n`)
   }
+}
+
+/** The 409 carries both numbers, which is what lets this say what happened without a second
+ *  request. Missing numbers still get a usable line rather than `undefined`. */
+function reportVersionConflict(error: PushError): void {
+  const { currentVersionNo, expectedVersionNo } = error.details
+  const serverAt = typeof currentVersionNo === 'number' ? `v${String(currentVersionNo)}` : 'ahead'
+  const youAt = typeof expectedVersionNo === 'number' ? `v${String(expectedVersionNo)}` : 'behind'
+  process.stderr.write(`✗ server is at ${serverAt}, you last pushed ${youAt}\n`)
+  process.stderr.write('  refusing to overwrite a newer version\n')
+  process.stderr.write('  re-run with --force to publish anyway\n')
 }
 
 /** stderr, never stdout: `--json` promises stdout carries the result object and nothing else. */
@@ -326,8 +338,12 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   if (hostResolution.failureExitCode !== null) return hostResolution.failureExitCode
   const { canonicalHost } = hostResolution
 
-  const refusal = refuseExistingState(state, canonicalHost, options)
-  if (refusal !== null) return refusal
+  const mismatch = refuseMismatchedHost(state, canonicalHost, options)
+  if (mismatch !== null) return mismatch
+
+  // A state file names the artifact this directory already publishes to, so the push appends a
+  // version to it. `--new` deliberately ignores it and creates a separate artifact.
+  const republishTarget = options.isNew ? null : state
 
   const token = tokenFor(canonicalHost)
   if (token === null) {
@@ -350,6 +366,15 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
       visibility: options.visibility ?? 'private',
       isInsecureAllowed: options.isInsecureAllowed ?? false,
       userAgent: USER_AGENT,
+      ...(republishTarget === null
+        ? {}
+        : {
+            artifactId: republishTarget.artifactId,
+            // --force drops the guard, which is what makes the server append unconditionally.
+            ...(options.isForced
+              ? {}
+              : { expectedVersionNo: republishTarget.lastPushedVersionNo }),
+          }),
       ...(isProgressVisible
         ? {
             onUploadStart: (plan: UploadPlan): void => {
@@ -362,10 +387,20 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     const code = error instanceof PushError ? error.code : 'UNEXPECTED_RESPONSE'
     const text = messageOf(error)
     const details = error instanceof PushError ? error.details : {}
+
+    if (code === 'VERSION_CONFLICT' && !options.isJson && error instanceof PushError) {
+      reportVersionConflict(error)
+      return 1
+    }
+
     reportError(options.isJson, code, text, `✗ ${text}`, details)
     // The no-token path already prints this; a token the server rejected mid-push did not.
     if (code === 'UNAUTHORIZED' && !options.isJson) {
       process.stderr.write(`  log in again: enclave login --host ${canonicalHost}\n`)
+    }
+    // On the republish path a 404 means the artifact this directory tracked is gone server-side.
+    if (code === 'NOT_FOUND' && republishTarget !== null && !options.isJson) {
+      process.stderr.write('  use --new to publish this directory as a new artifact\n')
     }
     return 1
   }
@@ -373,7 +408,7 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   writeState(options.directory, {
     host: canonicalHost,
     artifactId: result.artifactId,
-    lastPushedVersionNo: 1,
+    lastPushedVersionNo: result.versionNo,
   })
 
   if (options.isJson) {
@@ -381,6 +416,6 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 0
   }
 
-  reportPushed(options, canonicalHost, result)
+  reportPushed(options, canonicalHost, result, republishTarget !== null)
   return 0
 }
