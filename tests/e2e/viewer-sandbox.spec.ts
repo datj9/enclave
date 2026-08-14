@@ -27,11 +27,22 @@ interface CreatedEnvelope {
 function indexHtml(label: string): string {
   return [
     '<!doctype html><meta charset="utf-8"><title>Artifact</title>',
+    '<link rel="stylesheet" href="assets/style.css">',
     `<p id="marker">artifact ${label}</p>`,
+    '<a id="to-second-page" href="second-page.html">second page</a>',
     '<script>',
     `  localStorage.setItem('${PROBE_KEY}', '${label}');`,
     `  window.enclaveProbe = { visibleCookies: document.cookie, label: '${label}' };`,
     '</script>',
+  ].join('')
+}
+
+/** Both references are relative, which is what breaks if this page is served off-origin. */
+function secondPageHtml(label: string): string {
+  return [
+    '<!doctype html><meta charset="utf-8"><title>Second</title>',
+    '<link rel="stylesheet" href="assets/style.css">',
+    `<p id="second-marker">second page of ${label}</p>`,
   ].join('')
 }
 
@@ -41,6 +52,8 @@ function bundle(label: string) {
     visibility: 'private',
     files: [
       { path: 'index.html', content: indexHtml(label) },
+      { path: 'second-page.html', content: secondPageHtml(label) },
+      { path: 'assets/style.css', content: '#marker, #second-marker { color: rgb(0, 128, 0); }' },
       { path: 'data.json', content: JSON.stringify({ label }) },
       { path: 'assets/app.js', content: `export const label = '${label}'` },
     ],
@@ -142,6 +155,40 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(hostA).toBe(`${artifactA}.artifacts.localhost:3000`)
     expect(hostB).toBe(`${artifactB}.artifacts.localhost:3000`)
     expect(hostA).not.toBe(hostB)
+  })
+
+  /**
+   * The regression this pins: a link to a second page used to 302 onto a presigned storage URL,
+   * so the browser left the artifact origin. Every relative `href` and `src` on that page then
+   * re-resolved against storage without a signature, which is why the page arrived without its
+   * stylesheet and why the next link from it did not arrive at all.
+   *
+   * The assertion is the origin, not the rendered colour: under the bundled MinIO the redirect
+   * for `assets/style.css` is plain http, which the artifact CSP's `style-src … https:` refuses.
+   * That is a separate defect in the http-storage default and would make a colour assertion fail
+   * here for a reason that has nothing to do with this navigation.
+   */
+  test('a link to a second page is served from the artifact origin, not from storage', async () => {
+    const frame = await openViewer(page, artifactA, 'A')
+
+    const documentResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/second-page.html') && response.request().isNavigationRequest(),
+    )
+    await frame.locator('#to-second-page').click()
+
+    const response = await documentResponse
+    expect(response.status()).toBe(200)
+    expect(response.headers()['content-type']).toBe('text/html; charset=utf-8')
+
+    await expect(
+      page.frameLocator('iframe[title="Artifact"]').locator('#second-marker'),
+    ).toHaveText('second page of A')
+
+    const secondPage = page
+      .frames()
+      .find((candidate) => candidate.url().endsWith('/second-page.html'))
+    expect(secondPage, 'the second page is still framed on the artifact origin').toBeTruthy()
+    expect(new URL((secondPage as Frame).url()).host).toBe(`${artifactA}.artifacts.localhost:3000`)
   })
 
   test("artifact A's localStorage is unreadable from artifact B", async () => {
