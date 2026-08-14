@@ -13,6 +13,7 @@ import {
   artifactStorageUnavailable,
   requestHost,
 } from '@/lib/artifacts/origin'
+import type { ManifestEntry } from '@/lib/bundle/validate'
 import { HttpError } from '@/lib/http'
 import { storageKey } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
@@ -20,30 +21,35 @@ import { objectStore } from '@/lib/storage/s3'
 /**
  * grill-result §4.2 steps 5 and 6, the whole read surface of an artifact origin.
  *
- * `/` streams the entry document through this process so revoking access takes effect on the
- * next request; every other path is redirected to a freshly minted presigned URL, which is why
- * asset bytes never touch the app. Neither the presigned URL nor the grant cookie is logged.
+ * Documents stream through this process, so revoking access takes effect on the next request and
+ * every page of a multi-page artifact keeps this origin as its base URL. Every other content type
+ * is redirected to a freshly minted presigned URL, which is why asset bytes never touch the app.
+ * Neither the presigned URL nor the grant cookie is logged.
  */
 
 export const dynamic = 'force-dynamic'
 
 const NO_STORE = 'private, no-store'
 
+/** The content type a browser can *navigate* to, which is what makes it this origin's to serve. */
+const DOCUMENT_CONTENT_TYPE = 'text/html'
+
 interface RouteContext {
   readonly params: Promise<{ readonly id: string; readonly path?: readonly string[] }>
 }
 
-async function streamEntryDocument(version: AuthorizedVersion): Promise<Response> {
-  const entry = resolveManifestPath(version.manifest, version.entryPath)
-  const key = storageKey(version.artifactId, version.versionId, version.entryPath)
+async function streamDocument(
+  version: AuthorizedVersion,
+  entry: ManifestEntry,
+): Promise<Response> {
+  const key = storageKey(version.artifactId, version.versionId, entry.path)
   const object = await objectStore().getObjectStream(key)
   if (object === undefined) return artifactNotAvailable()
 
-  const contentType = entry?.content_type ?? object.contentType
   return new Response(object.body, {
     status: 200,
     headers: {
-      'content-type': contentType.startsWith('text/') ? `${contentType}; charset=utf-8` : contentType,
+      'content-type': `${entry.content_type}; charset=utf-8`,
       'cache-control': NO_STORE,
       ...(object.contentLength === undefined
         ? {}
@@ -54,12 +60,8 @@ async function streamEntryDocument(version: AuthorizedVersion): Promise<Response
 
 async function redirectToAsset(
   version: AuthorizedVersion,
-  requestedPath: string,
+  entry: ManifestEntry,
 ): Promise<Response> {
-  const entry = resolveManifestPath(version.manifest, requestedPath)
-  // Deliberately before any storage call: an unlisted path costs the bucket nothing.
-  if (entry === null) return artifactNotAvailable()
-
   const signedUrl = await objectStore().presignGetUrl(
     storageKey(version.artifactId, version.versionId, entry.path),
     env.PRESIGN_TTL_SECONDS,
@@ -88,10 +90,20 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   }
 
   const requestedPath = (path ?? []).join('/')
+  // `/` and an explicit `/index.html` name the same document and must take the same branch.
+  const entry = resolveManifestPath(
+    authorized.manifest,
+    requestedPath === '' ? authorized.entryPath : requestedPath,
+  )
+  // Deliberately before any storage call: an unlisted path costs the bucket nothing.
+  if (entry === null) return artifactNotAvailable()
+
   try {
-    return requestedPath === ''
-      ? await streamEntryDocument(authorized)
-      : await redirectToAsset(authorized, requestedPath)
+    // Kind, not position. A navigation redirected to storage would re-base the page there, and
+    // its relative hrefs would then be fetched unsigned.
+    return entry.content_type === DOCUMENT_CONTENT_TYPE
+      ? await streamDocument(authorized, entry)
+      : await redirectToAsset(authorized, entry)
   } catch (error) {
     if (error instanceof HttpError && error.code === 'STORAGE_UNAVAILABLE') {
       return artifactStorageUnavailable()
