@@ -31,8 +31,33 @@ export const dynamic = 'force-dynamic'
 
 const NO_STORE = 'private, no-store'
 
-/** The content type a browser can *navigate* to, which is what makes it this origin's to serve. */
-const DOCUMENT_CONTENT_TYPE = 'text/html'
+/**
+ * The content types a browser can *navigate* to, which is what makes them this origin's to serve.
+ * Streaming these keeps the navigation on-origin; every other type redirects to a presigned URL.
+ */
+const NAVIGABLE_DOCUMENT_TYPES = new Set([
+  'text/html',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'text/xml',
+  'application/json',
+  'application/xml',
+  'application/xhtml+xml',
+  'application/pdf',
+  'image/svg+xml',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+])
+
+/** True when the content type names something a browser renders in a top-level navigation. */
+export function isNavigableDocument(contentType: string): boolean {
+  const normalised = (contentType.toLowerCase().split(';')[0] ?? '').trim()
+  return NAVIGABLE_DOCUMENT_TYPES.has(normalised)
+}
 
 interface RouteContext {
   readonly params: Promise<{ readonly id: string; readonly path?: readonly string[] }>
@@ -101,7 +126,7 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   try {
     // Kind, not position. A navigation redirected to storage would re-base the page there, and
     // its relative hrefs would then be fetched unsigned.
-    return entry.content_type === DOCUMENT_CONTENT_TYPE
+    return isNavigableDocument(entry.content_type)
       ? await streamDocument(authorized, entry)
       : await redirectToAsset(authorized, entry)
   } catch (error) {
