@@ -767,18 +767,18 @@ describe('share commands', () => {
     })
 
     it('exits 2 and lists candidates when the prefix is ambiguous', async () => {
-      const one = 'c0ffee11aa04-2409-413c-acec-dec901bb8d3e'
-      const two = 'c0ffee11aa9f-413c-acec-dec901bb8d3e-zzzz'
+      const FIRST_MATCH = 'c0ffee11-aa04-4f9a-8b21-5d7e6f0a1b2c'
+      const SECOND_MATCH = 'c0ffee11-aa9f-4c3d-9e07-1b2a3c4d5e6f'
       mocks.get.mockResolvedValue({
         items: [
           {
-            shareId: one,
+            shareId: FIRST_MATCH,
             versionId: VERSION_ID,
             expiresAt: null,
             revokedAt: null,
           },
           {
-            shareId: two,
+            shareId: SECOND_MATCH,
             versionId: VERSION_ID,
             expiresAt: null,
             revokedAt: null,
@@ -788,15 +788,15 @@ describe('share commands', () => {
 
       const code = await runShareRevoke({
         host: HOST,
-        shareId: 'c0ffee11aa',
+        shareId: 'c0ffee11',
         artifactRef: ARTIFACT_ID,
       })
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
-      expect(errorText()).toContain("'c0ffee11aa' matches 2 share links on 3f2a91c4:")
-      expect(errorText()).toContain(`  ${one}`)
-      expect(errorText()).toContain(`  ${two}`)
+      expect(errorText()).toContain("'c0ffee11' matches 2 share links on 3f2a91c4:")
+      expect(errorText()).toContain(`  ${FIRST_MATCH}`)
+      expect(errorText()).toContain(`  ${SECOND_MATCH}`)
     })
 
     it('exits 2 without a request when the prefix is too short', async () => {
@@ -810,6 +810,21 @@ describe('share commands', () => {
       expect(mocks.get).not.toHaveBeenCalled()
       expect(mocks.remove).not.toHaveBeenCalled()
       expect(errorText()).toContain('at least 8 characters of the share id')
+    })
+
+    it('rejects a non-hex share-id prefix before any request', async () => {
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'not-a-uuid',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.get).not.toHaveBeenCalled()
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(errorText()).toContain(
+        "'not-a-uuid' is not a share-id prefix — share ids are hexadecimal, so give at least 8 hex characters",
+      )
     })
   })
 

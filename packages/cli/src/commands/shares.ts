@@ -339,12 +339,12 @@ function printLinks(
     return
   }
 
-  process.stdout.write(`SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
+  process.stdout.write(
+    `SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`,
+  )
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
-    process.stdout.write(
-      `${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`,
-    )
+    process.stdout.write(`${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`)
   }
 }
 
@@ -388,6 +388,13 @@ export async function runShareRevoke(options: ShareRevokeOptions): Promise<numbe
     return EXIT_USAGE
   }
 
+  if (!SHARE_PREFIX_PATTERN.test(options.shareId)) {
+    fail(
+      `'${options.shareId}' is not a share-id prefix — share ids are hexadecimal, so give at least ${String(MIN_PREFIX_LENGTH)} hex characters`,
+    )
+    return EXIT_USAGE
+  }
+
   const client = clientFor(options.host, options.isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
@@ -403,18 +410,18 @@ export async function runShareRevoke(options: ShareRevokeOptions): Promise<numbe
     }
 
     if (matches.length > 1) {
-      fail(`'${options.shareId}' matches ${String(matches.length)} share links on ${shortId(artifactId)}:`)
+      fail(
+        `'${options.shareId}' matches ${String(matches.length)} share links on ${shortId(artifactId)}:`,
+      )
       for (const match of matches) {
         fail(`  ${match.shareId}`)
       }
       return EXIT_USAGE
     }
 
-    const match = matches[0]
-    if (match === undefined) {
-      fail(`no share link on ${shortId(artifactId)} starts with '${options.shareId}'`)
-      return EXIT_USAGE
-    }
+    const [match] = matches
+    // `matches.length` is exactly 1 here; the guard is only for noUncheckedIndexedAccess.
+    if (match === undefined) return EXIT_FAILED
 
     if (match.revokedAt !== null) {
       process.stdout.write(`already revoked ${shortId(match.shareId)}\n`)
