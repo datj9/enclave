@@ -35,7 +35,7 @@ const USAGE = `enclave — publish and manage artifacts on a self-hosted instanc
 
   enclave share create <id> [--version <versionId>] [--expires <7d|2026-08-10T23:59:00+07:00>] [--json]
   enclave share list   <id> [--json]
-  enclave share revoke <shareId>
+  enclave share revoke <shareId> [--artifact <id>]
 
 Per-command detail, including what a bundle may contain: enclave <command> --help
 
@@ -222,13 +222,14 @@ const SHARE_COMMANDS: Readonly<Record<string, CommandSpec>> = {
     },
   },
   revoke: {
-    options: [...NETWORK_OPTIONS],
+    options: [...NETWORK_OPTIONS, 'artifact'],
     run: (positionals, values) => {
       requireArity(positionals, 2)
       return runShareRevoke({
         host: requireHost(values.host, values.insecure),
         shareId: requirePositional(positionals, 2, 'shareId'),
         isInsecureAllowed: values.insecure,
+        ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
       })
     },
   },

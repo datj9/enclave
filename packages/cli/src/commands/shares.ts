@@ -1,6 +1,12 @@
 import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
-import { IdResolutionError, InvalidIdError, resolveArtifactId, shortId } from '../ids.ts'
+import {
+  IdResolutionError,
+  InvalidIdError,
+  MIN_PREFIX_LENGTH,
+  resolveArtifactId,
+  shortId,
+} from '../ids.ts'
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 
 /**
@@ -12,6 +18,7 @@ import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
 const REQUIRED_SCOPE = 'shares:write'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SHARE_PREFIX_PATTERN = /^[0-9a-f]{8,}$/i
 const RELATIVE_EXPIRY_PATTERN = /^(\d+)([hdw])$/i
 const ISO_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
 // Fractional seconds match Zod/RFC 3339 (unlimited digits): Python/Go often emit 6.
@@ -75,6 +82,8 @@ export interface ShareRevokeOptions {
   readonly host: string
   readonly shareId: string
   readonly isInsecureAllowed?: boolean
+  /** Artifact whose share list resolves a `shareId` prefix. Accepts a prefix itself. */
+  readonly artifactRef?: string
 }
 
 function fail(message: string): void {
@@ -330,12 +339,12 @@ function printLinks(
     return
   }
 
-  process.stdout.write(`SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`)
+  process.stdout.write(
+    `SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`,
+  )
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
-    process.stdout.write(
-      `${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`,
-    )
+    process.stdout.write(`${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`)
   }
 }
 
@@ -354,16 +363,85 @@ export async function runShareList(options: ShareListOptions): Promise<number> {
 }
 
 export async function runShareRevoke(options: ShareRevokeOptions): Promise<number> {
-  let shareId: string
-  try {
-    shareId = requireUuid(options.shareId, 'share id')
-  } catch (error) {
-    if (!(error instanceof InvalidInputError)) throw error
-    fail(error.message)
+  if (UUID_PATTERN.test(options.shareId)) {
+    return deleteShare(options.host, options.shareId, options.isInsecureAllowed)
+  }
+
+  if (options.artifactRef === undefined) {
+    if (SHARE_PREFIX_PATTERN.test(options.shareId)) {
+      fail(
+        'share ids are not resolvable by prefix — pass the full uuid, or:\n' +
+          `enclave share revoke --artifact <artifact-id> ${options.shareId}`,
+      )
+      return EXIT_USAGE
+    }
+    fail(
+      `'${options.shareId}' is not a valid share id — pass the full uuid that enclave share list <artifact-id> prints`,
+    )
+    return EXIT_USAGE
+  }
+
+  if (options.shareId.length < MIN_PREFIX_LENGTH) {
+    fail(
+      `'${options.shareId}' is too short — give at least ${String(MIN_PREFIX_LENGTH)} characters of the share id`,
+    )
+    return EXIT_USAGE
+  }
+
+  if (!SHARE_PREFIX_PATTERN.test(options.shareId)) {
+    fail(
+      `'${options.shareId}' is not a share-id prefix — share ids are hexadecimal, so give at least ${String(MIN_PREFIX_LENGTH)} hex characters`,
+    )
     return EXIT_USAGE
   }
 
   const client = clientFor(options.host, options.isInsecureAllowed)
+  if (client === null) return EXIT_FAILED
+
+  try {
+    const artifactId = await resolveArtifactId(client, options.artifactRef)
+    const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
+    const lowered = options.shareId.toLowerCase()
+    const matches = response.items.filter((link) => link.shareId.toLowerCase().startsWith(lowered))
+
+    if (matches.length === 0) {
+      fail(`no share link on ${shortId(artifactId)} starts with '${options.shareId}'`)
+      return EXIT_USAGE
+    }
+
+    if (matches.length > 1) {
+      fail(
+        `'${options.shareId}' matches ${String(matches.length)} share links on ${shortId(artifactId)}:`,
+      )
+      for (const match of matches) {
+        fail(`  ${match.shareId}`)
+      }
+      return EXIT_USAGE
+    }
+
+    const [match] = matches
+    // `matches.length` is exactly 1 here; the guard is only for noUncheckedIndexedAccess.
+    if (match === undefined) return EXIT_FAILED
+
+    if (match.revokedAt !== null) {
+      process.stdout.write(`already revoked ${shortId(match.shareId)}\n`)
+      return EXIT_OK
+    }
+
+    await client.remove(`/api/v1/shares/${match.shareId}`)
+    process.stdout.write(`✓ revoked ${shortId(match.shareId)}\n`)
+    return EXIT_OK
+  } catch (error) {
+    return reportFailure(error)
+  }
+}
+
+async function deleteShare(
+  host: string,
+  shareId: string,
+  isInsecureAllowed?: boolean,
+): Promise<number> {
+  const client = clientFor(host, isInsecureAllowed)
   if (client === null) return EXIT_FAILED
 
   try {
