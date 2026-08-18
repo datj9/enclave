@@ -185,7 +185,7 @@ const SHARE_HELP = `enclave share — hand out one pinned version behind a revoc
 
   enclave share create <id> [--version <versionId>] [--expires <when>] [--json]
   enclave share list   <id> [--json]
-  enclave share revoke <shareId>
+  enclave share revoke <shareId> [--artifact <id>]
 
 A share link works whatever the artifact's visibility is, so revoking is the
 only thing that closes it. Run enclave share create --help for --expires.
@@ -233,14 +233,17 @@ Examples:
 
 const SHARE_REVOKE_HELP = `enclave share revoke — close a share link immediately
 
-  enclave share revoke <shareId> [--host <host>] [--insecure]
+  enclave share revoke <shareId> [--artifact <id>] [--host <host>] [--insecure]
 
+  --artifact   resolve a short share-id prefix against this artifact's links
 ${HOST_FLAGS}
-<shareId> is the full uuid enclave share list prints, not the artifact id. The
-link stops opening at once and revoking cannot be undone.
+<shareId> is the full uuid enclave share list prints, or an 8+ character
+prefix when --artifact is set. The link stops opening at once and revoking
+cannot be undone.
 
 Examples:
   enclave share revoke 1d4b0f7e-2c44-4f9a-8b21-5d7e6f0a1b2c
+  enclave share revoke --artifact 8aba3576 edabb251
   enclave share list 8aba3576
 `
 

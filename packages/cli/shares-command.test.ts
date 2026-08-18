@@ -678,6 +678,138 @@ describe('share commands', () => {
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
+      expect(errorText()).toContain('is not a valid share id')
+      expect(errorText()).toContain('enclave share list')
+    })
+
+    it('refuses a bare share-id prefix with an actionable escape hatch', async () => {
+      const code = await runShareRevoke({ host: HOST, shareId: 'c0ffee11' })
+
+      expect(code).toBe(2)
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(mocks.get).not.toHaveBeenCalled()
+      expect(errorText()).toContain('share ids are not resolvable by prefix')
+      expect(errorText()).toContain('enclave share revoke --artifact <artifact-id> c0ffee11')
+    })
+
+    it('deletes a full uuid even when --artifact is set, without listing shares', async () => {
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: SHARE_ID,
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(0)
+      expect(mocks.remove).toHaveBeenCalledWith(`/api/v1/shares/${SHARE_ID}`)
+      expect(mocks.get).not.toHaveBeenCalled()
+      expect(outputText()).toContain('revoked c0ffee11')
+    })
+
+    it('resolves a share prefix through --artifact and deletes the match', async () => {
+      mocks.get.mockResolvedValue({
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: null,
+            revokedAt: null,
+          },
+        ],
+      })
+
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'c0ffee11',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(0)
+      expect(mocks.get).toHaveBeenCalledWith(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
+      expect(mocks.remove).toHaveBeenCalledWith(`/api/v1/shares/${SHARE_ID}`)
+      expect(outputText()).toContain('revoked c0ffee11')
+    })
+
+    it('reports already-revoked without deleting when the only match is revoked', async () => {
+      mocks.get.mockResolvedValue({
+        items: [
+          {
+            shareId: SHARE_ID,
+            versionId: VERSION_ID,
+            expiresAt: null,
+            revokedAt: '2026-07-30T09:00:00.000Z',
+          },
+        ],
+      })
+
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'C0FFEE11',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(0)
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(outputText()).toContain('already revoked c0ffee11')
+    })
+
+    it('exits 2 when no share on the artifact starts with the prefix', async () => {
+      mocks.get.mockResolvedValue({ items: [] })
+
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'c0ffee11',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(errorText()).toContain("no share link on 3f2a91c4 starts with 'c0ffee11'")
+    })
+
+    it('exits 2 and lists candidates when the prefix is ambiguous', async () => {
+      const one = 'c0ffee11aa04-2409-413c-acec-dec901bb8d3e'
+      const two = 'c0ffee11aa9f-413c-acec-dec901bb8d3e-zzzz'
+      mocks.get.mockResolvedValue({
+        items: [
+          {
+            shareId: one,
+            versionId: VERSION_ID,
+            expiresAt: null,
+            revokedAt: null,
+          },
+          {
+            shareId: two,
+            versionId: VERSION_ID,
+            expiresAt: null,
+            revokedAt: null,
+          },
+        ],
+      })
+
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'c0ffee11aa',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(errorText()).toContain("'c0ffee11aa' matches 2 share links on 3f2a91c4:")
+      expect(errorText()).toContain(`  ${one}`)
+      expect(errorText()).toContain(`  ${two}`)
+    })
+
+    it('exits 2 without a request when the prefix is too short', async () => {
+      const code = await runShareRevoke({
+        host: HOST,
+        shareId: 'c0ffee',
+        artifactRef: ARTIFACT_ID,
+      })
+
+      expect(code).toBe(2)
+      expect(mocks.get).not.toHaveBeenCalled()
+      expect(mocks.remove).not.toHaveBeenCalled()
+      expect(errorText()).toContain('at least 8 characters of the share id')
     })
   })
 
