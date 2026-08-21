@@ -28,6 +28,9 @@ export const AUDIT_ACTIONS = [
   'token.revoke',
   'auth.login',
   'auth.login_failed',
+  'category.create',
+  'category.update',
+  'settings.update',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

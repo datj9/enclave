@@ -21,6 +21,9 @@ export type Visibility = (typeof VISIBILITIES)[number]
 export const VERSION_STATUSES = ['pending', 'ready'] as const
 export type VersionStatus = (typeof VERSION_STATUSES)[number]
 
+export const CATEGORY_SOURCES = ['model', 'manual'] as const
+export type CategorySource = (typeof CATEGORY_SOURCES)[number]
+
 /**
  * grill-result §5.2. `share_links` (S5) is still a derived level rather than an enum value — a link
  * is a capability, pinned to one version and revocable on its own. `public` is an enum value
@@ -36,6 +39,7 @@ export const artifacts = pgTable(
     title: text('title').notNull(),
     slug: text('slug').notNull(),
     visibility: text('visibility', { enum: VISIBILITIES }).notNull().default('private'),
+    categorySource: text('category_source', { enum: CATEGORY_SOURCES }).notNull().default('model'),
     // Circular by design: a version belongs to an artifact, and the artifact points at the one
     // ready version readers get. Stays NULL until the first version flips to `ready` (§5.2, #21).
     currentVersionId: uuid('current_version_id').references(
@@ -48,6 +52,7 @@ export const artifacts = pgTable(
   },
   (table) => [
     check('artifacts_visibility_check', sql`${table.visibility} in ('private', 'org', 'public')`),
+    check('artifacts_category_source_check', sql`${table.categorySource} in ('model', 'manual')`),
     // Matches the list query's keyset order exactly: owner, then created_at desc, id desc.
     index('artifacts_owner_created_idx').on(
       table.ownerId,
