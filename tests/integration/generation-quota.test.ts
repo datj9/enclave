@@ -245,7 +245,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
   it('gives a user on their own key the looser daily cap, and still the hourly limit', async () => {
     mocks.envOverrides.QUOTA_GENERATIONS_PER_DAY = 1
     mocks.envOverrides.QUOTA_GENERATIONS_PER_DAY_OWN_KEY = 5
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
 
     expect((await generate()).status).toBe(200)
     expect((await generate()).status).toBe(200)
@@ -263,7 +263,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
 
   it('gives a user on their own key the looser hourly limit too', async () => {
     mocks.envOverrides.RATE_LIMIT_GENERATIONS_PER_HOUR_OWN_KEY = 4
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       expect((await generate()).status).toBe(200)
@@ -280,7 +280,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
     mocks.envOverrides.RATE_LIMIT_GENERATIONS_PER_HOUR = 100
     mocks.envOverrides.QUOTA_GENERATIONS_PER_DAY = 2
     mocks.envOverrides.QUOTA_GENERATIONS_PER_DAY_OWN_KEY = 5
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
 
     await generate()
     await db.delete(userProviderKeys).where(eq(userProviderKeys.userId, ownerId))
@@ -296,7 +296,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
   })
 
   it('reports a rejected stored key as 400 and leaves it in place to be corrected', async () => {
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
     mocks.failWith = toProviderError({ status: 401 })
 
     const response = await generate()
@@ -310,7 +310,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
   })
 
   it('reports an unreadable stored key as 400 without calling the provider', async () => {
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
     await db
       .update(userProviderKeys)
       .set({ encryptedKey: Buffer.alloc(64, 7) })
@@ -337,7 +337,7 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
   })
 
   it('never writes a provider key to a log line', async () => {
-    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY)
+    await storeUserProviderKey(ownerId, 'anthropic', OWN_KEY, undefined)
     const logged: string[] = []
     const spies = (['log', 'info', 'warn', 'error'] as const).map((level) =>
       vi.spyOn(console, level).mockImplementation((line: unknown) => {

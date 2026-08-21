@@ -14,8 +14,10 @@ import type { ArtifactProvider, GenerateInput } from './types'
 const MAX_OUTPUT_TOKENS = 16_000
 
 /** Exported for the S7 seam and for tests; the client is otherwise created per generation. */
-export function createAnthropicClient(apiKey: string): Anthropic {
-  return new Anthropic({ apiKey, maxRetries: 0 })
+export function createAnthropicClient(apiKey: string, baseUrl?: string): Anthropic {
+  return baseUrl === undefined
+    ? new Anthropic({ apiKey, maxRetries: 0 })
+    : new Anthropic({ apiKey, baseURL: baseUrl, maxRetries: 0 })
 }
 
 /**
@@ -24,7 +26,7 @@ export function createAnthropicClient(apiKey: string): Anthropic {
  * `MALFORMED_MODEL_OUTPUT` by the parser — same outcome for the user, nothing persisted either way.
  */
 async function* streamAnthropic(input: GenerateInput): AsyncGenerator<string> {
-  const client = createAnthropicClient(input.apiKey)
+  const client = createAnthropicClient(input.apiKey, input.baseUrl)
   let tokensIn: number | null = null
   let tokensOut: number | null = null
 
@@ -64,5 +66,10 @@ async function* streamAnthropic(input: GenerateInput): AsyncGenerator<string> {
 
 export const anthropicProvider: ArtifactProvider = {
   id: 'anthropic',
+  generate: streamAnthropic,
+}
+
+export const anthropicCompatibleProvider: ArtifactProvider = {
+  id: 'anthropic-compatible',
   generate: streamAnthropic,
 }

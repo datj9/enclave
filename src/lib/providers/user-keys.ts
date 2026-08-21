@@ -4,8 +4,8 @@ import { db } from '@/db'
 import { userProviderKeys } from '@/db/schema/user-provider-keys'
 import { DecryptionError, decryptKey, encryptKey } from '@/lib/crypto/envelope'
 import { HttpError } from '@/lib/http'
-import type { ProviderId } from './types'
-import type { UserProviderKeys } from './index'
+import { acceptsBaseUrl, type ProviderId } from './types'
+import type { UserProviderCredential, UserProviderKeys } from './index'
 
 /**
  * Reads and writes `user_provider_keys`, sealing on the way in and opening on the way out. This
@@ -26,20 +26,28 @@ export interface StoredProviderKeyView {
   readonly provider: ProviderId
   /** `null` only when the stored blob no longer opens — a rotated `ENCRYPTION_KEY`, say. */
   readonly last4: string | null
+  readonly baseUrl: string | null
   readonly createdAt: string
 }
 
 /** The user's own keys for `resolveProviderForUser`. Empty when they have none stored. */
 export async function loadUserProviderKeys(userId: string): Promise<UserProviderKeys> {
   const rows = await db
-    .select({ provider: userProviderKeys.provider, encryptedKey: userProviderKeys.encryptedKey })
+    .select({
+      provider: userProviderKeys.provider,
+      encryptedKey: userProviderKeys.encryptedKey,
+      baseUrl: userProviderKeys.baseUrl,
+    })
     .from(userProviderKeys)
     .where(eq(userProviderKeys.userId, userId))
 
-  const keys: Partial<Record<ProviderId, string>> = {}
+  const keys: Partial<Record<ProviderId, UserProviderCredential>> = {}
   for (const row of rows) {
     try {
-      keys[row.provider] = decryptKey(row.encryptedKey)
+      keys[row.provider] = {
+        apiKey: decryptKey(row.encryptedKey),
+        baseUrl: row.baseUrl ?? undefined,
+      }
     } catch (error) {
       // Left in place deliberately: the user is the only one who can correct it, and deleting
       // their key on a read would silently move them onto the instance key and its lower quota.
@@ -71,6 +79,7 @@ export async function getStoredProviderKey(userId: string): Promise<StoredProvid
   return {
     provider: row.provider,
     last4: last4Of(row.encryptedKey),
+    baseUrl: row.baseUrl,
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -79,15 +88,17 @@ export async function storeUserProviderKey(
   userId: string,
   provider: ProviderId,
   apiKey: string,
+  baseUrl: string | undefined,
 ): Promise<void> {
   const encryptedKey = encryptKey(apiKey)
+  const storedBaseUrl = acceptsBaseUrl(provider) ? (baseUrl ?? null) : null
 
   await db
     .insert(userProviderKeys)
-    .values({ userId, provider, encryptedKey })
+    .values({ userId, provider, encryptedKey, baseUrl: storedBaseUrl })
     .onConflictDoUpdate({
       target: [userProviderKeys.userId, userProviderKeys.provider],
-      set: { encryptedKey, createdAt: new Date() },
+      set: { encryptedKey, baseUrl: storedBaseUrl, createdAt: new Date() },
     })
 
   await db

@@ -8,7 +8,7 @@ import {
   formatInstantStable,
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
-import { PROVIDER_IDS, type ProviderId } from '@/lib/providers/types'
+import { acceptsBaseUrl, PROVIDER_IDS, type ProviderId } from '@/lib/providers/types'
 import type { StoredProviderKeyView } from '@/lib/providers/user-keys'
 import styles from './page.module.css'
 
@@ -19,6 +19,7 @@ import styles from './page.module.css'
 
 const PROVIDER_LABEL: Readonly<Record<ProviderId, string>> = {
   anthropic: 'Anthropic',
+  'anthropic-compatible': 'Anthropic-compatible',
   'openai-compatible': 'OpenAI-compatible',
 }
 
@@ -28,9 +29,19 @@ const DELETE_FAILURE = 'That key could not be removed. Try again.'
 export function KeyManager({ initialKey }: { readonly initialKey: StoredProviderKeyView | null }) {
   const router = useRouter()
   const [storedKey, setStoredKey] = useState(initialKey)
+  const [selectedProvider, setSelectedProvider] = useState<ProviderId>(
+    () => initialKey?.provider ?? PROVIDER_IDS[0],
+  )
+  // selectedProvider's initializer already defaults to initialKey's provider, so they match here.
+  const [baseUrl, setBaseUrl] = useState(() => initialKey?.baseUrl ?? '')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const isMountedForLocalTime = useIsMountedForLocalTime()
+
+  function handleProviderChange(provider: ProviderId): void {
+    setSelectedProvider(provider)
+    setBaseUrl(storedKey !== null && storedKey.provider === provider ? (storedKey.baseUrl ?? '') : '')
+  }
 
   async function refreshStoredKey(): Promise<void> {
     const response = await fetch('/api/v1/settings/keys')
@@ -44,18 +55,20 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
   async function handleSave(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (isBusy) return
-    const form = new FormData(event.currentTarget)
-    const formElement = event.currentTarget
     setIsBusy(true)
     setErrorMessage(null)
+
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
 
     try {
       const response = await fetch('/api/v1/settings/keys', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          provider: String(form.get('provider') ?? ''),
+          provider: selectedProvider,
           apiKey: String(form.get('apiKey') ?? ''),
+          ...(acceptsBaseUrl(selectedProvider) ? { baseUrl } : {}),
         }),
       })
 
@@ -115,7 +128,8 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
             className="input"
             id="key-provider"
             name="provider"
-            defaultValue={PROVIDER_IDS[0]}
+            value={selectedProvider}
+            onChange={(event) => handleProviderChange(event.target.value as ProviderId)}
           >
             {PROVIDER_IDS.map((provider) => (
               <option key={provider} value={provider}>
@@ -141,8 +155,27 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
           />
         </div>
 
+        {acceptsBaseUrl(selectedProvider) && (
+          <div className="field">
+            <label className="field-label" htmlFor="key-base-url">
+              Base URL
+            </label>
+            <input
+              className="input"
+              id="key-base-url"
+              name="baseUrl"
+              type="url"
+              inputMode="url"
+              placeholder="https://gateway.example.com/v1"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              required
+            />
+          </div>
+        )}
+
         <button className="button-primary" type="submit" aria-disabled={isBusy}>
-          {storedKey === null ? 'Save key' : 'Replace key'}
+          {storedKey === null ? 'Save key' : 'Update key'}
         </button>
       </form>
     </>
@@ -186,6 +219,7 @@ function StoredKeyRow({
                   : formatInstantStable(storedKey.createdAt)
               }`}
         </p>
+        {storedKey.baseUrl !== null && <p className={styles.rowBaseUrl}>{storedKey.baseUrl}</p>}
       </div>
       <button className="button-secondary" type="button" aria-disabled={isBusy} onClick={onDelete}>
         Remove

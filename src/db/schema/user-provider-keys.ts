@@ -22,6 +22,7 @@ export const userProviderKeys = pgTable(
       .references(() => users.id),
     provider: text('provider', { enum: PROVIDER_IDS }).notNull(),
     encryptedKey: bytea('encrypted_key').notNull(),
+    baseUrl: text('base_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.provider] })],

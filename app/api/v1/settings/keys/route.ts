@@ -4,6 +4,8 @@ import { readJsonBody, requireJsonContentType, requireSessionUser } from '@/lib/
 import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
 import { PROVIDER_IDS } from '@/lib/providers'
+import { acceptsBaseUrl } from '@/lib/providers/types'
+import { normaliseBaseUrl } from '@/lib/providers/base-url'
 import {
   deleteUserProviderKeys,
   getStoredProviderKey,
@@ -26,23 +28,51 @@ export const dynamic = 'force-dynamic'
 const MIN_KEY_LENGTH = 8
 const MAX_KEY_LENGTH = 500
 
-const storeKeyBodySchema = z.object({
-  provider: z.enum(PROVIDER_IDS),
-  apiKey: z.string().trim().min(MIN_KEY_LENGTH).max(MAX_KEY_LENGTH),
-})
+const storeKeyBodySchema = z
+  .object({
+    provider: z.enum(PROVIDER_IDS),
+    apiKey: z.string().trim().min(MIN_KEY_LENGTH).max(MAX_KEY_LENGTH),
+    baseUrl: z.string().trim().optional(),
+  })
+  .superRefine((body, ctx) => {
+    // acceptsBaseUrl providers make the base URL the whole point of storing the key; the others
+    // have no endpoint to redirect, so a supplied value would silently be ignored downstream.
+    const providerNeedsBaseUrl = acceptsBaseUrl(body.provider)
+    const hasBaseUrl = body.baseUrl !== undefined && body.baseUrl !== ''
+
+    if (providerNeedsBaseUrl && (!hasBaseUrl || normaliseBaseUrl(body.baseUrl ?? '') === null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['baseUrl'], message: 'Invalid base URL' })
+    }
+    if (!providerNeedsBaseUrl && hasBaseUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['baseUrl'],
+        message: 'This provider does not accept a base URL',
+      })
+    }
+  })
+
+interface ParsedStoreKeyBody {
+  readonly provider: (typeof PROVIDER_IDS)[number]
+  readonly apiKey: string
+  readonly baseUrl: string | undefined
+}
 
 /**
  * The offending field names only — never the value, and never a length or a prefix, either of
  * which would leak part of a key into a response body and from there into a client log.
  */
-function parseStoreKeyBody(body: unknown) {
+function parseStoreKeyBody(body: unknown): ParsedStoreKeyBody {
   const parsed = storeKeyBodySchema.safeParse(body)
   if (!parsed.success) {
     throw new HttpError('VALIDATION_FAILED', 'Provide a provider and an API key', {
       details: { fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)') },
     })
   }
-  return parsed.data
+  const baseUrl = acceptsBaseUrl(parsed.data.provider)
+    ? (normaliseBaseUrl(parsed.data.baseUrl ?? '') ?? undefined)
+    : undefined
+  return { provider: parsed.data.provider, apiKey: parsed.data.apiKey, baseUrl }
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -52,7 +82,7 @@ export async function POST(request: Request): Promise<Response> {
     requireJsonContentType(request)
 
     const body = parseStoreKeyBody(await readJsonBody(request))
-    await storeUserProviderKey(sessionUser.id, body.provider, body.apiKey)
+    await storeUserProviderKey(sessionUser.id, body.provider, body.apiKey, body.baseUrl)
 
     return new Response(null, { status: 204 })
   } catch (error) {
