@@ -1,24 +1,31 @@
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
-import { anthropicProvider } from './anthropic'
+import { anthropicCompatibleProvider, anthropicProvider } from './anthropic'
 import { openAiCompatibleProvider } from './openai-compatible'
 import type { ArtifactProvider, ProviderId } from './types'
 
-export type { ArtifactProvider, GenerateInput, ProviderId, ProviderUsage } from './types'
-export { PROVIDER_IDS } from './types'
+export { acceptsBaseUrl, BASE_URL_PROVIDER_IDS, PROVIDER_IDS } from './types'
+export type { ArtifactProvider, BaseUrlProviderId, GenerateInput, ProviderId, ProviderUsage } from './types'
 
 /**
  * Which provider runs, and with whose key. Decision #10: `userKey ?? instanceKey`, per provider.
  *
  * Anthropic wins when both are configured — it is the reference implementation for the §5.5 format
- * and the one the system prompt is tuned against.
+ * and the one the system prompt is tuned against. `anthropic-compatible` has no instance-key
+ * fallback: it exists so a user can point at their own gateway, never the instance's.
  */
 
 const NO_KEY_MESSAGE =
   'No model provider is configured. Add an instance API key, or your own in settings.'
 
+/** A user's own credential for one provider. */
+export interface UserProviderCredential {
+  readonly apiKey: string
+  readonly baseUrl: string | undefined
+}
+
 /** Per-user keys, decrypted by the caller — see `loadUserProviderKeys` in ./user-keys. */
-export type UserProviderKeys = Readonly<Partial<Record<ProviderId, string>>>
+export type UserProviderKeys = Readonly<Partial<Record<ProviderId, UserProviderCredential>>>
 
 export interface ProviderCredentials {
   readonly instanceAnthropicKey: string | undefined
@@ -39,7 +46,7 @@ export interface ProviderSelection {
 
 /** Pure — the whole point of the split, so key precedence is testable without an environment. */
 export function selectProvider(credentials: ProviderCredentials): ProviderSelection {
-  const anthropicKey = credentials.userKeys.anthropic ?? credentials.instanceAnthropicKey
+  const anthropicKey = credentials.userKeys.anthropic?.apiKey ?? credentials.instanceAnthropicKey
   if (anthropicKey !== undefined) {
     return {
       provider: anthropicProvider,
@@ -50,14 +57,26 @@ export function selectProvider(credentials: ProviderCredentials): ProviderSelect
     }
   }
 
-  const openAiKey = credentials.userKeys['openai-compatible'] ?? credentials.instanceOpenAiKey
+  const anthropicCompatible = credentials.userKeys['anthropic-compatible']
+  if (anthropicCompatible !== undefined) {
+    return {
+      provider: anthropicCompatibleProvider,
+      apiKey: anthropicCompatible.apiKey,
+      model: credentials.model,
+      baseUrl: anthropicCompatible.baseUrl,
+      usedInstanceKey: false,
+    }
+  }
+
+  const openAiCredential = credentials.userKeys['openai-compatible']
+  const openAiKey = openAiCredential?.apiKey ?? credentials.instanceOpenAiKey
   if (openAiKey !== undefined) {
     return {
       provider: openAiCompatibleProvider,
       apiKey: openAiKey,
       model: credentials.model,
-      baseUrl: credentials.openAiBaseUrl,
-      usedInstanceKey: credentials.userKeys['openai-compatible'] === undefined,
+      baseUrl: openAiCredential !== undefined ? openAiCredential.baseUrl : credentials.openAiBaseUrl,
+      usedInstanceKey: openAiCredential === undefined,
     }
   }
 

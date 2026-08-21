@@ -50,6 +50,13 @@
       "when": 1785971855177,
       "tag": "0007_public_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787272353007,
+      "tag": "0008_provider_base_url",
+      "breakpoints": true
     }
   ]
 }

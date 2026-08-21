@@ -65,3 +65,10 @@
   color: var(--color-ink-2);
   font-size: var(--text-sm);
 }
+
+.rowBaseUrl {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}

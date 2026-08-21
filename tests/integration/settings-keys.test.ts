@@ -96,6 +96,7 @@ describe.skipIf(!database)('/api/v1/settings/keys', () => {
       data: {
         provider: 'anthropic',
         last4: '3210',
+        baseUrl: null,
         createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       },
     })
@@ -110,7 +111,11 @@ describe.skipIf(!database)('/api/v1/settings/keys', () => {
   it('replaces the stored key rather than accumulating one per provider', async () => {
     await POST(storeRequest({ provider: 'anthropic', apiKey: API_KEY }))
     await POST(
-      storeRequest({ provider: 'openai-compatible', apiKey: 'sk-openai-0000000011112222' }),
+      storeRequest({
+        provider: 'openai-compatible',
+        apiKey: 'sk-openai-0000000011112222',
+        baseUrl: 'https://api.openai.com/v1',
+      }),
     )
 
     const rows = await storedRows()
@@ -186,5 +191,89 @@ describe.skipIf(!database)('/api/v1/settings/keys', () => {
     for (const spy of spies) spy.mockRestore()
 
     expect(logged.some((line) => line.includes('sk-ant'))).toBe(false)
+  })
+
+  /**
+   * Spec — editable provider + `anthropic-compatible` + per-key base URL: the base URL round
+   * trips through the store, the stale-URL regression (a replace must reset it), and the POST
+   * validation matrix that ties a base URL's presence to whether the provider accepts one.
+   */
+  const GATEWAY_URL = 'https://gw.example.com/v1'
+
+  it('stores and returns the base URL for anthropic-compatible', async () => {
+    await POST(storeRequest({ provider: 'anthropic-compatible', apiKey: API_KEY, baseUrl: GATEWAY_URL }))
+
+    const [row] = await storedRows()
+    expect(row?.provider).toBe('anthropic-compatible')
+    expect(row?.baseUrl).toBe(GATEWAY_URL)
+
+    await expect((await GET()).json()).resolves.toMatchObject({
+      data: { provider: 'anthropic-compatible', baseUrl: GATEWAY_URL },
+    })
+  })
+
+  it('stores and returns the base URL for openai-compatible', async () => {
+    await POST(storeRequest({ provider: 'openai-compatible', apiKey: API_KEY, baseUrl: GATEWAY_URL }))
+
+    const [row] = await storedRows()
+    expect(row?.baseUrl).toBe(GATEWAY_URL)
+  })
+
+  it('resets a previously-stored base URL to null when the key is replaced', async () => {
+    await POST(storeRequest({ provider: 'anthropic-compatible', apiKey: API_KEY, baseUrl: GATEWAY_URL }))
+    await POST(storeRequest({ provider: 'anthropic', apiKey: API_KEY }))
+
+    const [row] = await storedRows()
+    expect(row?.provider).toBe('anthropic')
+    expect(row?.baseUrl).toBeNull()
+  })
+
+  it('rejects a compatible provider with no base URL', async () => {
+    const response = await POST(storeRequest({ provider: 'anthropic-compatible', apiKey: API_KEY }))
+    const body = await response.text()
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(body)).toMatchObject({
+      error: { code: 'VALIDATION_FAILED', details: { fields: ['baseUrl'] } },
+    })
+    expect(await storedRows()).toHaveLength(0)
+  })
+
+  it('rejects a malformed base URL for a compatible provider', async () => {
+    const response = await POST(
+      storeRequest({ provider: 'openai-compatible', apiKey: API_KEY, baseUrl: 'not-a-url' }),
+    )
+    const body = await response.text()
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(body)).toMatchObject({
+      error: { code: 'VALIDATION_FAILED', details: { fields: ['baseUrl'] } },
+    })
+    expect(body).not.toContain('not-a-url')
+    expect(await storedRows()).toHaveLength(0)
+  })
+
+  it('rejects a base URL supplied for plain anthropic', async () => {
+    const response = await POST(
+      storeRequest({ provider: 'anthropic', apiKey: API_KEY, baseUrl: GATEWAY_URL }),
+    )
+    const body = await response.text()
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(body)).toMatchObject({
+      error: { code: 'VALIDATION_FAILED', details: { fields: ['baseUrl'] } },
+    })
+    expect(await storedRows()).toHaveLength(0)
+  })
+
+  it('never echoes the submitted API key or base URL in a validation error body', async () => {
+    const response = await POST(
+      storeRequest({ provider: 'openai-compatible', apiKey: API_KEY, baseUrl: 'javascript:alert(1)' }),
+    )
+    const body = await response.text()
+
+    expect(response.status).toBe(422)
+    expect(body).not.toContain(API_KEY)
+    expect(body).not.toContain('javascript:alert(1)')
   })
 })

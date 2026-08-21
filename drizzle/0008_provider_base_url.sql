@@ -1,0 +1,1 @@
+ALTER TABLE "user_provider_keys" ADD COLUMN "base_url" text;

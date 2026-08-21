@@ -7,8 +7,16 @@
  * on this module, and neither should pull a vendor client into its bundle.
  */
 
-export const PROVIDER_IDS = ['anthropic', 'openai-compatible'] as const
+export const PROVIDER_IDS = ['anthropic', 'anthropic-compatible', 'openai-compatible'] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
+
+/** Providers whose endpoint the user chooses, and so may set a base URL for. */
+export const BASE_URL_PROVIDER_IDS = ['anthropic-compatible', 'openai-compatible'] as const
+export type BaseUrlProviderId = (typeof BASE_URL_PROVIDER_IDS)[number]
+
+export function acceptsBaseUrl(provider: ProviderId): provider is BaseUrlProviderId {
+  return (BASE_URL_PROVIDER_IDS as readonly ProviderId[]).includes(provider)
+}
 
 export interface ProviderUsage {
   readonly tokensIn: number | null
