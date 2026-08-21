@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { requireAdminUser } from '@/lib/admin/guards'
 import { readJsonBody, requireJsonContentType } from '@/lib/api/guards'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
-import { AUTO_CATEGORIZE_KEY, getAutoCategorizeEnabled, setAutoCategorizeEnabled } from '@/lib/settings/instance-settings'
+import { getAutoCategorizeEnabled, setAutoCategorizeEnabled } from '@/lib/settings/instance-settings'
 
 export const dynamic = 'force-dynamic'
 

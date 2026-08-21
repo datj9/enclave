@@ -1,9 +1,11 @@
-import { and, desc, eq, isNull, lt, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, exists, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 
 import { db } from '@/db'
 import { artifactVersions, artifacts, type Visibility } from '@/db/schema/artifacts'
+import { artifactCategories, categories } from '@/db/schema/categories'
 import { encodeListCursor, type ListCursor, type ListQuery } from './list-query'
 import { artifactViewUrl } from './naming'
+import { readArtifactTags } from './tags'
 
 /**
  * The owner's artifact list. S2 is owner-only reads by design — org visibility and `canRead`
@@ -25,11 +27,18 @@ export interface ArtifactListItem {
   readonly createdAt: string
   readonly updatedAt: string
   readonly viewUrl: string
+  /** Active tags only — a deactivated category disappears from here. */
+  readonly categories: readonly { readonly slug: string }[]
 }
 
 export interface ArtifactListPage {
   readonly items: readonly ArtifactListItem[]
   readonly nextCursor: string | null
+}
+
+/** List input as accepted by callers that paginate without a category filter. */
+export type ArtifactListQuery = Omit<ListQuery, 'categorySlug'> & {
+  readonly categorySlug?: string | undefined
 }
 
 /** Keyset predicate matching the `(created_at desc, id desc)` order exactly. */
@@ -41,9 +50,29 @@ function afterCursor(cursor: ListCursor): SQL | undefined {
   )
 }
 
+/**
+ * Restricts the page to artifacts tagged with the category whose slug matches, and whose
+ * category is still active — an unknown or inactive slug then matches no rows at all.
+ */
+function categoryFilter(slug: string): SQL {
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(artifactCategories)
+      .innerJoin(categories, eq(artifactCategories.categoryId, categories.id))
+      .where(
+        and(
+          eq(artifactCategories.artifactId, artifacts.id),
+          eq(categories.slug, slug),
+          eq(categories.isActive, true),
+        ),
+      ),
+  )
+}
+
 export async function listOwnedArtifacts(
   ownerId: string,
-  query: ListQuery,
+  query: ArtifactListQuery,
 ): Promise<ArtifactListPage> {
   const rows = await db
     .select({
@@ -65,6 +94,7 @@ export async function listOwnedArtifacts(
         eq(artifacts.ownerId, ownerId),
         isNull(artifacts.deletedAt),
         eq(artifactVersions.status, 'ready'),
+        query.categorySlug === undefined ? undefined : categoryFilter(query.categorySlug),
         query.cursor === undefined ? undefined : afterCursor(query.cursor),
       ),
     )
@@ -76,12 +106,15 @@ export async function listOwnedArtifacts(
   const last = page.at(-1)
   const hasMore = rows.length > query.limit
 
+  const tagsById = await readArtifactTags(page.map((row) => row.id))
+
   return {
     items: page.map((row) => ({
       ...row,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
       viewUrl: artifactViewUrl(row.id),
+      categories: tagsById.get(row.id) ?? [],
     })),
     nextCursor:
       hasMore && last !== undefined

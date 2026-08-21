@@ -60,7 +60,7 @@ export default async function ArtifactViewerPage({
   if (page.kind === 'signin') redirect('/signin')
   if (page.kind === 'missing') notFound()
 
-  const { authorized, viewerRef, title, isSignedIn } = page
+  const { authorized, viewerRef, title, isSignedIn, categories } = page
 
   const handoffToken = await signHandoffToken({
     artifactId: authorized.artifactId,
@@ -96,6 +96,7 @@ export default async function ArtifactViewerPage({
         */}
         <h1 className={styles.title}>{title}</h1>
         <p className={styles.origin}>{new URL(artifactViewUrl(id)).host}</p>
+        {categories.length > 0 && <p>{categories.map((category) => category.name).join(' · ')}</p>}
         {shareState !== null && (
           <div className={styles.ownerControls}>
             <PrivacySwitch

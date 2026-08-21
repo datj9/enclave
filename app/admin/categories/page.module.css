@@ -1,0 +1,67 @@
+.createForm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-sm);
+  align-items: end;
+  margin-bottom: var(--space-md);
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  padding: var(--space-3xs) var(--space-2xs);
+  border-bottom: 1px solid var(--color-rule);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-3xs) var(--space-2xs);
+  border-bottom: 1px solid var(--color-rule);
+  vertical-align: middle;
+}
+
+.renameForm {
+  display: flex;
+  gap: var(--space-2xs);
+  align-items: center;
+}
+
+.renameForm .input {
+  min-width: 10rem;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+.active {
+  color: var(--color-ink);
+}
+
+.muted {
+  color: var(--color-ink-2);
+}
+
+.compactButton {
+  font-size: var(--text-xs);
+  padding: var(--space-3xs) var(--space-2xs);
+}
+
+.empty {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
