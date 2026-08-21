@@ -99,3 +99,29 @@ export async function readArtifactTags(
 
   return tags
 }
+
+/**
+ * Model-sourced replacement of an artifact's tags: the classifier's result, not a user's. The
+ * whole write is one transaction, existing rows are cleared first (even for an empty list), and
+ * `category_source` is written explicitly to `'model'` so a later append re-classifies. There is
+ * deliberately no ownership check — the caller is the server, never a user.
+ */
+export async function applyModelTags(
+  artifactId: string,
+  categoryIds: readonly string[],
+): Promise<void> {
+  await db.transaction(async (transaction) => {
+    await transaction.delete(artifactCategories).where(eq(artifactCategories.artifactId, artifactId))
+
+    if (categoryIds.length > 0) {
+      await transaction.insert(artifactCategories).values(
+        [...new Set(categoryIds)].map((categoryId) => ({ artifactId, categoryId })),
+      )
+    }
+
+    await transaction
+      .update(artifacts)
+      .set({ categorySource: 'model', updatedAt: new Date() })
+      .where(eq(artifacts.id, artifactId))
+  })
+}
