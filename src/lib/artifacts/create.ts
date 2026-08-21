@@ -2,6 +2,7 @@ import { db } from '@/db'
 import { artifactVersions, artifacts, type Visibility } from '@/db/schema/artifacts'
 import { recordAuditEvent } from '@/lib/audit'
 import { ENTRY_PATH, validateBundle, type BundleFile, type ManifestEntry } from '@/lib/bundle/validate'
+import { classifyArtifactVersion } from '@/lib/categories/classify'
 import { HttpError, type ErrorCode } from '@/lib/http'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
@@ -114,6 +115,13 @@ export async function createArtifactWithBundle(
     artifactId: version.artifactId,
     versionId: version.versionId,
     metadata: { versionNo: FIRST_VERSION_NO, fileCount: validation.manifest.length },
+  })
+
+  // Best-effort model tagging — the classifier never throws by contract, so no try/catch.
+  await classifyArtifactVersion({
+    artifactId: version.artifactId,
+    title: input.title,
+    files: input.files,
   })
 
   return {

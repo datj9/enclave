@@ -4,6 +4,7 @@ import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
 import { recordAuditEvent } from '@/lib/audit'
 import { ENTRY_PATH, validateBundle, type BundleFile } from '@/lib/bundle/validate'
+import { classifyArtifactVersion } from '@/lib/categories/classify'
 import { HttpError } from '@/lib/http'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
@@ -63,7 +64,12 @@ export async function appendVersion(
   const version = await db
     .transaction(async (transaction) => {
       const [artifact] = await transaction
-        .select({ ownerId: artifacts.ownerId, deletedAt: artifacts.deletedAt })
+        .select({
+          ownerId: artifacts.ownerId,
+          deletedAt: artifacts.deletedAt,
+          categorySource: artifacts.categorySource,
+          title: artifacts.title,
+        })
         .from(artifacts)
         .where(eq(artifacts.id, input.artifactId))
         .for('update')
@@ -113,7 +119,13 @@ export async function appendVersion(
         throw new HttpError('INTERNAL_ERROR', 'Could not create the artifact version')
       }
 
-      return { artifactId: input.artifactId, versionId: version.id, versionNo }
+      return {
+        artifactId: input.artifactId,
+        versionId: version.id,
+        versionNo,
+        categorySource: artifact.categorySource,
+        title: artifact.title,
+      }
     })
     .catch(async (error: unknown) => {
       if (!isUniqueViolation(error)) throw error
@@ -145,6 +157,16 @@ export async function appendVersion(
     versionId: version.versionId,
     metadata: { versionNo: version.versionNo, fileCount: manifest.length },
   })
+
+  // Best-effort model tagging — the classifier never throws by contract, so no try/catch.
+  // A manually-tagged artifact is the author's own curation: skip re-classification entirely.
+  if (version.categorySource !== 'manual') {
+    await classifyArtifactVersion({
+      artifactId: version.artifactId,
+      title: version.title,
+      files: input.files,
+    })
+  }
 
   return {
     versionId: version.versionId,
