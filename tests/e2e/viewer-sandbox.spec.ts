@@ -277,10 +277,11 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(response?.headers()['content-type']).toContain('text/html')
   })
 
-  test('an asset path redirects to a 60-second presigned URL', async () => {
+  test('a non-navigable asset path redirects to a 60-second presigned URL', async () => {
     await openViewer(page, artifactA, 'A')
 
-    const response = await page.goto(`${artifactOrigin(artifactA)}/data.json`)
+    // `text/css` is not a type a browser navigates to, so this path is the bucket's to serve.
+    const response = await page.goto(`${artifactOrigin(artifactA)}/assets/style.css`)
     expect(response?.status()).toBe(200)
     expect(
       response?.request().redirectedFrom(),
@@ -291,6 +292,16 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(signed.host).not.toBe(`${artifactA}.artifacts.localhost:3000`)
     expect(signed.searchParams.get('X-Amz-Expires')).toBe('60')
     expect(signed.searchParams.get('X-Amz-Signature')).not.toBeNull()
+  })
+
+  test('a navigable non-html path is streamed on-origin, not redirected', async () => {
+    await openViewer(page, artifactA, 'A')
+
+    const response = await page.goto(`${artifactOrigin(artifactA)}/data.json`)
+    expect(response?.status()).toBe(200)
+    expect(response?.url()).toBe(`${artifactOrigin(artifactA)}/data.json`)
+    expect(response?.request().redirectedFrom()).toBeNull()
+    expect(response?.headers()['content-type']).toContain('application/json')
   })
 
   test('a path absent from the version manifest is a 404', async () => {
@@ -304,6 +315,18 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
   })
 
   test('relative fetch from artifact JavaScript follows the redirect to storage', async () => {
+    const frame = await openViewer(page, artifactA, 'A')
+
+    // A redirecting path, so this still exercises the presigned hop from inside the sandbox.
+    const stylesheet = await frame.evaluate(async () => {
+      const response = await fetch('./assets/style.css')
+      return response.text()
+    })
+
+    expect(stylesheet).toContain('rgb(0, 128, 0)')
+  })
+
+  test('relative fetch of a streamed path stays on the artifact origin', async () => {
     const frame = await openViewer(page, artifactA, 'A')
 
     const fetched = await frame.evaluate(async () => {
