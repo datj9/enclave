@@ -26,13 +26,17 @@ export const updateArtifactBodySchema = z
   .object({
     title: z.string().trim().min(1).max(MAX_TITLE_LENGTH).optional(),
     visibility: z.enum(VISIBILITIES).optional(),
+    categoryIds: z.array(z.string().uuid()).max(10).optional(),
   })
   // Unknown keys are refused rather than ignored: a caller who misspells `visibility` must not
   // get a 200 that silently changed nothing.
   .strict()
   .refine(
-    (body) => body.title !== undefined || body.visibility !== undefined,
-    { message: 'Provide at least one of title or visibility' },
+    (body) =>
+      body.title !== undefined ||
+      body.visibility !== undefined ||
+      body.categoryIds !== undefined,
+    { message: 'Provide at least one of title, visibility or categoryIds' },
   )
 
 export type UpdateArtifactPatch = z.infer<typeof updateArtifactBodySchema>
@@ -47,7 +51,14 @@ export function parseUpdateArtifactBody(body: unknown): UpdateArtifactParse {
 
   return {
     ok: false,
-    details: { fields: parsed.error.issues.map((issue) => issue.path.join('.') || '(root)') },
+    details: {
+      fields: parsed.error.issues.flatMap((issue) => {
+        if (issue.code === 'unrecognized_keys') {
+          return issue.keys.map((key) => [...issue.path, key].join('.'))
+        }
+        return [issue.path.join('.') || '(root)']
+      }),
+    },
   }
 }
 

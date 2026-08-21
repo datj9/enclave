@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    const sessionUser = await requireSessionUser()
+    await requireSessionUser()
     const includeInactive = new URL(request.url).searchParams.get('includeInactive') === 'true'
     if (includeInactive) await requireAdminUser()
 

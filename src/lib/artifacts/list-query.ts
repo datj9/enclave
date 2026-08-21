@@ -17,6 +17,7 @@ export interface ListCursor {
 export interface ListQuery {
   readonly limit: number
   readonly cursor: ListCursor | undefined
+  readonly categorySlug?: string
 }
 
 export type ListQueryParse =
@@ -53,17 +54,33 @@ function parseLimit(raw: string | null): number | undefined {
   return limit
 }
 
+function parseCategorySlug(raw: string | null): string | undefined {
+  if (raw === null) return undefined
+
+  const slug = raw.trim()
+  if (slug === '') return undefined
+  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return undefined
+  return slug
+}
+
 export function parseListQuery(searchParams: URLSearchParams): ListQueryParse {
   const limit = parseLimit(searchParams.get('limit'))
   if (limit === undefined) {
     return { ok: false, details: { parameter: 'limit', max: MAX_LIST_LIMIT } }
   }
 
+  const categorySlug = parseCategorySlug(searchParams.get('category'))
+  if (categorySlug === undefined && (searchParams.get('category') ?? '').trim() !== '') {
+    return { ok: false, details: { parameter: 'category', fields: ['category'] } }
+  }
+
   const rawCursor = searchParams.get('cursor')
-  if (rawCursor === null || rawCursor === '') return { ok: true, value: { limit, cursor: undefined } }
+  if (rawCursor === null || rawCursor === '') {
+    return { ok: true, value: { limit, cursor: undefined, ...(categorySlug === undefined ? {} : { categorySlug }) } }
+  }
 
   const cursor = decodeListCursor(rawCursor)
   if (cursor === undefined) return { ok: false, details: { parameter: 'cursor' } }
 
-  return { ok: true, value: { limit, cursor } }
+  return { ok: true, value: { limit, cursor, ...(categorySlug === undefined ? {} : { categorySlug }) } }
 }

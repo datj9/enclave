@@ -11,6 +11,7 @@ import styles from './admin.module.css'
 const SECTIONS: ReadonlyArray<{ readonly href: string; readonly label: string }> = [
   { href: '/admin/users', label: 'Users' },
   { href: '/admin/invites', label: 'Invites' },
+  { href: '/admin/categories', label: 'Categories' },
   { href: '/admin/audit', label: 'Audit' },
   { href: '/admin/settings', label: 'Settings' },
 ]

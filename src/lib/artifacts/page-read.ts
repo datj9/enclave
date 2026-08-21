@@ -4,12 +4,14 @@ import { cache } from 'react'
 import { db } from '@/db'
 import { artifacts } from '@/db/schema/artifacts'
 import { getSessionUser } from '@/lib/auth/session'
+import { type CategoryView } from '@/lib/categories/manage'
 import {
   ANONYMOUS_VIEWER_REF,
   authorizeArtifactRead,
   userViewerRef,
   type AuthorizedVersion,
 } from './authorize'
+import { readArtifactTags } from './tags'
 
 /**
  * What `/a/{id}` needs before it can render anything: which viewer the read was authorized as, the
@@ -28,6 +30,8 @@ export type ArtifactPageRead =
       readonly authorized: AuthorizedVersion
       readonly title: string
       readonly isSignedIn: boolean
+      /** Active tags only — a deactivated category disappears from here. */
+      readonly categories: readonly CategoryView[]
     }
   /** No session, and nothing about this id is readable without one. Signing in may change that. */
   | { readonly kind: 'signin' }
@@ -85,12 +89,15 @@ export const readArtifactPage = cache(
 
     if (row === undefined) return { kind: 'missing' }
 
+    const tagsById = await readArtifactTags([artifactId])
+
     return {
       kind: 'ok',
       viewerRef: granted.viewerRef,
       authorized: granted.authorized,
       title: row.title,
       isSignedIn: sessionUser !== null,
+      categories: tagsById.get(artifactId) ?? [],
     }
   },
 )
