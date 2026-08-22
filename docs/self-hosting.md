@@ -429,6 +429,20 @@ Each job is idempotent and safe to run concurrently with the app. Non-zero exits
 deferred", not "corrupted" — the next run picks it up. Alert on repeated failures, since a purge job
 that never succeeds means deleted data is still on disk.
 
+### One-shot: classify existing artifacts
+
+Uploads that happened before an admin turned `auto_categorize_enabled` on were never tagged. After
+opting in, run this once:
+
+```bash
+pnpm exec tsx scripts/classify-backfill.ts
+# or: docker compose run --rm app pnpm exec tsx scripts/classify-backfill.ts
+```
+
+It only considers live artifacts whose `category_source` is still `model` and that have no tags. A
+manual tag set is never rewritten. The same gates as a live upload apply (setting off, no instance
+key, empty taxonomy). Safe to re-run.
+
 ## Backup and restore
 
 **Two systems hold your data, and a backup of one is worthless without the other.**
