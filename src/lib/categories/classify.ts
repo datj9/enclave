@@ -31,8 +31,11 @@ export async function classifyArtifactVersion(input: {
     const categories = await listCategories({ includeInactive: false })
     if (categories.length === 0) return
 
-    // Instance keys only — `userKeys` is always `{}`. An unset key makes the env validation
-    // throw, which this gate reads as "no instance key configured".
+    // Instance keys only — `userKeys` is always `{}`. A missing key is a supported
+    // configuration (default install, or admin enabled the setting before adding a
+    // key), not an error: return silently so every upload does not warn.
+    if (env.ANTHROPIC_API_KEY === undefined && env.OPENAI_API_KEY === undefined) return
+
     const selection = selectProvider({
       instanceAnthropicKey: env.ANTHROPIC_API_KEY,
       instanceOpenAiKey: env.OPENAI_API_KEY,
@@ -49,7 +52,10 @@ export async function classifyArtifactVersion(input: {
     const reply = await collectCompletion(selection, prompt, CLASSIFY_TIMEOUT_MS)
     if (reply === null) return
 
-    await applyModelTags(input.artifactId, parseClassifyReply(reply, categories))
+    const parsed = parseClassifyReply(reply, categories)
+    if (parsed === null) return
+
+    await applyModelTags(input.artifactId, parsed)
   } catch (error) {
     console.warn(`[auto-categorize] classification failed for artifact ${input.artifactId}:`, error)
   }

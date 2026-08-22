@@ -96,7 +96,9 @@ export default async function ArtifactViewerPage({
         */}
         <h1 className={styles.title}>{title}</h1>
         <p className={styles.origin}>{new URL(artifactViewUrl(id)).host}</p>
-        {categories.length > 0 && <p>{categories.map((category) => category.name).join(' · ')}</p>}
+        {categories.length > 0 && (
+          <p className={styles.tags}>{categories.map((category) => category.name).join(' · ')}</p>
+        )}
         {shareState !== null && (
           <div className={styles.ownerControls}>
             <PrivacySwitch

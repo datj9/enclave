@@ -1,6 +1,10 @@
 import { readJsonBody, requireJsonContentType } from '@/lib/api/guards'
 import { apiTokenViewerRef, userViewerRef } from '@/lib/artifacts/authorize'
-import { readArtifactTags, replaceArtifactTags } from '@/lib/artifacts/tags'
+import {
+  assertCategoriesAvailable,
+  readArtifactTags,
+  replaceArtifactTags,
+} from '@/lib/artifacts/tags'
 import {
   parseUpdateArtifactBody,
   readArtifactView,
@@ -62,6 +66,12 @@ export async function PATCH(request: Request, context: RouteContext | undefined)
       throw new HttpError('VALIDATION_FAILED', 'The request body is not valid', {
         details: parsed.details,
       })
+    }
+
+    // Validate category ids before any write so a PATCH mixing `title` and bad `categoryIds`
+    // cannot commit the rename and then fail the tag half with a 422.
+    if (parsed.value.categoryIds !== undefined) {
+      await assertCategoriesAvailable(parsed.value.categoryIds)
     }
 
     const artifact = await updateArtifact({

@@ -71,15 +71,19 @@ describe('parseClassifyReply', () => {
     expect(parseClassifyReply('["a","b","c","d"]', four)).toEqual(['id-a', 'id-b', 'id-c'])
   })
 
-  it('parseClassifyReply returns nothing for malformed json', () => {
-    expect(parseClassifyReply('not json at all', CATEGORIES)).toEqual([])
+  it('parseClassifyReply returns null for malformed text', () => {
+    expect(parseClassifyReply('not json at all', CATEGORIES)).toBeNull()
   })
 
-  it('parseClassifyReply returns nothing for a json object', () => {
-    expect(parseClassifyReply('{"slug":"docs"}', CATEGORIES)).toEqual([])
+  it('parseClassifyReply returns null for a json object', () => {
+    expect(parseClassifyReply('{"slug":"docs"}', CATEGORIES)).toBeNull()
   })
 
-  it('parseClassifyReply returns nothing for an array of numbers', () => {
-    expect(parseClassifyReply('[1,2]', CATEGORIES)).toEqual([])
+  it('parseClassifyReply returns null for an array of numbers', () => {
+    expect(parseClassifyReply('[1,2]', CATEGORIES)).toBeNull()
+  })
+
+  it('parseClassifyReply returns an empty list for an empty array', () => {
+    expect(parseClassifyReply('[]', CATEGORIES)).toEqual([])
   })
 })
