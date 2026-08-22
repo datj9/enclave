@@ -27,6 +27,8 @@ const DISALLOWED: readonly string[] = [
   '/signin',
   '/signup',
   '/setup',
+  '/forgot-password',
+  '/reset-password',
 ]
 
 export default function robots(): MetadataRoute.Robots {

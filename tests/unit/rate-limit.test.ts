@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { HttpError } from '@/lib/http'
 import { clientIpFromHeaders, consumeRateLimit, resetRateLimits } from '@/lib/rate-limit'
-import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
+import {
+  enforceAuthRateLimit,
+  enforceForgotPasswordEmailRateLimit,
+} from '@/lib/auth/rate-limit-auth'
 
 const RULE = { limit: 3, windowSeconds: 60 } as const
 
@@ -100,5 +103,33 @@ describe('enforceAuthRateLimit', () => {
     for (let attempt = 0; attempt < 30; attempt += 1) enforceAuthRateLimit(request, 'signin')
 
     expect(() => enforceAuthRateLimit(request, 'setup')).not.toThrow()
+  })
+
+  it('keeps forgot-password and signin on separate counters', () => {
+    const request = requestFrom('203.0.113.10')
+    for (let attempt = 0; attempt < 30; attempt += 1) enforceAuthRateLimit(request, 'signin')
+
+    expect(() => enforceAuthRateLimit(request, 'forgot-password')).not.toThrow()
+  })
+})
+
+describe('enforceForgotPasswordEmailRateLimit', () => {
+  it('caps forgot-password per normalised email independently of IP', () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      enforceForgotPasswordEmailRateLimit('ops@example.com')
+    }
+
+    let caught: unknown
+    try {
+      enforceForgotPasswordEmailRateLimit('ops@example.com')
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(HttpError)
+    expect((caught as HttpError).code).toBe('RATE_LIMITED')
+    expect((caught as HttpError).status).toBe(429)
+
+    expect(() => enforceForgotPasswordEmailRateLimit('nobody@example.com')).not.toThrow()
   })
 })

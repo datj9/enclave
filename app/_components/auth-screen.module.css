@@ -45,3 +45,19 @@
   color: var(--color-ink-2);
   margin: 0;
 }
+
+.status {
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  margin: 0;
+}
+
+.footer {
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+}
+
+.footer a {
+  color: var(--color-ink-2);
+  text-decoration: underline;
+}

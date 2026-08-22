@@ -32,6 +32,9 @@ export const AUDIT_ACTIONS = [
   'category.create',
   'category.update',
   'settings.update',
+  'auth.password_reset_requested',
+  'auth.password_reset_completed',
+  'auth.password_reset_failed',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

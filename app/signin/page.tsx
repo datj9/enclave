@@ -36,6 +36,7 @@ export default async function SigninPage({ searchParams }: SigninPageProps) {
       submitLabel="Sign in"
       passwordAutoComplete="current-password"
       errorMessage={errorMessageFor(error)}
+      footer={<a href="/forgot-password">Forgot password?</a>}
       alternative={isOidcEnabled() ? <OidcSignin /> : null}
     />
   )

@@ -18,6 +18,7 @@ export const users = pgTable(
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+    passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
   },
   (table) => [
     // `text({enum})` is compile-time only; §5.2 asks for the constraint in the database too.
