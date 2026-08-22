@@ -3,6 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db'
 import { artifactCategories, categories } from '@/db/schema/categories'
 import { artifacts } from '@/db/schema/artifacts'
+import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
 import { type CategoryView } from '@/lib/categories/manage'
 
@@ -22,26 +23,33 @@ const CATEGORY_ERROR = (): HttpError =>
     details: { fields: ['categoryIds'] },
   })
 
+/**
+ * Every id must exist and be active before a single row is written; otherwise a partial
+ * replacement would silently drop the tags the caller still believed were being set. Exported so
+ * the PATCH route can validate `categoryIds` before its artifact update runs.
+ */
+export async function assertCategoriesAvailable(ids: readonly string[]): Promise<void> {
+  const unique = [...new Set(ids)]
+  if (unique.length > MAX_TAGS_PER_ARTIFACT) throw CATEGORY_ERROR()
+  if (unique.length === 0) return
+
+  const found = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(inArray(categories.id, unique), eq(categories.isActive, true)))
+  if (found.length !== unique.length) throw CATEGORY_ERROR()
+}
+
 export async function replaceArtifactTags(input: {
   readonly artifactId: string
   readonly categoryIds: readonly string[]
   readonly viewerRef: string
   readonly actorIp?: string | null
 }): Promise<readonly CategoryView[]> {
-  await requireOwnedArtifact(input.artifactId, input.viewerRef)
+  const owned = await requireOwnedArtifact(input.artifactId, input.viewerRef)
 
+  await assertCategoriesAvailable(input.categoryIds)
   const ids = [...new Set(input.categoryIds)]
-  if (ids.length > MAX_TAGS_PER_ARTIFACT) throw CATEGORY_ERROR()
-
-  // Every id must exist and be active before a single row is written; otherwise a partial
-  // replacement would silently drop the tags the caller still believed were being set.
-  if (ids.length > 0) {
-    const found = await db
-      .select({ id: categories.id })
-      .from(categories)
-      .where(and(inArray(categories.id, ids), eq(categories.isActive, true)))
-    if (found.length !== ids.length) throw CATEGORY_ERROR()
-  }
 
   await db.transaction(async (transaction) => {
     await transaction
@@ -58,6 +66,14 @@ export async function replaceArtifactTags(input: {
       .update(artifacts)
       .set({ categorySource: 'manual', updatedAt: new Date() })
       .where(eq(artifacts.id, input.artifactId))
+  })
+
+  await recordAuditEvent({
+    action: 'artifact.tag_change',
+    actorUserId: owned.ownerId,
+    actorIp: input.actorIp ?? null,
+    artifactId: input.artifactId,
+    metadata: { categoryIds: ids, categorySource: 'manual' },
   })
 
   return (await readArtifactTags([input.artifactId])).get(input.artifactId) ?? []
@@ -111,6 +127,16 @@ export async function applyModelTags(
   categoryIds: readonly string[],
 ): Promise<void> {
   await db.transaction(async (transaction) => {
+    // Guarded source update first: only a row still sourced from the model may be re-tagged, so a
+    // manual tag set (or an owner flipping the source mid-flight) is never silently overwritten.
+    const updated = await transaction
+      .update(artifacts)
+      .set({ categorySource: 'model', updatedAt: new Date() })
+      .where(and(eq(artifacts.id, artifactId), eq(artifacts.categorySource, 'model')))
+      .returning({ id: artifacts.id })
+
+    if (updated.length === 0) return
+
     await transaction.delete(artifactCategories).where(eq(artifactCategories.artifactId, artifactId))
 
     if (categoryIds.length > 0) {
@@ -118,10 +144,5 @@ export async function applyModelTags(
         [...new Set(categoryIds)].map((categoryId) => ({ artifactId, categoryId })),
       )
     }
-
-    await transaction
-      .update(artifacts)
-      .set({ categorySource: 'model', updatedAt: new Date() })
-      .where(eq(artifacts.id, artifactId))
   })
 }

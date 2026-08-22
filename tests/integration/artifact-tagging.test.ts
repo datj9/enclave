@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { GET as listRoute } from '@app/api/v1/artifacts/route'
@@ -7,6 +7,7 @@ import { db } from '@/db'
 import { artifactCategories, categories } from '@/db/schema/categories'
 import { artifacts } from '@/db/schema/artifacts'
 import { users } from '@/db/schema/users'
+import { auditLog } from '@/db/schema/audit-log'
 import type { BundleFile } from '@/lib/bundle/validate'
 import { readArtifactPage } from '@/lib/artifacts/page-read'
 import { createArtifactWithBundle } from '@/lib/artifacts/create'
@@ -209,6 +210,42 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
     const body = (await response.json()) as { readonly error: { readonly details: { readonly fields: readonly string[] } } }
     expect(body.error.details.fields).toEqual(['categoryIds'])
     expect(await categoryRows(artifactId)).toHaveLength(0)
+  })
+
+  it('PATCH of title plus an unknown category id is 422 and does not rename', async () => {
+    const artifactId = await createTaggedArtifact(ownerId, 'Keep me')
+    mocks.sessionUser = { id: ownerId, email: OWNER_EMAIL, role: 'member', isActive: true }
+
+    const response = await patchRoute(
+      patchRequest(artifactId, {
+        title: 'Should not stick',
+        categoryIds: [crypto.randomUUID()],
+      }),
+      { params: Promise.resolve({ id: artifactId }) },
+    )
+
+    expect(response.status).toBe(422)
+    const [artifact] = await db.select({ title: artifacts.title }).from(artifacts).where(eq(artifacts.id, artifactId))
+    expect(artifact?.title).toBe('Keep me')
+    expect(await categoryRows(artifactId)).toHaveLength(0)
+  })
+
+  it('PATCH of categoryIds writes an artifact.tag_change audit row', async () => {
+    const artifactId = await createTaggedArtifact(ownerId, 'Audited tag change')
+    mocks.sessionUser = { id: ownerId, email: OWNER_EMAIL, role: 'member', isActive: true }
+
+    const response = await patchRoute(
+      patchRequest(artifactId, { categoryIds: [docsId] }),
+      { params: Promise.resolve({ id: artifactId }) },
+    )
+    expect(response.status).toBe(200)
+
+    const rows = await db
+      .select({ actorUserId: auditLog.actorUserId })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, 'artifact.tag_change'), eq(auditLog.artifactId, artifactId)))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.actorUserId).toBe(ownerId)
   })
 
   it('PATCH rejects more than ten categories', async () => {

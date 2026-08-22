@@ -10,6 +10,7 @@ import type { BundleFile } from '@/lib/bundle/validate'
 import { createArtifactWithBundle } from '@/lib/artifacts/create'
 import { appendVersion } from '@/lib/artifacts/versions'
 import { createCategory } from '@/lib/categories/manage'
+import { applyModelTags } from '@/lib/artifacts/tags'
 import { AUTO_CATEGORIZE_KEY, setAutoCategorizeEnabled } from '@/lib/settings/instance-settings'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { createTestOwner, createTestStore, probeServices } from './services'
@@ -212,6 +213,50 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
     expect((await categoryRows(created.id)).map((row) => row.categoryId)).toEqual([docsId])
     const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, created.id))
     expect(artifact?.categorySource).toBe('model')
+  })
+
+  it('an unparseable reply on a later version leaves existing model tags in place', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '["docs"]'
+    mocks.shouldThrow = false
+    mocks.calls = 0
+
+    const created = await createArtifactWithBundle(
+      { ownerId, title: 'Later garbage reply', visibility: 'private', files: bundle('ten') },
+      store,
+    )
+    expect(mocks.calls).toBe(1)
+    expect((await categoryRows(created.id)).map((row) => row.categoryId)).toEqual([docsId])
+    mocks.completion = 'garbage'
+    mocks.calls = 0
+
+    await appendVersion(
+      { artifactId: created.id, ownerId, files: bundle('eleven') },
+      store,
+    )
+
+    expect(mocks.calls).toBe(1)
+    expect((await categoryRows(created.id)).map((row) => row.categoryId)).toEqual([docsId])
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, created.id))
+    expect(artifact?.categorySource).toBe('model')
+  })
+
+  it('applyModelTags is a no-op when the owner flipped the source to manual mid-flight', async () => {
+    const created = await createArtifactWithBundle(
+      { ownerId, title: 'Mid-flight manual', visibility: 'private', files: bundle('twelve') },
+      store,
+    )
+    await db.update(artifacts).set({ categorySource: 'manual' }).where(eq(artifacts.id, created.id))
+    await db
+      .insert(artifactCategories)
+      .values({ artifactId: created.id, categoryId: docsId })
+      .onConflictDoNothing()
+
+    await applyModelTags(created.id, [])
+
+    expect((await categoryRows(created.id)).map((row) => row.categoryId)).toEqual([docsId])
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, created.id))
+    expect(artifact?.categorySource).toBe('manual')
   })
 
   it('a new version leaves a manually-tagged artifact untouched', async () => {

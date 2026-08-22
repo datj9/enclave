@@ -22,6 +22,7 @@ const TEST_ENV: Readonly<Record<string, string>> = {
   SESSION_SECRET: 'test-session-secret-at-least-32-bytes-long',
   ENCRYPTION_KEY: 'test-encryption-key-at-least-32-bytes-long',
   DEFAULT_MODEL: 'claude-sonnet-4-6',
+  ANTHROPIC_API_KEY: 'sk-ant-test-not-a-real-key',
 }
 
 for (const [name, value] of Object.entries(TEST_ENV)) {
