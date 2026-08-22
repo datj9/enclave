@@ -1,0 +1,26 @@
+.heading {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2xs);
+}
+
+.caption {
+  color: var(--color-ink-2);
+  margin-bottom: var(--space-lg);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.hint {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.status {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  margin: 0;
+}

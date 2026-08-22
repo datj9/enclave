@@ -33,3 +33,11 @@ export function enforceAuthRateLimit(request: Request, scope: string): void {
 export function enforceForgotPasswordEmailRateLimit(normalizedEmail: string): void {
   enforceLimit(`auth:forgot-password-email:${normalizedEmail}`)
 }
+
+/**
+ * Per-user cap on change-password, independent of the per-IP cap so an attacker with the same
+ * IP cannot lock out every user in the same building.
+ */
+export function enforceChangePasswordUserRateLimit(userId: string): void {
+  enforceLimit(`auth:change-password-user:${userId}`)
+}
