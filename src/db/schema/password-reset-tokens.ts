@@ -6,8 +6,9 @@ import { users } from './users'
  * One-time password reset, mirroring the invite token contract: only `sha256(token)` is ever
  * stored; the plaintext is sent once in the reset mail and is unrecoverable afterwards.
  *
- * `used_at` means "consumed by a successful reset" only. Outstanding rows for a user are
- * deleted when a new request replaces them, so they never accumulate as audit history.
+ * `used_at` means "consumed by a successful reset" only. Outstanding rows for a user are deleted
+ * when a new request replaces them; spent rows outlive that and are dropped past
+ * `PASSWORD_RESET_RETENTION_DAYS` by scripts/prune-password-resets.ts. `audit_log` is the history.
  */
 
 /** Postgres `bytea`. Local to this file so the shared column-types module stays untouched. */

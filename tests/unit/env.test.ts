@@ -43,6 +43,7 @@ describe('parseEnv', () => {
     expect(parsed.ARTIFACT_GRANT_TTL_SECONDS).toBe(1800)
     expect(parsed.TRASH_RETENTION_DAYS).toBe(30)
     expect(parsed.AUDIT_RETENTION_DAYS).toBe(365)
+    expect(parsed.PASSWORD_RESET_RETENTION_DAYS).toBe(7)
     expect(parsed.SMTP_PORT).toBe(587)
     expect(parsed.SMTP_SECURE).toBe(false)
     expect(parsed.PASSWORD_RESET_TTL_SECONDS).toBe(3600)
@@ -63,6 +64,12 @@ describe('parseEnv', () => {
 
   it('rejects a non-boolean SMTP_SECURE naming the variable', () => {
     expect(() => parseEnv(envWith({ SMTP_SECURE: 'yes' }))).toThrow(/SMTP_SECURE/)
+  })
+
+  it('rejects a zero or negative PASSWORD_RESET_RETENTION_DAYS', () => {
+    expect(() => parseEnv(envWith({ PASSWORD_RESET_RETENTION_DAYS: '0' }))).toThrow(
+      /PASSWORD_RESET_RETENTION_DAYS/,
+    )
   })
 
   it('rejects a zero or negative PASSWORD_RESET_TTL_SECONDS', () => {

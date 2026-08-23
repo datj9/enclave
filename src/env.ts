@@ -74,6 +74,7 @@ export const envSchema = z.object({
 
   TRASH_RETENTION_DAYS: positiveIntFromString(30),
   AUDIT_RETENTION_DAYS: positiveIntFromString(365),
+  PASSWORD_RESET_RETENTION_DAYS: positiveIntFromString(7),
 
   RATE_LIMIT_AUTH_PER_IP_PER_HOUR: positiveIntFromString(30),
 
