@@ -19,22 +19,24 @@ import { applyModelTags } from '@/lib/artifacts/tags'
  * caller did not ask for this. Every gate below is cheapest-first and returns before any
  * provider call, and every failure path warns and returns. This function never throws, so the
  * upload hooks call it bare.
+ *
+ * Returns whether tags were written: every gate and every failure reads as `false`.
  */
 export async function classifyArtifactVersion(input: {
   readonly artifactId: string
   readonly title: string
   readonly files: readonly BundleFile[]
-}): Promise<void> {
+}): Promise<boolean> {
   try {
-    if (!(await getAutoCategorizeEnabled())) return
+    if (!(await getAutoCategorizeEnabled())) return false
 
     const categories = await listCategories({ includeInactive: false })
-    if (categories.length === 0) return
+    if (categories.length === 0) return false
 
     // Instance keys only — `userKeys` is always `{}`. A missing key is a supported
     // configuration (default install, or admin enabled the setting before adding a
     // key), not an error: return silently so every upload does not warn.
-    if (env.ANTHROPIC_API_KEY === undefined && env.OPENAI_API_KEY === undefined) return
+    if (env.ANTHROPIC_API_KEY === undefined && env.OPENAI_API_KEY === undefined) return false
 
     const selection = selectProvider({
       instanceAnthropicKey: env.ANTHROPIC_API_KEY,
@@ -50,13 +52,14 @@ export async function classifyArtifactVersion(input: {
       categories,
     })
     const reply = await collectCompletion(selection, prompt, CLASSIFY_TIMEOUT_MS)
-    if (reply === null) return
+    if (reply === null) return false
 
     const parsed = parseClassifyReply(reply, categories)
-    if (parsed === null) return
+    if (parsed === null) return false
 
-    await applyModelTags(input.artifactId, parsed)
+    return await applyModelTags(input.artifactId, parsed)
   } catch (error) {
     console.warn(`[auto-categorize] classification failed for artifact ${input.artifactId}:`, error)
+    return false
   }
 }

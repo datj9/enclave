@@ -435,13 +435,32 @@ Uploads that happened before an admin turned `auto_categorize_enabled` on were n
 opting in, run this once:
 
 ```bash
-pnpm exec tsx scripts/classify-backfill.ts
+pnpm exec tsx scripts/classify-backfill.ts --dry-run     # preview, no provider calls
+pnpm exec tsx scripts/classify-backfill.ts --limit 50    # then a sized first pass
 # or: docker compose run --rm app pnpm exec tsx scripts/classify-backfill.ts
 ```
 
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Lists what would be classified and exits without a single provider call. |
+| `--limit <n>` | Caps the run at the first `n` eligible artifacts, oldest first. |
+| `--owner <userId>` | Restricts the run to one owner's artifacts. |
+
 It only considers live artifacts whose `category_source` is still `model` and that have no tags. A
 manual tag set is never rewritten. The same gates as a live upload apply (setting off, no instance
-key, empty taxonomy). Safe to re-run.
+key, empty taxonomy). Every artifact it tags writes an `artifact.auto_tag` audit row with no actor,
+since the server did the tagging. The exit code is non-zero when any eligible artifact ended the run
+untagged, so alert on it the way you alert on the scheduled jobs.
+
+**Re-running is safe, but it is not free.** Every eligible artifact costs one provider call per run.
+An artifact the classifier legitimately matched to no category keeps `category_source = 'model'` with
+no tag rows, which is exactly the eligibility predicate, so it is re-submitted on every later run,
+forever. Preview with `--dry-run` and size the first pass with `--limit` instead of re-running the
+whole instance.
+
+Two operators running the script at once each pay for the same artifact. The final state stays
+consistent, because the tag write is one transaction and the primary key rejects duplicate rows, so
+concurrency here wastes money rather than corrupting data.
 
 ## Backup and restore
 

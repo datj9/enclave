@@ -121,12 +121,16 @@ export async function readArtifactTags(
  * whole write is one transaction, existing rows are cleared first (even for an empty list), and
  * `category_source` is written explicitly to `'model'` so a later append re-classifies. There is
  * deliberately no ownership check — the caller is the server, never a user.
+ *
+ * Returns whether the write happened, so a caller can report classifications rather than attempts.
  */
 export async function applyModelTags(
   artifactId: string,
   categoryIds: readonly string[],
-): Promise<void> {
-  await db.transaction(async (transaction) => {
+): Promise<boolean> {
+  const ids = [...new Set(categoryIds)]
+
+  const wasWritten = await db.transaction(async (transaction) => {
     // Guarded source update first: only a row still sourced from the model may be re-tagged, so a
     // manual tag set (or an owner flipping the source mid-flight) is never silently overwritten.
     const updated = await transaction
@@ -135,14 +139,27 @@ export async function applyModelTags(
       .where(and(eq(artifacts.id, artifactId), eq(artifacts.categorySource, 'model')))
       .returning({ id: artifacts.id })
 
-    if (updated.length === 0) return
+    if (updated.length === 0) return false
 
     await transaction.delete(artifactCategories).where(eq(artifactCategories.artifactId, artifactId))
 
-    if (categoryIds.length > 0) {
+    if (ids.length > 0) {
       await transaction.insert(artifactCategories).values(
-        [...new Set(categoryIds)].map((categoryId) => ({ artifactId, categoryId })),
+        ids.map((categoryId) => ({ artifactId, categoryId })),
       )
     }
+
+    return true
   })
+
+  if (!wasWritten) return false
+
+  // No actor: the server classified this, not a user.
+  await recordAuditEvent({
+    action: 'artifact.auto_tag',
+    artifactId,
+    metadata: { categoryIds: ids, categorySource: 'model' },
+  })
+
+  return true
 }

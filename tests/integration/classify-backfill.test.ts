@@ -1,8 +1,9 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { db } from '@/db'
 import { artifacts } from '@/db/schema/artifacts'
+import { auditLog } from '@/db/schema/audit-log'
 import { artifactCategories, categories } from '@/db/schema/categories'
 import { instanceSettings } from '@/db/schema/instance-settings'
 import { users } from '@/db/schema/users'
@@ -56,6 +57,28 @@ function categoryRows(artifactId: string) {
     .select({ categoryId: artifactCategories.categoryId })
     .from(artifactCategories)
     .where(eq(artifactCategories.artifactId, artifactId))
+}
+
+/** Live, model-sourced and untagged: exactly what the backfill is meant to pick up. */
+async function createEligibleArtifact(title: string): Promise<string> {
+  const created = await createArtifactWithBundle(
+    { ownerId, title, visibility: 'private', files: bundle(title) },
+    store,
+  )
+  await db.delete(artifactCategories).where(eq(artifactCategories.artifactId, created.id))
+  await db.update(artifacts).set({ categorySource: 'model' }).where(eq(artifacts.id, created.id))
+  return created.id
+}
+
+/** Stands in for a transient storage fault on one row: a network blip, a throttle, an expiry. */
+function storeFailingOn(artifactId: string): ObjectStore {
+  return {
+    ...store,
+    getObject: (key: string) =>
+      key.startsWith(`artifacts/${artifactId}/`)
+        ? Promise.reject(new Error('simulated storage outage'))
+        : store.getObject(key),
+  }
 }
 
 let store: ObjectStore
@@ -223,5 +246,100 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     expect(result).toEqual({ eligibleCount: 1, classifiedCount: 0, skippedCount: 1 })
     expect(mocks.calls).toBe(0)
     expect(await categoryRows(created.id)).toHaveLength(0)
+  })
+  it('reaches the same end state when the backfill runs twice', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '["docs"]'
+
+    const artifactId = await createEligibleArtifact('Rerun safety')
+    mocks.calls = 0
+
+    const firstRun = await backfillArtifactCategories(store, { ownerId })
+    const tagsAfterFirstRun = (await categoryRows(artifactId)).map((row) => row.categoryId)
+    const secondRun = await backfillArtifactCategories(store, { ownerId })
+
+    expect(firstRun).toEqual({ eligibleCount: 1, classifiedCount: 1, skippedCount: 0 })
+    expect(secondRun).toEqual({ eligibleCount: 0, classifiedCount: 0, skippedCount: 0 })
+    expect(tagsAfterFirstRun).toEqual([docsId])
+    expect((await categoryRows(artifactId)).map((row) => row.categoryId)).toEqual(tagsAfterFirstRun)
+    expect(mocks.calls).toBe(1)
+  })
+
+  it('keeps classifying the other artifacts when one entry read throws', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '["docs"]'
+
+    const firstId = await createEligibleArtifact('Partial failure first')
+    const failingId = await createEligibleArtifact('Partial failure middle')
+    const lastId = await createEligibleArtifact('Partial failure last')
+    mocks.calls = 0
+
+    const result = await backfillArtifactCategories(storeFailingOn(failingId), { ownerId })
+
+    expect(result).toEqual({ eligibleCount: 3, classifiedCount: 2, skippedCount: 1 })
+    expect(mocks.calls).toBe(2)
+    expect((await categoryRows(firstId)).map((row) => row.categoryId)).toEqual([docsId])
+    expect((await categoryRows(lastId)).map((row) => row.categoryId)).toEqual([docsId])
+    expect(await categoryRows(failingId)).toHaveLength(0)
+  })
+
+  it('does not report an artifact as classified when the classifier writes nothing', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = null
+
+    const artifactId = await createEligibleArtifact('Classifier declined')
+    mocks.calls = 0
+
+    const result = await backfillArtifactCategories(store, { ownerId })
+
+    expect(result).toEqual({ eligibleCount: 1, classifiedCount: 0, skippedCount: 1 })
+    expect(mocks.calls).toBe(1)
+    expect(await categoryRows(artifactId)).toHaveLength(0)
+  })
+
+  it('writes an artifact.auto_tag audit row for the artifact it classifies', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    // Declined on upload, so `audit_log` (append-only) holds no row but the backfill's.
+    mocks.completion = null
+    const artifactId = await createEligibleArtifact('Audited backfill')
+
+    mocks.completion = '["docs"]'
+    await backfillArtifactCategories(store, { ownerId })
+
+    const rows = await db
+      .select({ actorUserId: auditLog.actorUserId, metadata: auditLog.metadata })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, 'artifact.auto_tag'), eq(auditLog.artifactId, artifactId)))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.actorUserId).toBeNull()
+    expect(rows[0]?.metadata).toEqual({ categoryIds: [docsId], categorySource: 'model' })
+  })
+
+  it('classifies no more than the requested limit in one run', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '["docs"]'
+
+    await createEligibleArtifact('Limit first')
+    await createEligibleArtifact('Limit second')
+    mocks.calls = 0
+
+    const result = await backfillArtifactCategories(store, { ownerId, limit: 1 })
+
+    expect(result).toEqual({ eligibleCount: 1, classifiedCount: 1, skippedCount: 0 })
+    expect(mocks.calls).toBe(1)
+  })
+
+  it('reports a dry run without calling the provider or writing tags', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '["docs"]'
+
+    const artifactId = await createEligibleArtifact('Dry run')
+    mocks.calls = 0
+
+    const result = await backfillArtifactCategories(store, { ownerId, isDryRun: true })
+
+    expect(result).toEqual({ eligibleCount: 1, classifiedCount: 0, skippedCount: 0 })
+    expect(mocks.calls).toBe(0)
+    expect(await categoryRows(artifactId)).toHaveLength(0)
   })
 })

@@ -17,6 +17,7 @@ export const AUDIT_ACTIONS = [
   'artifact.restore',
   'artifact.purge',
   'artifact.tag_change',
+  'artifact.auto_tag',
   'version.create',
   'share.create',
   'share.revoke',
