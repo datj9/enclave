@@ -258,6 +258,52 @@ describe('runLogin', () => {
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[1]).toMatchObject({ redirect: 'manual' })
   })
+
+  it('sends the flag token as the bearer header, not the environment token', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    respondWith(200)
+
+    await runLogin(HOST, 'enc_from_the_flag')
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
+      'Bearer enc_from_the_flag',
+    )
+  })
+})
+
+describe('runLogin with --token ""', () => {
+  let originalStdinIsTTY: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalStdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true })
+  })
+
+  afterEach(() => {
+    if (originalStdinIsTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY
+    else Object.defineProperty(process.stdin, 'isTTY', originalStdinIsTTY)
+  })
+
+  it('fails loudly and never consults ENCLAVE_TOKEN when --token is the empty string', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    respondWith(200)
+
+    expect(await runLogin(HOST, '')).toBe(1)
+    expect(stderrOutput()).toMatch(/no token was entered/)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('fails loudly without falling through to the prompt when ENCLAVE_TOKEN is unset', async () => {
+    respondWith(200)
+
+    expect(await runLogin(HOST, '')).toBe(1)
+    expect(stderrOutput()).toMatch(/no token was entered/)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(createInterfaceMock).not.toHaveBeenCalled()
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
 })
 
 describe('runLogin token recovery', () => {
@@ -338,6 +384,21 @@ describe('runLogin token recovery', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     expect(stderrOutput()).toMatch(/no token was entered/)
     expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('reports the same message for a 500 on the primary probe and a 500 on the retry probe', async () => {
+    respondWith(500)
+    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(1)
+    expect(stderrOutput()).toMatch(/the server returned 500/)
+
+    writtenToStderr = []
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = 'fresh-token'
+    withStdinTTY(true)
+    respondWithSequence([401, 500])
+
+    expect(await runLogin(HOST)).toBe(1)
+    expect(stderrOutput()).toMatch(/the server returned 500/)
   })
 
   it('never writes either token to stdout or stderr', async () => {

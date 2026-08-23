@@ -88,6 +88,88 @@ function handleRedirect(response: Response, host: string): boolean {
   return false
 }
 
+/** Returns the exit code for a probe the CLI cannot proceed from, or null when the token is good. */
+function classifyProbeFailure(response: Response, host: string): number | null {
+  if (handleRedirect(response, host)) return 1
+  if (response.status === 401) {
+    process.stderr.write('that token was rejected\n')
+    return 1
+  }
+  if (response.status === 403) {
+    process.stderr.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
+    return 1
+  }
+  if (response.status !== 200) {
+    process.stderr.write(`the server returned ${String(response.status)}\n`)
+    return 1
+  }
+  return null
+}
+
+interface TokenResolution {
+  token: string
+  source: TokenSource
+}
+
+/**
+ * `--token` is authoritative whenever it's supplied at all — an empty value is a caller error, not
+ * a signal to fall through to ENCLAVE_TOKEN or the prompt.
+ */
+async function resolveToken(token: string | undefined): Promise<TokenResolution | number> {
+  if (token !== undefined) {
+    if (token === '') {
+      process.stderr.write('no token was entered\n')
+      return 1
+    }
+    return { token, source: 'flag' }
+  }
+
+  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  if (fromEnvironment !== undefined && fromEnvironment !== '') {
+    // --help promises ENCLAVE_TOKEN works; prompting anyway dead-ends CI, which has no TTY to answer.
+    return { token: fromEnvironment, source: 'environment' }
+  }
+
+  const prompted = await readSecret('Token: ')
+  if (prompted === '') {
+    process.stderr.write('no token was entered\n')
+    return 1
+  }
+  return { token: prompted, source: 'prompt' }
+}
+
+/** A 403 means the environment token authenticated but lacks a scope, so it says so instead of "rejected". */
+async function recoverFromEnvironmentToken(
+  rejectionStatus: number,
+  baseUrl: string,
+  host: string,
+): Promise<number> {
+  if (rejectionStatus === 403) {
+    process.stderr.write(
+      `that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}; ` +
+        'enter a token to store instead, or unset ENCLAVE_TOKEN and retry\n',
+    )
+  } else {
+    process.stderr.write(
+      `ENCLAVE_TOKEN was rejected by ${host} — enter a token to store instead, or unset ENCLAVE_TOKEN and retry\n`,
+    )
+  }
+
+  const secondToken = await readSecret('Token: ')
+  if (secondToken === '') {
+    process.stderr.write('no token was entered\n')
+    return 1
+  }
+
+  const response = await probe(baseUrl, secondToken, host)
+  if (response === null) return 1
+
+  const failureCode = classifyProbeFailure(response, host)
+  if (failureCode !== null) return failureCode
+
+  return saveTokenFromValidResponse(response, host, secondToken)
+}
+
 async function saveTokenFromValidResponse(
   response: Response,
   host: string,
@@ -122,30 +204,12 @@ export async function runLogin(
   process.stderr.write(`Create a token at ${baseUrl}/settings/tokens\n`)
   process.stderr.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
 
-  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  const resolution = await resolveToken(token)
+  if (typeof resolution === 'number') return resolution
+  const { token: resolvedToken, source } = resolution
 
-  let resolvedToken: string
-  let source: TokenSource
-
-  if (token !== undefined && token !== '') {
-    resolvedToken = token
-    source = 'flag'
-  } else if (fromEnvironment !== undefined && fromEnvironment !== '') {
-    resolvedToken = fromEnvironment
-    source = 'environment'
-  } else {
-    resolvedToken = await readSecret('Token: ')
-    source = 'prompt'
-    if (resolvedToken === '') {
-      process.stderr.write('no token was entered\n')
-      return 1
-    }
-  }
-
-  let response = await probe(baseUrl, resolvedToken, host)
-
+  const response = await probe(baseUrl, resolvedToken, host)
   if (response === null) return 1
-  if (handleRedirect(response, host)) return 1
 
   // Recovery path: when an environment token is rejected on a TTY, prompt for a replacement.
   if (
@@ -153,52 +217,11 @@ export async function runLogin(
     source === 'environment' &&
     process.stdin.isTTY
   ) {
-    if (response.status === 403) {
-      process.stderr.write(
-        `that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`,
-      )
-    }
-    process.stderr.write(
-      `ENCLAVE_TOKEN was rejected by ${host} — enter a token to store instead, or unset ENCLAVE_TOKEN and retry\n`,
-    )
-
-    const secondToken = await readSecret('Token: ')
-    if (secondToken === '') {
-      process.stderr.write('no token was entered\n')
-      return 1
-    }
-
-    response = await probe(baseUrl, secondToken, host)
-    if (response === null) return 1
-    if (handleRedirect(response, host)) return 1
-    if (response.status === 401 || response.status === 403) {
-      if (response.status === 401) process.stderr.write('that token was rejected\n')
-      if (response.status === 403)
-        process.stderr.write(
-          `that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`,
-        )
-      return 1
-    }
-    if (response.status !== 200) {
-      process.stderr.write(`the server returned ${String(response.status)}\n`)
-      return 1
-    }
-
-    return saveTokenFromValidResponse(response, host, secondToken)
+    return recoverFromEnvironmentToken(response.status, baseUrl, host)
   }
 
-  if (response.status === 401) {
-    process.stderr.write('that token was rejected\n')
-    return 1
-  }
-  if (response.status === 403) {
-    process.stderr.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
-    return 1
-  }
-  if (response.status !== 200) {
-    process.stderr.write(`the server returned ${String(response.status)}\n`)
-    return 1
-  }
+  const failureCode = classifyProbeFailure(response, host)
+  if (failureCode !== null) return failureCode
 
   return saveTokenFromValidResponse(response, host, resolvedToken)
 }

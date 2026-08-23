@@ -101,7 +101,8 @@ export function tokenFor(host: string): string | null {
           `enclave: ENCLAVE_TOKEN is overriding the stored credential for ${host}\n`,
         )
       }
-    } catch {
+    } catch (error) {
+      if (!(error instanceof CredentialError)) throw error
       // A broken credential store cannot invalidate a working environment token.
     }
     return fromEnvironment

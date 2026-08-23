@@ -78,8 +78,14 @@ describe('credentials', () => {
   it('tokenFor prefers ENCLAVE_TOKEN', () => {
     saveToken('enclave.example.com', 'from-the-file')
     process.env['ENCLAVE_TOKEN'] = 'from-the-environment'
+    const captured = captureStderr()
 
-    expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
+      expect(captured.text()).toMatch(/ENCLAVE_TOKEN is overriding/)
+    } finally {
+      captured.restore()
+    }
   })
 
   /** `login` already trims before deciding a token was entered; `tokenFor` has to agree, or a
