@@ -56,6 +56,7 @@ async function readPasswordHash(userId: string): Promise<PasswordHashRow | undef
 }
 
 async function lockUser(handle: typeof db, userId: string): Promise<void> {
+  // Shared with forgot/reset password so every password mutation for one user serialises here.
   await handle.execute(
     raw`select pg_advisory_xact_lock(${PASSWORD_RESET_LOCK_NAMESPACE}, hashtext(${userId}))`,
   )
