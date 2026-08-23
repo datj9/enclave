@@ -315,6 +315,24 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     expect(rows[0]?.metadata).toEqual({ categoryIds: [docsId], categorySource: 'model' })
   })
 
+  // Documented in docs/self-hosting.md: a no-category match is a real classification, but it
+  // leaves the row matching the eligibility predicate, so every later run pays for it again.
+  it('reports a no-category match as classified and leaves it eligible for the next run', async () => {
+    await setAutoCategorizeEnabled(true, adminId)
+    mocks.completion = '[]'
+
+    const artifactId = await createEligibleArtifact('Matched no category')
+    mocks.calls = 0
+
+    const firstRun = await backfillArtifactCategories(store, { ownerId })
+    const secondRun = await backfillArtifactCategories(store, { ownerId })
+
+    expect(firstRun).toEqual({ eligibleCount: 1, classifiedCount: 1, skippedCount: 0 })
+    expect(secondRun).toEqual({ eligibleCount: 1, classifiedCount: 1, skippedCount: 0 })
+    expect(await categoryRows(artifactId)).toHaveLength(0)
+    expect(mocks.calls).toBe(2)
+  })
+
   it('classifies no more than the requested limit in one run', async () => {
     await setAutoCategorizeEnabled(true, adminId)
     mocks.completion = '["docs"]'
