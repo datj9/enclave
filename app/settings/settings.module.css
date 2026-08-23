@@ -33,11 +33,17 @@
   flex-wrap: wrap;
 }
 
+/*
+ * The underline marker has to stay tight to the text, so the target is grown with an
+ * inline-flex box and min-height rather than padding-block, which would push the rule away.
+ */
 .navLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
   font-size: var(--text-sm);
   color: var(--color-ink-2);
   text-decoration: none;
-  padding-bottom: var(--space-3xs);
   border-bottom: 2px solid transparent;
 }
 

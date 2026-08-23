@@ -73,7 +73,10 @@
  */
 .trigger,
 .confirm {
-  padding: var(--space-3xs) var(--space-2xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--space-3xs);
   font: inherit;
   font-size: var(--text-sm);
   border-radius: var(--radius-input);
@@ -100,7 +103,11 @@
   cursor: not-allowed;
 }
 
+/* A text button still owns a target, so it takes the height without taking the padding. */
 .cancel {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
   padding: 0;
   font: inherit;
   font-size: var(--text-sm);

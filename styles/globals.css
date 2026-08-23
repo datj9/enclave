@@ -78,8 +78,12 @@ a {
   color: var(--color-ink-2);
 }
 
+/* Every interactive control resolves to a --control-* height so controls that share a row
+   line up. Height is set rather than derived from padding, so a change of font size or
+   line-height cannot desynchronise an input from the button beside it. */
 .input {
   width: 100%;
+  min-height: var(--control-md);
   padding: var(--space-2xs) var(--space-xs);
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-input);
@@ -93,19 +97,46 @@ a {
   border-color: var(--color-ink-2);
 }
 
+/* A textarea grows from the control height instead of being pinned to it. */
+textarea.input {
+  min-height: calc(var(--control-md) * 2);
+}
+
 /* design.md § CTA voice — accent border and text over a paper fill, never a colour block */
 .button-primary,
 .button-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-sm) var(--space-lg);
+  min-height: var(--control-md);
+  padding: var(--space-2xs) var(--control-pad-md);
   border-radius: var(--radius-input);
   background: var(--color-paper);
   font: inherit;
   font-weight: 500;
   cursor: pointer;
   transition: transform var(--dur-press) var(--ease-out-app);
+}
+
+/*
+ * The one page-level CTA per view. design.md § CTA voice asks for the spacious step
+ * (--space-sm block / --space-lg inline); that lives here rather than on every button,
+ * so a row of ordinary buttons no longer inherits hero proportions.
+ */
+.button-lg {
+  min-height: var(--control-lg);
+  padding-inline: var(--control-pad-lg);
+}
+
+/*
+ * Dense data surfaces only — table rows, dialog rows. Never on a page-level action.
+ * Reverts to the full touch target on coarse pointers; see the block at the end of this file.
+ */
+.button-sm {
+  min-height: var(--control-sm);
+  /* Block padding too, or the default step's 8 px keeps the box off the 32 px rung. */
+  padding: var(--space-3xs) var(--control-pad-sm);
+  font-size: var(--text-sm);
 }
 
 .button-primary {
@@ -156,10 +187,14 @@ a {
   white-space: nowrap;
 }
 
-/* Off-screen rather than clipped like .sr-only, so focus can bring it back as a real control. */
+/* Off-screen rather than clipped like .sr-only, so focus can bring it back as a real control.
+   It is a real control off-screen too, so it carries the same target as any other. */
 .skip-link {
   position: absolute;
   left: -9999px;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
 }
 
 .skip-link:focus {
@@ -170,6 +205,19 @@ a {
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-input);
   background: var(--color-paper);
+}
+
+/*
+ * Coarse pointer (touch). The dense step exists for a mouse; a finger gets the full target
+ * back. This is the single place that promotion happens, so a dense surface never has to
+ * carry its own breakpoint — and it keys off the input device, not the viewport width, so a
+ * touch laptop at 1440 px is treated correctly and a mouse at 375 px is not padded out.
+ */
+@media (pointer: coarse) {
+  .button-sm {
+    min-height: var(--control-md);
+    padding-inline: var(--control-pad-md);
+  }
 }
 
 /* motion.md § Accessibility — drop transform motion, keep opacity and colour.

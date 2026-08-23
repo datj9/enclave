@@ -15,6 +15,9 @@
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   letter-spacing: 0.02em;

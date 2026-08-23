@@ -104,8 +104,10 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-3xs);
-  padding: var(--space-3xs) var(--space-2xs);
+  min-height: var(--control-sm);
+  padding: var(--space-3xs) var(--control-pad-sm);
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-accent-ink);
@@ -167,7 +169,8 @@
  */
 .revoke {
   flex-shrink: 0;
-  padding: var(--space-3xs) var(--space-2xs);
+  min-height: var(--control-sm);
+  padding: var(--space-3xs) var(--control-pad-sm);
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
@@ -191,6 +194,9 @@
 
 .done {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-sm);
   padding: 0;
   font: inherit;
   font-size: var(--text-sm);
@@ -199,6 +205,20 @@
   border: 0;
   cursor: pointer;
   text-decoration: underline;
+}
+
+/* Dialog controls follow the same promotion contract as the global .button-sm step. */
+@media (pointer: coarse) {
+  .copy,
+  .revoke,
+  .done {
+    min-height: var(--control-md);
+  }
+
+  .copy,
+  .revoke {
+    padding-inline: var(--control-pad-md);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

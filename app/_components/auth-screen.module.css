@@ -57,7 +57,15 @@
   font-size: var(--text-sm);
 }
 
+/*
+ * A standalone navigation link, not a link inside a sentence — so it carries the same target
+ * as any other control. inline-flex + min-height keeps the underline tight to the text where
+ * padding-block would not.
+ */
 .footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
   color: var(--color-ink-2);
   text-decoration: underline;
 }
