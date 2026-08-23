@@ -43,7 +43,7 @@ test.describe('settings change password', () => {
 
     await expect(page.getByRole('heading', { name: 'Password' })).toBeVisible()
     await expect(page.getByLabel('Current password')).toBeVisible()
-    await expect(page.getByLabel('New password')).toBeVisible()
+    await expect(page.getByLabel('New password', { exact: true })).toBeVisible()
     await expect(page.getByLabel('Confirm new password')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Update password' })).toBeVisible()
   })
@@ -56,7 +56,7 @@ test.describe('settings change password', () => {
     await page.goto('/settings/password')
 
     await page.getByLabel('Current password').fill('wrong-horse-battery')
-    await page.getByLabel('New password').fill('new-correct-horse')
+    await page.getByLabel('New password', { exact: true }).fill('new-correct-horse')
     await page.getByLabel('Confirm new password').fill('new-correct-horse')
     await page.getByRole('button', { name: 'Update password' }).click()
 
