@@ -69,16 +69,9 @@
   --radius-input: 6px;
 
   /*
-   * Control heights. Three steps, no more — every interactive control resolves to one of
-   * them so a button, an input, and a segmented option that sit on the same row line up.
-   *
-   * The floor is WCAG 2.5.8 (24 x 24 CSS px minimum) and the comfortable step is the
-   * 44 px pointer target. --control-md is the default: 44 px is both the touch target and
-   * a proportionate desktop control at 16 px body text.
-   *
-   * --control-sm is only legal where a pointer is fine AND the control sits in a dense
-   * data surface (table rows, dialog rows). Below `pointer: coarse` those controls widen
-   * back to --control-md; see the block at the end of styles/globals.css.
+   * Three steps so controls sharing a row line up; the floor is WCAG 2.5.8 (24x24 CSS px).
+   * --control-sm is legal only on a dense surface with a fine pointer. Each such control
+   * promotes itself back to --control-md in its own stylesheet - grep `pointer: coarse`.
    */
   --control-sm: 2rem; /* 32px — dense/desktop only, still clears WCAG 2.5.8 */
   --control-md: 2.75rem; /* 44px — the default. Touch target and standard control */

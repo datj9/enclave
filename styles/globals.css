@@ -208,10 +208,9 @@ textarea.input {
 }
 
 /*
- * Coarse pointer (touch). The dense step exists for a mouse; a finger gets the full target
- * back. This is the single place that promotion happens, so a dense surface never has to
- * carry its own breakpoint — and it keys off the input device, not the viewport width, so a
- * touch laptop at 1440 px is treated correctly and a mouse at 375 px is not padded out.
+ * Coarse pointer (touch): the dense step exists for a mouse, so a finger gets the full
+ * target back. Keyed off the input device, not viewport width. Promotes the shared
+ * .button-sm; module-local dense controls carry their own matching block.
  */
 @media (pointer: coarse) {
   .button-sm {
