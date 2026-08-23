@@ -34,6 +34,7 @@ export function passwordResetEmailText(resetUrl: string): string {
     resetUrl,
     '',
     'This link expires in 1 hour.',
+    'Requesting another reset link replaces this one, so only the newest link still works.',
     '',
     'If you did not request this, you can ignore this email.',
   ].join('\n')
@@ -81,19 +82,60 @@ async function replaceOutstandingTokens(userId: string, tokenHash: Buffer): Prom
   })
 }
 
-/** Mail failure is never a 5xx: the requester sees the same generic success either way. */
-async function deliverResetMail(to: string, plaintext: string): Promise<boolean> {
+interface DeliveryRequest {
+  readonly userId: string
+  readonly email: string
+  readonly actorIp: string | null
+}
+
+async function mintAndSend(request: DeliveryRequest): Promise<void> {
+  const minted = mintPasswordResetToken()
+  await replaceOutstandingTokens(request.userId, minted.tokenHash)
+  await sendMail({
+    to: request.email,
+    subject: PASSWORD_RESET_EMAIL_SUBJECT,
+    text: passwordResetEmailText(passwordResetUrl(minted.plaintext)),
+  })
+}
+
+function describeFailure(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown error'
+}
+
+/** Mail failure is never a 5xx: the requester already has the same generic success either way. */
+async function runDelivery(request: DeliveryRequest): Promise<void> {
   try {
-    await sendMail({
-      to,
-      subject: PASSWORD_RESET_EMAIL_SUBJECT,
-      text: passwordResetEmailText(passwordResetUrl(plaintext)),
+    await mintAndSend(request)
+  } catch (error) {
+    const reason = describeFailure(error)
+    console.error(`[enclave] password reset delivery failed (${reason})`)
+    await recordAuditEvent({
+      action: 'auth.password_reset_mail_failed',
+      actorUserId: request.userId,
+      actorIp: request.actorIp,
+      metadata: { reason },
     })
-    return true
-  } catch {
-    console.error('[enclave] password reset mail failed')
-    return false
   }
+}
+
+const pendingDeliveries = new Set<Promise<void>>()
+
+/**
+ * Handed off, never awaited: an awaited SMTP round-trip makes a known address measurably slower
+ * than an unknown one. The catch keeps a detached throw off the process.
+ */
+function startDelivery(request: DeliveryRequest): void {
+  const delivery = runDelivery(request).catch((error: unknown) => {
+    console.error(`[enclave] password reset delivery handler failed (${describeFailure(error)})`)
+  })
+
+  pendingDeliveries.add(delivery)
+  void delivery.finally(() => pendingDeliveries.delete(delivery))
+}
+
+/** Test seam, same idea as `setMailTransporterForTests`: await what the request path handed off. */
+export async function settlePasswordResetDeliveries(): Promise<void> {
+  while (pendingDeliveries.size > 0) await Promise.all([...pendingDeliveries])
 }
 
 export async function requestPasswordReset(input: {
@@ -101,25 +143,19 @@ export async function requestPasswordReset(input: {
   readonly actorIp: string | null
 }): Promise<void> {
   const row = await findResettableUser(input.email)
+  const isDeliverable =
+    row !== undefined && row.isActive && row.passwordHash !== null && isMailConfigured()
 
-  if (row === undefined || !row.isActive || row.passwordHash === null || !isMailConfigured()) {
-    await recordAuditEvent({
-      action: 'auth.password_reset_requested',
-      actorUserId: row?.id ?? null,
-      actorIp: input.actorIp,
-      metadata: { mailed: false },
-    })
-    return
-  }
-
-  const minted = mintPasswordResetToken()
-  await replaceOutstandingTokens(row.id, minted.tokenHash)
-  const mailed = await deliverResetMail(input.email, minted.plaintext)
-
+  // Both branches from here cost one select plus one insert; `dispatched` is all this row can
+  // honestly claim, since the send outcome is only known after the response has gone out.
   await recordAuditEvent({
     action: 'auth.password_reset_requested',
-    actorUserId: row.id,
+    actorUserId: row?.id ?? null,
     actorIp: input.actorIp,
-    metadata: { mailed },
+    metadata: { dispatched: isDeliverable },
   })
+
+  if (!isDeliverable) return
+
+  startDelivery({ userId: row.id, email: input.email, actorIp: input.actorIp })
 }

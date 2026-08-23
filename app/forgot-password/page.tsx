@@ -13,6 +13,13 @@ interface ForgotPasswordPageProps {
   searchParams: Promise<{ error?: string; sent?: string }>
 }
 
+/** Neither message names the address, so a rate-limited request still reveals nothing. */
+function errorMessageFor(error: string | undefined): string | null {
+  if (error === undefined) return null
+  if (error === 'rate') return 'Too many requests. Try again later.'
+  return 'Enter a valid email address.'
+}
+
 export default async function ForgotPasswordPage({ searchParams }: ForgotPasswordPageProps) {
   if (!(await isSetupComplete())) redirect('/setup')
   if ((await getSessionUser()) !== null) redirect('/dashboard')
@@ -26,7 +33,7 @@ export default async function ForgotPasswordPage({ searchParams }: ForgotPasswor
       action="/api/auth/forgot-password"
       submitLabel="Send reset link"
       showPassword={false}
-      errorMessage={error === undefined ? null : 'Enter a valid email address.'}
+      errorMessage={errorMessageFor(error)}
       successMessage={sent === '1' ? GENERIC_FORGOT_PASSWORD_SUCCESS : null}
       footer={
         <p>

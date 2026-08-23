@@ -47,7 +47,7 @@ export async function POST(request: Request): Promise<Response> {
     })
 
     return seeOther('/dashboard', {
-      'set-cookie': await createSessionCookie(completed.userId),
+      'set-cookie': await createSessionCookie(completed.userId, completed.passwordChangedAt),
     })
   } catch (error) {
     if (returnsJson) return toErrorResponse(error)
