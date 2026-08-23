@@ -5,7 +5,7 @@ import { db } from '@/db'
 import { passwordResetTokens } from '@/db/schema/password-reset-tokens'
 import { users } from '@/db/schema/users'
 import { recordAuditEvent } from '@/lib/audit'
-import { HttpError } from '@/lib/http'
+import { HttpError, type ErrorCode } from '@/lib/http'
 import { hashPassword, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, verifyPassword } from './password'
 import { PASSWORD_RESET_LOCK_NAMESPACE } from './forgot-password'
 
@@ -15,6 +15,8 @@ export const CHOOSE_DIFFERENT_PASSWORD = 'Choose a different password'
 export const PASSWORD_TOO_SHORT = 'Enter a password of at least 12 characters'
 export const PASSWORD_CONFIRM_MISMATCH = 'New password and confirmation do not match'
 export const PASSWORD_UPDATED = 'Password updated.'
+export const MALFORMED_CHANGE_REQUEST =
+  'Enter your current password and a new password of at least 12 characters'
 export const OIDC_ONLY_PASSWORD_COPY =
   'This account signs in with your identity provider and has no password.'
 
@@ -25,6 +27,88 @@ export const PASSWORD_CHANGE_FAILURE_REASONS = [
   'same_password',
 ] as const
 export type PasswordChangeFailureReason = (typeof PASSWORD_CHANGE_FAILURE_REASONS)[number]
+
+export type PasswordChangeFormFlag =
+  'wrong_current' | 'mismatch' | 'password' | 'same' | 'no_password' | 'malformed'
+
+interface PasswordChangeFailure {
+  readonly code: ErrorCode
+  readonly message: string
+  readonly formFlag: PasswordChangeFormFlag
+  readonly auditReason: PasswordChangeFailureReason
+}
+
+/** The one mapping per failure; `formFlag` is the `?error=` value app/settings/password renders. */
+export const PASSWORD_CHANGE_FAILURES = {
+  wrongCurrent: {
+    code: 'UNAUTHENTICATED',
+    message: CURRENT_PASSWORD_INCORRECT,
+    formFlag: 'wrong_current',
+    auditReason: 'wrong_current',
+  },
+  noPassword: {
+    code: 'FORBIDDEN',
+    message: NO_PASSWORD_ACCOUNT,
+    formFlag: 'no_password',
+    auditReason: 'no_password',
+  },
+  samePassword: {
+    code: 'VALIDATION_FAILED',
+    message: CHOOSE_DIFFERENT_PASSWORD,
+    formFlag: 'same',
+    auditReason: 'same_password',
+  },
+  confirmMismatch: {
+    code: 'VALIDATION_FAILED',
+    message: PASSWORD_CONFIRM_MISMATCH,
+    formFlag: 'mismatch',
+    auditReason: 'malformed',
+  },
+  passwordTooShort: {
+    code: 'VALIDATION_FAILED',
+    message: PASSWORD_TOO_SHORT,
+    formFlag: 'password',
+    auditReason: 'malformed',
+  },
+  malformedRequest: {
+    code: 'VALIDATION_FAILED',
+    message: MALFORMED_CHANGE_REQUEST,
+    formFlag: 'malformed',
+    auditReason: 'malformed',
+  },
+} as const satisfies Readonly<Record<string, PasswordChangeFailure>>
+
+export type PasswordChangeFailureKind = keyof typeof PASSWORD_CHANGE_FAILURES
+
+export class PasswordChangeError extends HttpError {
+  readonly failureKind: PasswordChangeFailureKind
+
+  constructor(failureKind: PasswordChangeFailureKind) {
+    const failure = PASSWORD_CHANGE_FAILURES[failureKind]
+    super(failure.code, failure.message)
+    this.name = 'PasswordChangeError'
+    this.failureKind = failureKind
+  }
+
+  get formFlag(): PasswordChangeFormFlag {
+    return PASSWORD_CHANGE_FAILURES[this.failureKind].formFlag
+  }
+}
+
+/** Awaits the audit row before the caller throws, so a torn-down request cannot drop it. */
+export async function auditPasswordChangeFailure(
+  failureKind: PasswordChangeFailureKind,
+  userId: string,
+  actorIp: string | null,
+): Promise<PasswordChangeError> {
+  await recordAuditEvent({
+    action: 'auth.password_change_failed',
+    actorUserId: userId,
+    actorIp,
+    metadata: { reason: PASSWORD_CHANGE_FAILURES[failureKind].auditReason },
+  })
+  return new PasswordChangeError(failureKind)
+}
 
 export const changePasswordSchema = z
   .object({
@@ -67,36 +151,6 @@ export async function hasLocalPassword(userId: string): Promise<boolean> {
   return row !== undefined && row.passwordHash !== null
 }
 
-function failNoPassword(userId: string, actorIp: string | null): never {
-  void recordAuditEvent({
-    action: 'auth.password_change_failed',
-    actorUserId: userId,
-    actorIp,
-    metadata: { reason: 'no_password' },
-  })
-  throw new HttpError('FORBIDDEN', NO_PASSWORD_ACCOUNT)
-}
-
-function failWrongCurrent(userId: string, actorIp: string | null): never {
-  void recordAuditEvent({
-    action: 'auth.password_change_failed',
-    actorUserId: userId,
-    actorIp,
-    metadata: { reason: 'wrong_current' },
-  })
-  throw new HttpError('UNAUTHENTICATED', CURRENT_PASSWORD_INCORRECT)
-}
-
-function failSamePassword(userId: string, actorIp: string | null): never {
-  void recordAuditEvent({
-    action: 'auth.password_change_failed',
-    actorUserId: userId,
-    actorIp,
-    metadata: { reason: 'same_password' },
-  })
-  throw new HttpError('VALIDATION_FAILED', CHOOSE_DIFFERENT_PASSWORD)
-}
-
 interface LocalPasswordChange {
   readonly userId: string
   readonly originalHash: string
@@ -117,10 +171,10 @@ async function applyLocalPasswordChange(
     .limit(1)
 
   if (row === undefined || row.passwordHash === null) {
-    throw new HttpError('FORBIDDEN', NO_PASSWORD_ACCOUNT)
+    throw new PasswordChangeError('noPassword')
   }
   if (row.passwordHash !== change.originalHash) {
-    throw new HttpError('UNAUTHENTICATED', CURRENT_PASSWORD_INCORRECT)
+    throw new PasswordChangeError('wrongCurrent')
   }
 
   await transaction
@@ -141,16 +195,16 @@ export async function changePassword(input: {
 }): Promise<void> {
   const row = await readPasswordHash(input.userId)
   if (row === undefined || row.passwordHash === null) {
-    failNoPassword(input.userId, input.actorIp)
+    throw await auditPasswordChangeFailure('noPassword', input.userId, input.actorIp)
   }
 
   const storedHash = row.passwordHash
   if (!(await verifyPassword(storedHash, input.currentPassword))) {
-    failWrongCurrent(input.userId, input.actorIp)
+    throw await auditPasswordChangeFailure('wrongCurrent', input.userId, input.actorIp)
   }
 
   if (input.newPassword === input.currentPassword) {
-    failSamePassword(input.userId, input.actorIp)
+    throw await auditPasswordChangeFailure('samePassword', input.userId, input.actorIp)
   }
 
   const passwordHash = await hashPassword(input.newPassword)

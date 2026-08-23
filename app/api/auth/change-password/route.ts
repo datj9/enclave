@@ -1,14 +1,11 @@
 import type { z } from 'zod'
 
-import { recordAuditEvent } from '@/lib/audit'
 import {
+  auditPasswordChangeFailure,
   changePassword,
   changePasswordSchema,
-  CURRENT_PASSWORD_INCORRECT,
-  NO_PASSWORD_ACCOUNT,
-  CHOOSE_DIFFERENT_PASSWORD,
-  PASSWORD_CONFIRM_MISMATCH,
-  PASSWORD_TOO_SHORT,
+  PasswordChangeError,
+  type PasswordChangeFailureKind,
 } from '@/lib/auth/change-password'
 import {
   enforceAuthRateLimit,
@@ -24,48 +21,24 @@ export const dynamic = 'force-dynamic'
 
 const SETTINGS_PASSWORD_PATH = '/settings/password'
 
-type FormErrorFlag =
-  'wrong_current' | 'mismatch' | 'password' | 'same' | 'no_password' | 'malformed' | 'rate_limited'
-
-function messageForParseFailure(error: z.ZodError): {
-  readonly message: string
-  readonly flag: FormErrorFlag
-} {
+function parseFailureKind(error: z.ZodError): PasswordChangeFailureKind {
   for (const issue of error.issues) {
-    if (issue.path[0] === 'confirmNewPassword') {
-      return { message: PASSWORD_CONFIRM_MISMATCH, flag: 'mismatch' }
-    }
-    if (issue.path[0] === 'newPassword') {
-      return { message: PASSWORD_TOO_SHORT, flag: 'password' }
-    }
+    if (issue.path[0] === 'confirmNewPassword') return 'confirmMismatch'
+    if (issue.path[0] === 'newPassword') return 'passwordTooShort'
   }
-  return {
-    message: 'Enter your current password and a new password of at least 12 characters',
-    flag: 'malformed',
-  }
-}
-
-function formErrorFlag(error: unknown): FormErrorFlag {
-  if (error instanceof HttpError) {
-    if (error.code === 'RATE_LIMITED') return 'rate_limited'
-    if (error.message === CURRENT_PASSWORD_INCORRECT) return 'wrong_current'
-    if (error.message === NO_PASSWORD_ACCOUNT) return 'no_password'
-    if (error.message === CHOOSE_DIFFERENT_PASSWORD) return 'same'
-    if (error.message === PASSWORD_CONFIRM_MISMATCH) return 'mismatch'
-    if (error.message === PASSWORD_TOO_SHORT) return 'password'
-  }
-  return 'malformed'
+  return 'malformedRequest'
 }
 
 function formFailureRedirect(error: unknown): Response {
-  if (
-    error instanceof HttpError &&
-    error.code === 'UNAUTHENTICATED' &&
-    error.message === 'Sign in to continue'
-  ) {
-    return seeOther('/signin')
+  if (error instanceof PasswordChangeError) {
+    return seeOther(`${SETTINGS_PASSWORD_PATH}?error=${error.formFlag}`)
   }
-  return seeOther(`${SETTINGS_PASSWORD_PATH}?error=${formErrorFlag(error)}`)
+  if (error instanceof HttpError) {
+    if (error.code === 'RATE_LIMITED')
+      return seeOther(`${SETTINGS_PASSWORD_PATH}?error=rate_limited`)
+    if (error.code === 'UNAUTHENTICATED') return seeOther('/signin')
+  }
+  return seeOther(`${SETTINGS_PASSWORD_PATH}?error=malformed`)
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -76,14 +49,11 @@ export async function POST(request: Request): Promise<Response> {
     enforceChangePasswordUserRateLimit(sessionUser.id)
     const parsed = changePasswordSchema.safeParse(await readRequestBody(request))
     if (!parsed.success) {
-      const { message } = messageForParseFailure(parsed.error)
-      await recordAuditEvent({
-        action: 'auth.password_change_failed',
-        actorUserId: sessionUser.id,
-        actorIp: clientIpFromHeaders(request.headers),
-        metadata: { reason: 'malformed' },
-      })
-      throw new HttpError('VALIDATION_FAILED', message)
+      throw await auditPasswordChangeFailure(
+        parseFailureKind(parsed.error),
+        sessionUser.id,
+        clientIpFromHeaders(request.headers),
+      )
     }
     await changePassword({
       userId: sessionUser.id,
