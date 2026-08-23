@@ -54,6 +54,21 @@ function respondWith(status: number, body = '{"data":{"items":[],"nextCursor":nu
   ) as typeof fetch
 }
 
+/** Two-probe cases: returns each status once, in order, and refuses to be called more times. */
+function respondWithSequence(statuses: number[]): void {
+  let callIndex = 0
+  globalThis.fetch = vi.fn(async () => {
+    if (callIndex >= statuses.length) {
+      throw new Error(`fetch called ${callIndex + 1} times, only ${statuses.length} supplied`)
+    }
+    const status = statuses[callIndex] as number
+    callIndex += 1
+    return Promise.resolve(
+      new Response(status === 200 ? '{"data":{"items":[],"nextCursor":null}}' : '{}', { status }),
+    )
+  }) as typeof fetch
+}
+
 beforeEach(() => {
   configDirectory = mkdtempSync(join(tmpdir(), 'enclave-login-'))
   originalConfigHome = process.env['XDG_CONFIG_HOME']
@@ -242,6 +257,100 @@ describe('runLogin', () => {
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[1]).toMatchObject({ redirect: 'manual' })
+  })
+})
+
+describe('runLogin token recovery', () => {
+  let originalStdinIsTTY: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalStdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  })
+
+  afterEach(() => {
+    if (originalStdinIsTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY
+    else Object.defineProperty(process.stdin, 'isTTY', originalStdinIsTTY)
+  })
+
+  function withStdinTTY(isTTY: boolean): void {
+    Object.defineProperty(process.stdin, 'isTTY', { value: isTTY, configurable: true })
+  }
+
+  it('prompts for a replacement when ENCLAVE_TOKEN is rejected on a TTY', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = 'fresh-token'
+    withStdinTTY(true)
+    respondWithSequence([401, 200])
+
+    expect(await runLogin(HOST)).toBe(0)
+    expect(readCredentials()[HOST]?.token).toBe('fresh-token')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not prompt when ENCLAVE_TOKEN is rejected without a TTY', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    withStdinTTY(false)
+    respondWith(401)
+
+    expect(await runLogin(HOST)).toBe(1)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(stderrOutput()).toMatch(/that token was rejected/)
+  })
+
+  it('does not prompt when an explicit --token is rejected', async () => {
+    withStdinTTY(true)
+    respondWith(401)
+
+    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(1)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('retries once and no more when the replacement is also rejected', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = 'fresh-token'
+    withStdinTTY(true)
+    respondWithSequence([401, 401])
+
+    expect(await runLogin(HOST)).toBe(1)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('explains the missing scope before prompting on a 403 from ENCLAVE_TOKEN', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = 'fresh-token'
+    withStdinTTY(true)
+    respondWithSequence([403, 200])
+
+    expect(await runLogin(HOST)).toBe(0)
+    expect(stderrOutput()).toMatch(/missing a scope/)
+  })
+
+  it('returns 1 without saving when the prompted replacement is empty', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = ''
+    withStdinTTY(true)
+    respondWith(401)
+
+    expect(await runLogin(HOST)).toBe(1)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(stderrOutput()).toMatch(/no token was entered/)
+    expect(readCredentials()[HOST]).toBeUndefined()
+  })
+
+  it('never writes either token to stdout or stderr', async () => {
+    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    answer = 'enc_fresh_prompt_token'
+    withStdinTTY(true)
+    respondWithSequence([401, 200])
+
+    await runLogin(HOST)
+    expect(stdout()).not.toContain('enc_stale_env_token')
+    expect(stdout()).not.toContain('enc_fresh_prompt_token')
+    expect(stderrOutput()).not.toContain('enc_stale_env_token')
+    expect(stderrOutput()).not.toContain('enc_fresh_prompt_token')
   })
 })
 

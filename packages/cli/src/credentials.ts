@@ -15,13 +15,6 @@ export function credentialsPath(): string {
   return join(base, 'enclave', 'credentials.json')
 }
 
-function assertPrivate(path: string): void {
-  const mode = statSync(path).mode & 0o077
-  if (mode !== 0) {
-    throw new CredentialError(`${path} is readable by other users. Run: chmod 600 ${path}`)
-  }
-}
-
 function assertShape(path: string, parsed: unknown): asserts parsed is Record<string, HostCredential> {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new CredentialError(`${path} does not contain a credentials object — remove it and log in again`)
@@ -38,11 +31,38 @@ function assertShape(path: string, parsed: unknown): asserts parsed is Record<st
 export function readCredentials(): Record<string, HostCredential> {
   const path = credentialsPath()
   if (!existsSync(path)) return {}
-  assertPrivate(path)
+
+  let stat
+  try {
+    stat = statSync(path)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown'
+    throw new CredentialError(
+      `${path} could not be inspected (${code}) — check its permissions and ownership`,
+    )
+  }
+
+  if (!stat.isFile()) {
+    throw new CredentialError(`${path} is not a regular file — remove it and log in again`)
+  }
+
+  if (stat.mode & 0o077) {
+    throw new CredentialError(`${path} is readable by other users. Run: chmod 600 ${path}`)
+  }
+
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown'
+    throw new CredentialError(
+      `${path} could not be read (${code}) — check its permissions and ownership`,
+    )
+  }
 
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed = JSON.parse(raw)
   } catch {
     throw new CredentialError(`${path} is not valid JSON — remove it and log in again`)
   }
@@ -71,7 +91,21 @@ export function tokenFor(host: string): string | null {
   // Trimmed, so this agrees with `login`'s own "was a token entered?" test. Untrimmed, a trailing
   // space in a .env file sends `Bearer    ` and silently bypasses a good stored credential.
   const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
-  if (fromEnvironment !== undefined && fromEnvironment !== '') return fromEnvironment
+  if (fromEnvironment !== undefined && fromEnvironment !== '') {
+    // Warn when the env token silently shadows a different stored credential.
+    try {
+      const store = readCredentials()
+      const key = storedKeyFor(store, host)
+      if (key !== null && store[key]?.token !== fromEnvironment) {
+        process.stderr.write(
+          `enclave: ENCLAVE_TOKEN is overriding the stored credential for ${host}\n`,
+        )
+      }
+    } catch {
+      // A broken credential store cannot invalidate a working environment token.
+    }
+    return fromEnvironment
+  }
   const store = readCredentials()
   const key = storedKeyFor(store, host)
   return key === null ? null : (store[key]?.token ?? null)
