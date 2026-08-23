@@ -97,35 +97,40 @@ function failSamePassword(userId: string, actorIp: string | null): never {
   throw new HttpError('VALIDATION_FAILED', CHOOSE_DIFFERENT_PASSWORD)
 }
 
+interface LocalPasswordChange {
+  readonly userId: string
+  readonly originalHash: string
+  readonly passwordHash: string
+  readonly changedAt: Date
+}
+
 async function applyLocalPasswordChange(
   transaction: typeof db,
-  userId: string,
-  originalHash: string,
-  passwordHash: string,
+  change: LocalPasswordChange,
 ): Promise<void> {
-  await lockUser(transaction, userId)
+  await lockUser(transaction, change.userId)
 
   const [row] = await transaction
     .select({ passwordHash: users.passwordHash })
     .from(users)
-    .where(eq(users.id, userId))
+    .where(eq(users.id, change.userId))
     .limit(1)
 
   if (row === undefined || row.passwordHash === null) {
     throw new HttpError('FORBIDDEN', NO_PASSWORD_ACCOUNT)
   }
-  if (row.passwordHash !== originalHash) {
+  if (row.passwordHash !== change.originalHash) {
     throw new HttpError('UNAUTHENTICATED', CURRENT_PASSWORD_INCORRECT)
   }
 
   await transaction
     .update(users)
-    .set({ passwordHash, passwordChangedAt: raw`now()` })
-    .where(eq(users.id, userId))
+    .set({ passwordHash: change.passwordHash, passwordChangedAt: change.changedAt })
+    .where(eq(users.id, change.userId))
 
   await transaction
     .delete(passwordResetTokens)
-    .where(and(eq(passwordResetTokens.userId, userId), isNull(passwordResetTokens.usedAt)))
+    .where(and(eq(passwordResetTokens.userId, change.userId), isNull(passwordResetTokens.usedAt)))
 }
 
 export async function changePassword(input: {
@@ -149,8 +154,15 @@ export async function changePassword(input: {
   }
 
   const passwordHash = await hashPassword(input.newPassword)
+  // App clock, not now(): the cookie minted right after must never look older than this row.
+  const changedAt = new Date()
   await db.transaction(async (transaction) => {
-    await applyLocalPasswordChange(transaction, input.userId, storedHash, passwordHash)
+    await applyLocalPasswordChange(transaction, {
+      userId: input.userId,
+      originalHash: storedHash,
+      passwordHash,
+      changedAt,
+    })
   })
 
   await recordAuditEvent({

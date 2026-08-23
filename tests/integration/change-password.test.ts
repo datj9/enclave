@@ -494,6 +494,39 @@ describe.skipIf(!databaseReady)('POST /api/auth/change-password', () => {
     expect(isSessionInvalidatedByPasswordChange(user!.passwordChangedAt, newIat)).toBe(false)
   })
 
+  it('stamps password_changed_at from the app clock, not the database clock', async () => {
+    const appClockNow = new Date('2031-02-03T04:05:06.789Z')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(appClockNow)
+    try {
+      const response = await changePasswordRoute(
+        jsonPost({
+          currentPassword: OLD_PASSWORD,
+          newPassword: NEW_PASSWORD,
+          confirmNewPassword: NEW_PASSWORD,
+        }),
+      )
+
+      expect(response.status).toBe(303)
+
+      const [user] = await db
+        .select({ passwordChangedAt: users.passwordChangedAt })
+        .from(users)
+        .where(eq(users.id, activeUserId))
+      expect(user!.passwordChangedAt?.getTime()).toBe(appClockNow.getTime())
+
+      const newToken = (response.headers.get('set-cookie') ?? '').match(
+        /enclave_session=([^;]+)/,
+      )?.[1]
+      if (newToken === undefined) throw new Error('new session cookie did not contain a token')
+      const freshIat = decodeJwt(newToken).iat
+      expect(freshIat).toBeDefined()
+      expect(isSessionInvalidatedByPasswordChange(user!.passwordChangedAt, freshIat)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('redirects a form POST with the wrong current password to error=wrong_current', async () => {
     const response = await changePasswordRoute(
       formPost({
