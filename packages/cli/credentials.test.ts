@@ -1,8 +1,8 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CredentialError,
@@ -12,6 +12,28 @@ import {
   saveToken,
   tokenFor,
 } from './src/credentials.ts'
+
+function thrownError(fn: () => unknown): Error {
+  try {
+    fn()
+  } catch (caught) {
+    return caught as Error
+  }
+  throw new Error('expected the call to throw')
+}
+
+/** Captures everything written to stderr while a call runs, then restores the real writer. */
+function captureStderr(): { text: () => string; restore: () => void } {
+  const chunks: string[] = []
+  const write = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    chunks.push(String(chunk))
+    return true
+  })
+  return {
+    text: () => chunks.join(''),
+    restore: () => write.mockRestore(),
+  }
+}
 
 describe('credentials', () => {
   let configHome: string
@@ -56,8 +78,14 @@ describe('credentials', () => {
   it('tokenFor prefers ENCLAVE_TOKEN', () => {
     saveToken('enclave.example.com', 'from-the-file')
     process.env['ENCLAVE_TOKEN'] = 'from-the-environment'
+    const captured = captureStderr()
 
-    expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('from-the-environment')
+      expect(captured.text()).toMatch(/ENCLAVE_TOKEN is overriding/)
+    } finally {
+      captured.restore()
+    }
   })
 
   /** `login` already trims before deciding a token was entered; `tokenFor` has to agree, or a
@@ -171,6 +199,128 @@ describe('credentials', () => {
       saveToken(legacyKey, 'legacy-secret')
       expect(tokenFor('https://enclave.example.com')).toBe('legacy-secret')
       forgetToken('https://enclave.example.com')
+    }
+  })
+
+  // --- R1: a filesystem failure must not be reported as corrupt JSON ---
+
+  it.skipIf(process.getuid?.() === 0)(
+    'readCredentials reports a read failure as a permission problem, not as malformed JSON',
+    () => {
+      saveToken('enclave.example.com', 'first-secret')
+      chmodSync(credentialsPath(), 0o000)
+
+      const error = thrownError(() => readCredentials())
+
+      expect(error).toBeInstanceOf(CredentialError)
+      expect(error.message).toMatch(/could not be read/)
+      expect(error.message).not.toMatch(/not valid JSON/)
+      expect(error.message).not.toMatch(/remove it/)
+    },
+  )
+
+  it('readCredentials names a directory at the credentials path as such', () => {
+    mkdirSync(credentialsPath(), { recursive: true })
+
+    const error = thrownError(() => readCredentials())
+
+    expect(error).toBeInstanceOf(CredentialError)
+    expect(error.message).toMatch(/is not a regular file/)
+  })
+
+  it('readCredentials still reports genuinely malformed JSON as malformed JSON', () => {
+    saveToken('enclave.example.com', 'first-secret')
+    writeFileSync(credentialsPath(), '{ not json', { mode: 0o600 })
+
+    const error = thrownError(() => readCredentials())
+
+    expect(error).toBeInstanceOf(CredentialError)
+    expect(error.message).toMatch(/is not valid JSON/)
+  })
+
+  // --- R3: ENCLAVE_TOKEN must not silently shadow a different stored credential ---
+
+  it('tokenFor warns when ENCLAVE_TOKEN differs from the stored credential', () => {
+    saveToken('enclave.example.com', 'stored')
+    process.env['ENCLAVE_TOKEN'] = 'different'
+    const captured = captureStderr()
+
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('different')
+      expect(captured.text()).toMatch(/ENCLAVE_TOKEN is overriding/)
+      expect(captured.text()).toContain('enclave.example.com')
+    } finally {
+      captured.restore()
+    }
+  })
+
+  it('tokenFor is silent when ENCLAVE_TOKEN equals the stored credential', () => {
+    saveToken('enclave.example.com', 'same-secret')
+    process.env['ENCLAVE_TOKEN'] = 'same-secret'
+    const captured = captureStderr()
+
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('same-secret')
+      expect(captured.text()).not.toMatch(/ENCLAVE_TOKEN is overriding/)
+    } finally {
+      captured.restore()
+    }
+  })
+
+  it('tokenFor is silent when nothing is stored for the host', () => {
+    process.env['ENCLAVE_TOKEN'] = 'env-only'
+    const captured = captureStderr()
+
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('env-only')
+      expect(captured.text()).not.toMatch(/ENCLAVE_TOKEN is overriding/)
+    } finally {
+      captured.restore()
+    }
+  })
+
+  it.skipIf(process.getuid?.() === 0)(
+    'tokenFor still returns the environment token when the credentials file is unreadable',
+    () => {
+      saveToken('enclave.example.com', 'stored')
+      chmodSync(credentialsPath(), 0o000)
+      process.env['ENCLAVE_TOKEN'] = 'env-token'
+      const captured = captureStderr()
+
+      try {
+        expect(tokenFor('enclave.example.com')).toBe('env-token')
+        expect(captured.text()).not.toMatch(/ENCLAVE_TOKEN is overriding/)
+      } finally {
+        captured.restore()
+      }
+    },
+  )
+
+  it('tokenFor still returns the environment token when the credentials file is malformed', () => {
+    saveToken('enclave.example.com', 'first-secret')
+    writeFileSync(credentialsPath(), '{ not json', { mode: 0o600 })
+    process.env['ENCLAVE_TOKEN'] = 'env-token'
+    const captured = captureStderr()
+
+    try {
+      expect(tokenFor('enclave.example.com')).toBe('env-token')
+      expect(captured.text()).not.toMatch(/ENCLAVE_TOKEN is overriding/)
+    } finally {
+      captured.restore()
+    }
+  })
+
+  it('the warning never contains the token value', () => {
+    saveToken('enclave.example.com', 'tok-9d5f')
+    process.env['ENCLAVE_TOKEN'] = 'tok-2b71'
+    const captured = captureStderr()
+
+    try {
+      tokenFor('enclave.example.com')
+      expect(captured.text()).not.toContain('tok-9d5f')
+      expect(captured.text()).not.toContain('tok-2b71')
+    } finally {
+      captured.restore()
     }
   })
 })

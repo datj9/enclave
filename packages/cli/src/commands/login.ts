@@ -61,48 +61,40 @@ function readSecret(promptText: string): Promise<string> {
   })
 }
 
-export async function runLogin(
+type TokenSource = 'flag' | 'environment' | 'prompt'
+
+async function probe(
+  baseUrl: string,
+  token: string,
   host: string,
-  token?: string,
-  isInsecureAllowed = false,
-): Promise<number> {
-  const baseUrl = baseUrlFor(host, isInsecureAllowed)
-  process.stderr.write(`Create a token at ${baseUrl}/settings/tokens\n`)
-  process.stderr.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
-
-  // `--help` promises ENCLAVE_TOKEN works and `tokenFor` honours it; prompting anyway dead-ends
-  // every CI run, where there is no TTY to answer.
-  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
-  const givenToken =
-    token ?? (fromEnvironment !== undefined && fromEnvironment !== '' ? fromEnvironment : undefined)
-  const resolvedToken = givenToken ?? (await readSecret('Token: '))
-  if (resolvedToken === '') {
-    process.stderr.write('no token was entered\n')
-    return 1
-  }
-
-  let response: Response
+): Promise<Response | null> {
   try {
-    response = await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
-      headers: { authorization: `Bearer ${resolvedToken}`, 'user-agent': USER_AGENT },
+    return await fetch(`${baseUrl}/api/v1/artifacts?limit=1`, {
+      headers: { authorization: `Bearer ${token}`, 'user-agent': USER_AGENT },
       redirect: 'manual',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     })
   } catch {
     process.stderr.write(`could not reach ${host}\n`)
-    return 1
+    return null
   }
+}
 
+function handleRedirect(response: Response, host: string): boolean {
   if (response.status >= 300 && response.status < 400) {
     process.stderr.write(`${host} redirected the API probe — is that the right host?\n`)
-    return 1
+    return true
   }
+  return false
+}
+
+/** Returns the exit code for a probe the CLI cannot proceed from, or null when the token is good. */
+function classifyProbeFailure(response: Response, host: string): number | null {
+  if (handleRedirect(response, host)) return 1
   if (response.status === 401) {
     process.stderr.write('that token was rejected\n')
     return 1
   }
-  // The probe reads, so a write-only token lands here rather than on 401. Naming the scope the
-  // server refused is the difference between a one-line fix and an unexplained failure.
   if (response.status === 403) {
     process.stderr.write(`that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}\n`)
     return 1
@@ -111,7 +103,78 @@ export async function runLogin(
     process.stderr.write(`the server returned ${String(response.status)}\n`)
     return 1
   }
+  return null
+}
 
+interface TokenResolution {
+  token: string
+  source: TokenSource
+}
+
+/**
+ * `--token` is authoritative whenever it's supplied at all — an empty value is a caller error, not
+ * a signal to fall through to ENCLAVE_TOKEN or the prompt.
+ */
+async function resolveToken(token: string | undefined): Promise<TokenResolution | number> {
+  if (token !== undefined) {
+    if (token === '') {
+      process.stderr.write('no token was entered\n')
+      return 1
+    }
+    return { token, source: 'flag' }
+  }
+
+  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  if (fromEnvironment !== undefined && fromEnvironment !== '') {
+    // --help promises ENCLAVE_TOKEN works; prompting anyway dead-ends CI, which has no TTY to answer.
+    return { token: fromEnvironment, source: 'environment' }
+  }
+
+  const prompted = await readSecret('Token: ')
+  if (prompted === '') {
+    process.stderr.write('no token was entered\n')
+    return 1
+  }
+  return { token: prompted, source: 'prompt' }
+}
+
+/** A 403 means the environment token authenticated but lacks a scope, so it says so instead of "rejected". */
+async function recoverFromEnvironmentToken(
+  rejectionStatus: number,
+  baseUrl: string,
+  host: string,
+): Promise<number> {
+  if (rejectionStatus === 403) {
+    process.stderr.write(
+      `that token is missing a scope — it needs ${REQUIRED_SCOPES.join(', ')}; ` +
+        'enter a token to store instead, or unset ENCLAVE_TOKEN and retry\n',
+    )
+  } else {
+    process.stderr.write(
+      `ENCLAVE_TOKEN was rejected by ${host} — enter a token to store instead, or unset ENCLAVE_TOKEN and retry\n`,
+    )
+  }
+
+  const secondToken = await readSecret('Token: ')
+  if (secondToken === '') {
+    process.stderr.write('no token was entered\n')
+    return 1
+  }
+
+  const response = await probe(baseUrl, secondToken, host)
+  if (response === null) return 1
+
+  const failureCode = classifyProbeFailure(response, host)
+  if (failureCode !== null) return failureCode
+
+  return saveTokenFromValidResponse(response, host, secondToken)
+}
+
+async function saveTokenFromValidResponse(
+  response: Response,
+  host: string,
+  token: string,
+): Promise<number> {
   let body: unknown
   try {
     body = await response.json()
@@ -127,10 +190,40 @@ export async function runLogin(
     )
     return 1
   }
-
-  saveToken(host, resolvedToken)
+  saveToken(host, token)
   process.stdout.write(`✓ logged in to ${host}\n`)
   return 0
+}
+
+export async function runLogin(
+  host: string,
+  token?: string,
+  isInsecureAllowed = false,
+): Promise<number> {
+  const baseUrl = baseUrlFor(host, isInsecureAllowed)
+  process.stderr.write(`Create a token at ${baseUrl}/settings/tokens\n`)
+  process.stderr.write(`Scopes: ${REQUIRED_SCOPES.join(', ')}\n`)
+
+  const resolution = await resolveToken(token)
+  if (typeof resolution === 'number') return resolution
+  const { token: resolvedToken, source } = resolution
+
+  const response = await probe(baseUrl, resolvedToken, host)
+  if (response === null) return 1
+
+  // Recovery path: when an environment token is rejected on a TTY, prompt for a replacement.
+  if (
+    (response.status === 401 || response.status === 403) &&
+    source === 'environment' &&
+    process.stdin.isTTY
+  ) {
+    return recoverFromEnvironmentToken(response.status, baseUrl, host)
+  }
+
+  const failureCode = classifyProbeFailure(response, host)
+  if (failureCode !== null) return failureCode
+
+  return saveTokenFromValidResponse(response, host, resolvedToken)
 }
 
 function isArtifactsListEnvelope(body: unknown): boolean {
