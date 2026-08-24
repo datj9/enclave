@@ -281,15 +281,15 @@ key, and they get the larger `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` when it is used
 
 ### Optional SMTP (password reset)
 
-| Variable                     | Required | Default                     | What it does                                                                                                                                                            |
-| ---------------------------- | -------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SMTP_HOST`                  | no       | unset                       | SMTP hostname. If unset, the instance boots, forgot-password still returns the generic success page, and the audit row records `mailed: false`. No reset email is sent. |
-| `SMTP_PORT`                  | no       | `587`                       | SMTP port.                                                                                                                                                              |
-| `SMTP_SECURE`                | no       | `false`                     | `true`/`false`. Passed to nodemailer `secure` (`true` = TLS from the first hop, typically port 465).                                                                    |
-| `SMTP_USER`                  | no       | unset                       | SMTP auth user.                                                                                                                                                         |
-| `SMTP_PASSWORD`              | no       | unset                       | SMTP auth password.                                                                                                                                                     |
-| `SMTP_FROM`                  | no       | `enclave@<host of APP_URL>` | From address.                                                                                                                                                           |
-| `PASSWORD_RESET_TTL_SECONDS` | no       | `3600`                      | Lifetime of a password-reset token.                                                                                                                                     |
+| Variable                     | Required | Default                     | What it does                                                                                                                                                                |
+| ---------------------------- | -------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SMTP_HOST`                  | no       | unset                       | SMTP hostname. If unset, the instance boots, forgot-password still returns the generic success page, and the audit row records `dispatched: false`. No reset email is sent. |
+| `SMTP_PORT`                  | no       | `587`                       | SMTP port.                                                                                                                                                                  |
+| `SMTP_SECURE`                | no       | `false`                     | `true`/`false`. Passed to nodemailer `secure` (`true` = TLS from the first hop, typically port 465).                                                                        |
+| `SMTP_USER`                  | no       | unset                       | SMTP auth user.                                                                                                                                                             |
+| `SMTP_PASSWORD`              | no       | unset                       | SMTP auth password.                                                                                                                                                         |
+| `SMTP_FROM`                  | no       | `enclave@<host of APP_URL>` | From address.                                                                                                                                                               |
+| `PASSWORD_RESET_TTL_SECONDS` | no       | `3600`                      | Lifetime of a password-reset token.                                                                                                                                         |
 
 ### Rate limits and quotas
 
@@ -326,10 +326,11 @@ list and the served type cannot drift apart.
 
 ### Retention, in days
 
-| Variable               | Required | Default | What it does                                                                                                                                               |
-| ---------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TRASH_RETENTION_DAYS` | no       | `30`    | How long a deleted artifact can be restored. After this, the purge job removes rows and objects. Share links are killed at delete time, not at purge time. |
-| `AUDIT_RETENTION_DAYS` | no       | `365`   | How long audit rows are kept. Audit rows survive artifact purge, keeping `artifact_id` — that is deliberate, so a deletion is still accountable.           |
+| Variable                        | Required | Default | What it does                                                                                                                                                                                                  |
+| ------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRASH_RETENTION_DAYS`          | no       | `30`    | How long a deleted artifact can be restored. After this, the purge job removes rows and objects. Share links are killed at delete time, not at purge time.                                                    |
+| `AUDIT_RETENTION_DAYS`          | no       | `365`   | How long audit rows are kept. Audit rows survive artifact purge, keeping `artifact_id` — that is deliberate, so a deletion is still accountable.                                                              |
+| `PASSWORD_RESET_RETENTION_DAYS` | no       | `7`     | How long a used or expired password-reset row is kept before the prune job drops it. Neither request path deletes spent rows, so without the job they stay forever. `audit_log` keeps the history regardless. |
 
 ### Retention windows are exact hours, not calendar days
 
@@ -415,14 +416,15 @@ a database snapshot first (see below).
 
 ## Scheduled jobs
 
-Three entry points under `scripts/`. None of them run themselves — nothing in the app schedules
+Four entry points under `scripts/`. None of them run themselves — nothing in the app schedules
 anything, so if you do not wire these up, trash is never purged and audit rows accumulate forever.
 
-| Script                     | How often    | What it does                                                                                                                                                                                                                                           | Exit code                                                    |
-| -------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| `scripts/sweep-pending.ts` | every minute | Reclaims artifact versions left `pending` for 15 minutes by a write that died mid-flight — a killed generation, a storage outage. Objects go first, then the row, so a storage failure leaves the row for the next run rather than an orphaned prefix. | Non-zero if any version was deferred — the next run retries. |
-| `scripts/purge-trash.ts`   | daily        | Permanently removes artifacts past `TRASH_RETENTION_DAYS`: storage objects first, then rows. Audit rows survive.                                                                                                                                       | Non-zero if any artifact was deferred.                       |
-| `scripts/prune-audit.ts`   | daily        | Deletes audit rows past `AUDIT_RETENTION_DAYS`.                                                                                                                                                                                                        | Always 0.                                                    |
+| Script                             | How often    | What it does                                                                                                                                                                                                                                           | Exit code                                                    |
+| ---------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `scripts/sweep-pending.ts`         | every minute | Reclaims artifact versions left `pending` for 15 minutes by a write that died mid-flight — a killed generation, a storage outage. Objects go first, then the row, so a storage failure leaves the row for the next run rather than an orphaned prefix. | Non-zero if any version was deferred — the next run retries. |
+| `scripts/purge-trash.ts`           | daily        | Permanently removes artifacts past `TRASH_RETENTION_DAYS`: storage objects first, then rows. Audit rows survive.                                                                                                                                       | Non-zero if any artifact was deferred.                       |
+| `scripts/prune-audit.ts`           | daily        | Deletes audit rows past `AUDIT_RETENTION_DAYS`.                                                                                                                                                                                                        | Always 0.                                                    |
+| `scripts/prune-password-resets.ts` | daily        | Deletes used and expired password-reset rows past `PASSWORD_RESET_RETENTION_DAYS`. The request paths only clear rows that are still outstanding, so this is the one thing that removes spent ones.                                                     | Always 0.                                                    |
 
 Run them with `tsx`, which resolves the path aliases their imports use:
 
@@ -430,6 +432,7 @@ Run them with `tsx`, which resolves the path aliases their imports use:
 * * * * *   cd /srv/enclave && pnpm exec tsx scripts/sweep-pending.ts >> /var/log/enclave-sweep.log 2>&1
 17 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/purge-trash.ts   >> /var/log/enclave-purge.log 2>&1
 34 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/prune-audit.ts   >> /var/log/enclave-audit.log 2>&1
+51 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/prune-password-resets.ts >> /var/log/enclave-pwreset.log 2>&1
 ```
 
 From the image, the same commands work through compose:
@@ -514,6 +517,20 @@ instance sends a plaintext-only reset mail:
   treat it like a secret and do not forward mail. `robots.txt` disallows `/reset-password`.
 - No HTML part; only a plain `text` body containing the link.
 - The token expires after `PASSWORD_RESET_TTL_SECONDS` and is single-use.
+- Requesting a second link invalidates the first, so a user who clicks an older mail sees the
+  generic failure. The mail says so.
+
+### Accepted risk: the token is in the URL
+
+A reset link has to carry the token where a mail client can render it, which means the query string.
+Inside the app that is mitigated as far as it can be: single-use, a 1 hour TTL, `/reset-password`
+excluded in `robots.txt`, redemption is a `POST` so no `Referer` carries the token off-origin, and
+`referrer-policy: strict-origin-when-cross-origin` is set on every response.
+
+What is left is outside this code: **browser history on the user's machine, and any reverse proxy or
+CDN in front of the app that logs full request URLs.** A default nginx or Cloudflare access log
+records the token in plaintext for its whole retention. If you terminate TLS in front of enclave,
+strip or hash query strings for `/reset-password` (and `/s/{token}`) in that log config.
 
 ## Operating notes
 

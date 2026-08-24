@@ -23,6 +23,9 @@ function errorMessageFor(error: string | undefined): string | null {
 export default async function ResetPasswordPage({ searchParams }: ResetPasswordPageProps) {
   if (!(await isSetupComplete())) redirect('/setup')
 
+  // No signed-in redirect, unlike /forgot-password: the link may be for a different account than
+  // the current session, and swapping the session for the link's owner is what consuming it means.
+
   const { t: rawToken, error } = await searchParams
 
   return (

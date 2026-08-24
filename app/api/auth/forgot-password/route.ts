@@ -30,6 +30,7 @@ export async function POST(request: Request): Promise<Response> {
     return seeOther('/forgot-password?sent=1')
   } catch (error) {
     if (returnsJson) return toErrorResponse(error)
-    return seeOther('/forgot-password?error=invalid')
+    const isRateLimited = error instanceof HttpError && error.code === 'RATE_LIMITED'
+    return seeOther(`/forgot-password?error=${isRateLimited ? 'rate' : 'invalid'}`)
   }
 }

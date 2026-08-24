@@ -52,9 +52,12 @@ async function readTokenByHash(
   return row
 }
 
-function assertConsumable(row: ResetTokenRow | undefined, actorIp: string | null): ResetTokenRow {
+async function assertConsumable(
+  row: ResetTokenRow | undefined,
+  actorIp: string | null,
+): Promise<ResetTokenRow> {
   if (row === undefined || row.usedAt !== null || row.isExpired) {
-    void recordAuditEvent({
+    await recordAuditEvent({
       action: 'auth.password_reset_failed',
       actorUserId: row?.userId ?? null,
       actorIp,
@@ -88,11 +91,17 @@ async function applyPasswordChange(
   userId: string,
   passwordHash: string,
   tokenId: string,
-): Promise<void> {
-  await handle
+): Promise<Date> {
+  const [changed] = await handle
     .update(users)
     .set({ passwordHash, passwordChangedAt: raw`now()` })
     .where(eq(users.id, userId))
+    .returning({ passwordChangedAt: users.passwordChangedAt })
+
+  const passwordChangedAt = changed?.passwordChangedAt ?? null
+  if (passwordChangedAt === null) {
+    throw new HttpError('VALIDATION_FAILED', GENERIC_RESET_FAILURE)
+  }
 
   const claimed = await handle
     .update(passwordResetTokens)
@@ -107,13 +116,21 @@ async function applyPasswordChange(
   await handle
     .delete(passwordResetTokens)
     .where(and(eq(passwordResetTokens.userId, userId), isNull(passwordResetTokens.usedAt)))
+
+  return passwordChangedAt
+}
+
+export interface CompletedPasswordReset {
+  readonly userId: string
+  /** Stamped into the new session's `iat`: two clocks would invalidate the cookie on issue. */
+  readonly passwordChangedAt: Date
 }
 
 export async function completePasswordReset(input: {
   readonly token: string
   readonly password: string
   readonly actorIp: string | null
-}): Promise<{ readonly userId: string }> {
+}): Promise<CompletedPasswordReset> {
   if (!isPasswordResetTokenShaped(input.token)) {
     await recordAuditEvent({
       action: 'auth.password_reset_failed',
@@ -128,15 +145,23 @@ export async function completePasswordReset(input: {
 
   const row = await db.transaction(async (transaction) => {
     const firstRead = await readTokenByHash(transaction, tokenHash)
-    const firstRow = assertConsumable(firstRead, input.actorIp)
+    const firstRow = await assertConsumable(firstRead, input.actorIp)
 
     await lockUser(transaction, firstRow.userId)
-    const lockedRow = assertConsumable(await readTokenByHash(transaction, tokenHash), input.actorIp)
+    const lockedRow = await assertConsumable(
+      await readTokenByHash(transaction, tokenHash),
+      input.actorIp,
+    )
 
     await assertUserActive(transaction, lockedRow.userId)
-    await applyPasswordChange(transaction, lockedRow.userId, passwordHash, lockedRow.id)
+    const passwordChangedAt = await applyPasswordChange(
+      transaction,
+      lockedRow.userId,
+      passwordHash,
+      lockedRow.id,
+    )
 
-    return { id: lockedRow.id, userId: lockedRow.userId }
+    return { id: lockedRow.id, userId: lockedRow.userId, passwordChangedAt }
   })
 
   await recordAuditEvent({
@@ -146,5 +171,5 @@ export async function completePasswordReset(input: {
     metadata: { resetTokenId: row.id },
   })
 
-  return { userId: row.userId }
+  return { userId: row.userId, passwordChangedAt: row.passwordChangedAt }
 }

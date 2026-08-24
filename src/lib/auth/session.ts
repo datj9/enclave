@@ -23,13 +23,13 @@ function secretKey(): Uint8Array {
   return new TextEncoder().encode(env.SESSION_SECRET)
 }
 
-async function signSessionToken(userId: string): Promise<string> {
+async function signSessionToken(userId: string, issuedAt?: Date): Promise<string> {
   return new SignJWT({})
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)
     .setIssuer(SESSION_ISSUER)
     .setAudience(SESSION_AUDIENCE)
-    .setIssuedAt()
+    .setIssuedAt(issuedAt)
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
     .sign(secretKey())
 }
@@ -49,9 +49,15 @@ function cookieOptions(maxAgeSeconds: number) {
   } as const
 }
 
-/** Returns the `Set-Cookie` value for route handlers that build a raw Response. */
-export async function createSessionCookie(userId: string): Promise<string> {
-  const token = await signSessionToken(userId)
+/**
+ * Returns the `Set-Cookie` value for route handlers that build a raw Response.
+ *
+ * `issuedAt` exists for the password-reset path: `iat` has to come from the same clock that wrote
+ * `password_changed_at`, since `isSessionInvalidatedByPasswordChange` compares the two. Expiry
+ * stays anchored to app time either way, so the session is always a full `SESSION_TTL_SECONDS`.
+ */
+export async function createSessionCookie(userId: string, issuedAt?: Date): Promise<string> {
+  const token = await signSessionToken(userId, issuedAt)
   const attributes = [
     `${SESSION_COOKIE_NAME}=${token}`,
     'HttpOnly',

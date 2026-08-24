@@ -28,7 +28,8 @@ export function enforceAuthRateLimit(request: Request, scope: string): void {
 
 /**
  * Per-normalised-email cap on forgot-password, independent of the per-IP cap so an attacker
- * rotating IPs still cannot gauge an address's existence from response timing.
+ * rotating IPs still cannot hammer one address. A counter caps volume, not timing: the detached
+ * delivery in `forgot-password.ts` is what keeps the two branches equally fast.
  */
 export function enforceForgotPasswordEmailRateLimit(normalizedEmail: string): void {
   enforceLimit(`auth:forgot-password-email:${normalizedEmail}`)

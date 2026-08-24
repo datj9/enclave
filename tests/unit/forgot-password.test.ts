@@ -32,6 +32,9 @@ describe('forgot-password copy', () => {
 
     expect(body).toContain(RESET_URL)
     expect(body).toContain('This link expires in 1 hour.')
+    expect(body).toContain(
+      'Requesting another reset link replaces this one, so only the newest link still works.',
+    )
     expect(body).not.toMatch(/<[^>]+>|&[a-z]+;/i)
     expect(PASSWORD_RESET_EMAIL_SUBJECT).toBe('Reset your enclave password')
   })

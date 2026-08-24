@@ -6,6 +6,7 @@ import { db, pingDatabase } from '@/db'
 import { auditLog, type AuditAction } from '@/db/schema/audit-log'
 import { passwordResetTokens } from '@/db/schema/password-reset-tokens'
 import { users } from '@/db/schema/users'
+import { requestPasswordReset, settlePasswordResetDeliveries } from '@/lib/auth/forgot-password'
 import { hashPassword, verifyPassword } from '@/lib/auth/password'
 import {
   hashPasswordResetToken,
@@ -68,6 +69,34 @@ function jsonPost(path: string, body: unknown, forwardedFor = '198.51.100.10'): 
     },
     body: JSON.stringify(body),
   })
+}
+
+function formPost(
+  path: string,
+  fields: Record<string, string>,
+  forwardedFor = '198.51.100.10',
+): Request {
+  return new Request(`http://localhost:3000${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'text/html',
+      'x-forwarded-for': forwardedFor,
+    },
+    body: new URLSearchParams(fields).toString(),
+  })
+}
+
+function sessionTokenFrom(setCookie: string): string {
+  const token = setCookie.match(/enclave_session=([^;]+)/)?.[1]
+  if (token === undefined) throw new Error('no session cookie in the header')
+  return token
+}
+
+function issuedAtSecondsOf(setCookie: string): number {
+  const issuedAt = decodeJwt(sessionTokenFrom(setCookie)).iat
+  if (issuedAt === undefined) throw new Error('session token carried no iat')
+  return issuedAt
 }
 
 function extractTokenFromMail(message: SentMessage): string {
@@ -172,9 +201,13 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     }
   })
 
-  afterAll(removeTestRows)
+  afterAll(async () => {
+    await settlePasswordResetDeliveries()
+    await removeTestRows()
+  })
 
   beforeEach(async () => {
+    await settlePasswordResetDeliveries()
     sent = []
     resetRateLimits()
     vi.stubEnv('SMTP_HOST', 'smtp.test.invalid')
@@ -236,6 +269,8 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     expect(response.status).toBe(303)
     expect(response.headers.get('location')).toBe('/forgot-password?sent=1')
 
+    await settlePasswordResetDeliveries()
+
     expect(sent).toHaveLength(1)
     const plaintext = extractTokenFromMail(sent[0]!)
     expect(isPasswordResetTokenShaped(plaintext)).toBe(true)
@@ -250,18 +285,43 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     expect(rows[0]!.tokenHash.toString('utf8')).not.toContain(plaintext)
   })
 
-  it('audits auth.password_reset_requested with mailed true and does not store the plaintext token in metadata', async () => {
+  it('audits auth.password_reset_requested with dispatched true and does not store the plaintext token in metadata', async () => {
     await forgotPasswordRoute(jsonPost('/api/auth/forgot-password', { email: ACTIVE_EMAIL }))
+    await settlePasswordResetDeliveries()
 
     const plaintext = extractTokenFromMail(sent[0]!)
 
     const audit = await latestAuditFor(activeUserId, 'auth.password_reset_requested')
     expect(audit).toBeTruthy()
-    expect(audit!.metadata).toMatchObject({ mailed: true })
+    expect(audit!.metadata).toMatchObject({ dispatched: true })
     expect(JSON.stringify(audit!.metadata)).not.toContain(plaintext)
+
+    expect(await latestAuditFor(activeUserId, 'auth.password_reset_mail_failed')).toBeUndefined()
   })
 
-  it('audits mailed false when SMTP_HOST is unset and does not insert a token', async () => {
+  it('resolves the request before the mail is delivered, so both branches cost the same', async () => {
+    const DELIVERY_DELAY_MS = 100
+    const order: string[] = []
+
+    setMailTransporterForTests({
+      sendMail: vi.fn(async (message) => {
+        await new Promise((resolve) => setTimeout(resolve, DELIVERY_DELAY_MS))
+        order.push('mail sent')
+        sent.push(message as SentMessage)
+      }),
+    })
+
+    await requestPasswordReset({ email: ACTIVE_EMAIL, actorIp: null })
+    order.push('request resolved')
+
+    expect(order).toEqual(['request resolved'])
+
+    await settlePasswordResetDeliveries()
+    expect(order).toEqual(['request resolved', 'mail sent'])
+    expect(sent).toHaveLength(1)
+  })
+
+  it('audits dispatched false when SMTP_HOST is unset and does not insert a token', async () => {
     const previous = process.env.SMTP_HOST
     try {
       delete process.env.SMTP_HOST
@@ -284,13 +344,13 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
 
       const audit = await latestAuditFor(activeUserId, 'auth.password_reset_requested')
       expect(audit).toBeTruthy()
-      expect(audit!.metadata).toMatchObject({ mailed: false })
+      expect(audit!.metadata).toMatchObject({ dispatched: false })
     } finally {
       process.env.SMTP_HOST = previous
     }
   })
 
-  it('still returns generic success when sendMail throws, auditing mailed false', async () => {
+  it('still returns generic success when sendMail throws, and the detached send audits its own failure', async () => {
     setMailTransporterForTests({
       sendMail: vi.fn(async () => {
         throw new Error('SMTP down')
@@ -304,6 +364,9 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     expect(response.status).toBe(303)
     expect(response.headers.get('location')).toBe('/forgot-password?sent=1')
 
+    // Resolves rather than rejecting: a detached failure must not surface as an unhandled rejection.
+    await settlePasswordResetDeliveries()
+
     const rows = await db
       .select({ usedAt: passwordResetTokens.usedAt })
       .from(passwordResetTokens)
@@ -311,15 +374,19 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.usedAt).toBeNull()
 
-    const audit = await latestAuditFor(activeUserId, 'auth.password_reset_requested')
-    expect(audit).toBeTruthy()
-    expect(audit!.metadata).toMatchObject({ mailed: false })
+    const requested = await latestAuditFor(activeUserId, 'auth.password_reset_requested')
+    expect(requested!.metadata).toMatchObject({ dispatched: true })
+
+    const failed = await latestAuditFor(activeUserId, 'auth.password_reset_mail_failed')
+    expect(failed).toBeTruthy()
+    expect(failed!.metadata).toMatchObject({ reason: 'Error' })
   })
 
   it('deletes unused tokens for that user before inserting a new one', async () => {
     const old = await seedToken(activeUserId)
 
     await forgotPasswordRoute(jsonPost('/api/auth/forgot-password', { email: ACTIVE_EMAIL }))
+    await settlePasswordResetDeliveries()
 
     const plaintext = extractTokenFromMail(sent[0]!)
 
@@ -345,6 +412,33 @@ describe.skipIf(!databaseReady)('POST /api/auth/forgot-password', () => {
     expect(response.status).toBe(422)
     const body = (await response.json()) as { error?: { code: string } }
     expect(body.error?.code).toBe('VALIDATION_FAILED')
+  })
+
+  it('redirects a form submission past the per-email cap to the neutral rate message', async () => {
+    const email = 'pwreset-form-rate@example.test'
+
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const allowed = await forgotPasswordRoute(
+        formPost('/api/auth/forgot-password', { email }, `203.0.113.${attempt + 1}`),
+      )
+      expect(allowed.headers.get('location')).toBe('/forgot-password?sent=1')
+    }
+
+    const limited = await forgotPasswordRoute(
+      formPost('/api/auth/forgot-password', { email }, '203.0.113.200'),
+    )
+
+    expect(limited.status).toBe(303)
+    expect(limited.headers.get('location')).toBe('/forgot-password?error=rate')
+  })
+
+  it('still redirects a malformed email to the invalid message', async () => {
+    const response = await forgotPasswordRoute(
+      formPost('/api/auth/forgot-password', { email: 'not-an-email' }),
+    )
+
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe('/forgot-password?error=invalid')
   })
 
   it('rate-limits a third-party email independently of IP after a valid parse', async () => {
@@ -390,9 +484,13 @@ describe.skipIf(!databaseReady)('POST /api/auth/reset-password', () => {
     }
   })
 
-  afterAll(removeTestRows)
+  afterAll(async () => {
+    await settlePasswordResetDeliveries()
+    await removeTestRows()
+  })
 
   beforeEach(async () => {
+    await settlePasswordResetDeliveries()
     sent = []
     resetRateLimits()
     vi.stubEnv('SMTP_HOST', 'smtp.test.invalid')
@@ -543,6 +641,36 @@ describe.skipIf(!databaseReady)('POST /api/auth/reset-password', () => {
     expect(audit).toBeTruthy()
     expect(audit!.metadata).toMatchObject({ reason: 'invalid_token' })
     expect(JSON.stringify(audit!.metadata)).not.toContain('used')
+  })
+
+  it('stamps the new session iat from the same clock that wrote password_changed_at', async () => {
+    const { plaintext } = await seedToken(activeUserId)
+
+    const response = await resetPasswordRoute(
+      jsonPost('/api/auth/reset-password', { token: plaintext, password: NEW_PASSWORD }),
+    )
+    expect(response.status).toBe(303)
+
+    const [user] = await db
+      .select({ passwordChangedAt: users.passwordChangedAt })
+      .from(users)
+      .where(eq(users.id, activeUserId))
+    const passwordChangedAt = user!.passwordChangedAt
+    expect(passwordChangedAt).not.toBeNull()
+
+    const issuedAtSeconds = issuedAtSecondsOf(response.headers.get('set-cookie') ?? '')
+    expect(issuedAtSeconds).toBe(Math.floor(passwordChangedAt!.getTime() / 1000))
+    expect(isSessionInvalidatedByPasswordChange(passwordChangedAt, issuedAtSeconds)).toBe(false)
+  })
+
+  it('keeps the fresh cookie valid when the database clock leads the app clock', async () => {
+    const databaseAhead = new Date(Date.now() + 5_000)
+
+    const cookie = await createSessionCookie(activeUserId, databaseAhead)
+
+    expect(isSessionInvalidatedByPasswordChange(databaseAhead, issuedAtSecondsOf(cookie))).toBe(
+      false,
+    )
   })
 
   it('rejects an old session after passwordChangedAt via isSessionInvalidatedByPasswordChange', async () => {
