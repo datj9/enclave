@@ -9,6 +9,7 @@ import styles from './settings.module.css'
  */
 
 const SECTIONS: ReadonlyArray<{ readonly href: string; readonly label: string }> = [
+  { href: '/settings/password', label: 'Password' },
   { href: '/settings/keys', label: 'Provider key' },
   { href: '/settings/tokens', label: 'API tokens' },
 ]

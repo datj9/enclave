@@ -36,6 +36,8 @@ export const AUDIT_ACTIONS = [
   'auth.password_reset_completed',
   'auth.password_reset_failed',
   'auth.password_reset_mail_failed',
+  'auth.password_changed',
+  'auth.password_change_failed',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

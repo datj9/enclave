@@ -178,7 +178,7 @@ function RowActions({
   return (
     <div className={styles.rowActions}>
       <button
-        className={`button-secondary ${styles.compactButton}`}
+        className="button-secondary button-sm"
         type="button"
         aria-disabled={isBusy}
         onClick={() => onSetAccess(person, !person.isActive)}
@@ -186,7 +186,7 @@ function RowActions({
         {person.isActive ? 'Deactivate' : 'Reactivate'}
       </button>
       <button
-        className={`button-secondary ${styles.compactButton}`}
+        className="button-secondary button-sm"
         type="button"
         aria-disabled={isBusy}
         onClick={() => onSetRole(person, person.role === 'admin' ? 'member' : 'admin')}
@@ -223,7 +223,10 @@ function DeleteUserDialog({
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
-      <Dialog.Trigger className={css(deleteStyles.trigger)} data-testid="user-delete-open">
+      <Dialog.Trigger
+        className={`button-sm ${css(deleteStyles.trigger)}`}
+        data-testid="user-delete-open"
+      >
         Delete
       </Dialog.Trigger>
 
@@ -238,7 +241,7 @@ function DeleteUserDialog({
 
           <div className={dialogStyles.actions}>
             <button
-              className={dialogStyles.confirm}
+              className={`button-sm ${dialogStyles.confirm}`}
               type="button"
               aria-disabled={isBusy}
               data-testid="user-delete-confirm"

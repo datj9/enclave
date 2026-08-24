@@ -30,12 +30,16 @@
 }
 
 .link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
   text-decoration: none;
 }
 
 .title {
   font-size: var(--text-base);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .link:hover .title {

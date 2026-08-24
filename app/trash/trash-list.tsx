@@ -64,7 +64,7 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
       <ul className={styles.list} data-testid="trash-list">
         {items.map((item) => (
           <li className={styles.row} key={item.id} data-testid="trash-row" data-artifact={item.id}>
-            <div>
+            <div className={styles.rowText}>
               <p className={styles.rowName}>{item.title}</p>
               <p className={styles.rowMeta}>
                 Deleted{' '}

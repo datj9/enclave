@@ -24,7 +24,6 @@
 
 .closing {
   color: var(--color-ink-2);
-  font-size: var(--text-sm);
   max-width: 46ch;
   margin: 0 0 var(--space-sm);
 }
@@ -43,7 +42,7 @@
   display: inline-block;
   font-size: var(--text-sm);
   white-space: nowrap;
-  min-height: 2.75rem;
+  min-height: var(--control-md);
   padding-block: var(--space-2xs);
   text-decoration: underline;
   text-decoration-color: var(--color-rule);

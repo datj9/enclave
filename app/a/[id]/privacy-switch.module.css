@@ -3,6 +3,10 @@
   flex-direction: column;
   gap: var(--space-3xs);
   align-items: flex-end;
+  /* Lets the switch shrink inside the artifact bar instead of forcing the row wider than the
+     viewport — the labels are nowrap, so without this the track carries a 285px floor. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 /*
@@ -17,6 +21,10 @@
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-pill);
   background: var(--color-paper-2);
+  /* The options are nowrap, so the grid's default min-content floor is the sum of the three
+     labels. Releasing it here is what lets the control fit a 320px viewport. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .fill {
@@ -30,13 +38,25 @@
 .option {
   grid-row: 1;
   position: relative;
+  /* `block` rather than a flex box: text-overflow needs a block formatting context, and the
+     line-height below is what centres the label without one. */
+  display: block;
+  /* One step below --control-md; the 2px track padding brings the whole control back to 44px. */
+  min-height: calc(var(--control-md) - 4px);
   padding: var(--space-3xs) var(--space-sm);
   border: 0;
   border-radius: var(--radius-pill);
   background: none;
   font: inherit;
   font-size: var(--text-sm);
+  line-height: calc(var(--control-md) - 4px - 2 * var(--space-3xs));
+  text-align: center;
+  /* Truncate rather than push the row wider than the viewport. The label is the accessible
+     name, so an ellipsised option is still announced in full. */
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--color-ink-2);
   cursor: pointer;
   transition: color var(--dur-fast) ease;
@@ -84,5 +104,13 @@
   /* Colour still transitions; the sliding fill lands where it belongs immediately. */
   .fill {
     transition-duration: 0s;
+  }
+}
+
+/* A finger gets the full target; the 2px track padding then reads as a 48px control. */
+@media (pointer: coarse) {
+  .option {
+    min-height: var(--control-md);
+    line-height: calc(var(--control-md) - 2 * var(--space-3xs));
   }
 }

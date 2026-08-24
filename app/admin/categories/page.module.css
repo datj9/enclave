@@ -56,11 +56,6 @@
   color: var(--color-ink-2);
 }
 
-.compactButton {
-  font-size: var(--text-xs);
-  padding: var(--space-3xs) var(--space-2xs);
-}
-
 .empty {
   color: var(--color-ink-2);
   font-size: var(--text-sm);

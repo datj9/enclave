@@ -68,6 +68,20 @@
   --radius-pill: 999px;
   --radius-input: 6px;
 
+  /*
+   * Three steps so controls sharing a row line up; the floor is WCAG 2.5.8 (24x24 CSS px).
+   * --control-sm is legal only on a dense surface with a fine pointer. Each such control
+   * promotes itself back to --control-md in its own stylesheet - grep `pointer: coarse`.
+   */
+  --control-sm: 2rem; /* 32px — dense/desktop only, still clears WCAG 2.5.8 */
+  --control-md: 2.75rem; /* 44px — the default. Touch target and standard control */
+  --control-lg: 3.25rem; /* 52px — page-level primary CTA, one per view */
+
+  /* Inline padding pairs with the heights above; block padding is derived from the height. */
+  --control-pad-sm: var(--space-2xs);
+  --control-pad-md: var(--space-sm);
+  --control-pad-lg: var(--space-md);
+
   --z-base: 1;
   --z-raised: 10;
   --z-dropdown: 100;
@@ -140,6 +154,10 @@
   --radius-card: var(--radius-card);
   --radius-pill: var(--radius-pill);
   --radius-input: var(--radius-input);
+
+  --height-control-sm: var(--control-sm);
+  --height-control-md: var(--control-md);
+  --height-control-lg: var(--control-lg);
 
   --shadow-raised: var(--shadow-raised);
 }
