@@ -42,6 +42,11 @@ vi.mock('@/lib/auth/session', () => ({
 const OWNER_EMAIL = 'tagging-owner@example.test'
 const OTHER_EMAIL = 'tagging-other@example.test'
 
+// Category names are globally unique, so a name shared with another test file fails this file's
+// setup as soon as vitest runs the two in parallel against the same database.
+const DOCS_SLUG = 'tagging-docs'
+const INACTIVE_SLUG = 'tagging-inactive'
+
 const API_URL = 'http://localhost:3000'
 
 function patchRequest(artifactId: string, body: unknown): Request {
@@ -101,7 +106,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
 
     const [docs] = await db
       .insert(categories)
-      .values({ name: 'Docs', slug: 'docs', createdBy: ownerId })
+      .values({ name: 'Tagging Docs', slug: DOCS_SLUG, createdBy: ownerId })
       .returning({ id: categories.id })
     if (docs === undefined) throw new Error('could not create the docs category')
     docsId = docs.id
@@ -109,8 +114,8 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
     const [inactive] = await db
       .insert(categories)
       .values({
-        name: 'Inactive',
-        slug: 'inactive',
+        name: 'Tagging Inactive',
+        slug: INACTIVE_SLUG,
         description: null,
         isActive: false,
         createdBy: ownerId,
@@ -144,7 +149,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as { readonly data: { readonly categories: readonly { readonly slug: string }[] } }
-    expect(body.data.categories).toEqual([{ slug: 'docs' }])
+    expect(body.data.categories).toEqual([{ slug: DOCS_SLUG }])
     expect((await categoryRows(artifactId)).map((row) => row.categoryId)).toEqual([docsId])
 
     const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, artifactId))
@@ -178,7 +183,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as { readonly data: { readonly categories: readonly { readonly slug: string }[] } }
-    expect(body.data.categories).toEqual([{ slug: 'docs' }])
+    expect(body.data.categories).toEqual([{ slug: DOCS_SLUG }])
     expect(await categoryRows(artifactId)).toHaveLength(1)
   })
 
@@ -300,7 +305,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
       readonly data: { readonly items: readonly { readonly id: string; readonly categories: readonly { readonly slug: string }[] }[] }
     }
     const byId = new Map(body.data.items.map((item) => [item.id, item]))
-    expect(byId.get(tagged)?.categories).toMatchObject([{ slug: 'docs' }])
+    expect(byId.get(tagged)?.categories).toMatchObject([{ slug: DOCS_SLUG }])
     expect(byId.get(untagged)?.categories).toEqual([])
   })
 
@@ -310,7 +315,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
     mocks.sessionUser = { id: ownerId, email: OWNER_EMAIL, role: 'member', isActive: true }
     expect((await patch(tagged, { categoryIds: [docsId] })).status).toBe(200)
 
-    const response = await listRoute(listRequest('?category=docs'))
+    const response = await listRoute(listRequest(`?category=${DOCS_SLUG}`))
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as {
@@ -319,7 +324,7 @@ describe.skipIf(!servicesReady)('artifact tagging', () => {
     const ids = body.data.items.map((item) => item.id)
     expect(ids).toContain(tagged)
     expect(ids).not.toContain(untagged)
-    expect(body.data.items[0]?.categories).toMatchObject([{ slug: 'docs' }])
+    expect(body.data.items[0]?.categories).toMatchObject([{ slug: DOCS_SLUG }])
   })
 
   it('the list filtered by an unused slug returns an empty page', async () => {

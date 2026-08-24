@@ -48,6 +48,11 @@ vi.mock('@/lib/generation/collect', () => ({
 const OWNER_EMAIL = 'classify-backfill-owner@example.test'
 const ADMIN_EMAIL = 'classify-backfill-admin@example.test'
 
+// Category names are globally unique, and `listCategories` is instance-wide, so a name shared
+// with another test file both fails this file's setup and lets its slug match the wrong id.
+const DOCS_NAME = 'Backfill Docs'
+const DOCS_REPLY = '["backfill-docs"]'
+
 function bundle(marker: string): BundleFile[] {
   return [{ path: 'index.html', content: Buffer.from(`<!doctype html><p>${marker}`, 'utf8') }]
 }
@@ -95,7 +100,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     adminId = await createTestOwner(ADMIN_EMAIL)
 
     const docs = await createCategory({
-      name: 'Docs',
+      name: DOCS_NAME,
       description: 'The documentation category',
       createdBy: adminId,
     })
@@ -136,7 +141,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('does not classify when the setting is off, but still reports eligible artifacts', async () => {
     await setAutoCategorizeEnabled(false, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.calls = 0
 
     const created = await createArtifactWithBundle(
@@ -153,7 +158,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('classifies an untagged model-sourced artifact once the setting is on', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.calls = 0
 
     const created = await createArtifactWithBundle(
@@ -175,7 +180,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('leaves a manually-tagged artifact untouched', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     const created = await createArtifactWithBundle(
       { ownerId, title: 'Manual curation', visibility: 'private', files: bundle('manual') },
@@ -198,7 +203,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('skips an already-tagged model-sourced artifact', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     const created = await createArtifactWithBundle(
       { ownerId, title: 'Already tagged', visibility: 'private', files: bundle('tagged') },
@@ -221,7 +226,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     )
     await db.update(artifacts).set({ deletedAt: new Date() }).where(eq(artifacts.id, created.id))
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.calls = 0
 
     await backfillArtifactCategories(store, { ownerId })
@@ -238,7 +243,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     )
     await store.deletePrefix(`artifacts/${created.id}/`)
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.calls = 0
 
     const result = await backfillArtifactCategories(store, { ownerId })
@@ -249,7 +254,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
   })
   it('reaches the same end state when the backfill runs twice', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     const artifactId = await createEligibleArtifact('Rerun safety')
     mocks.calls = 0
@@ -267,7 +272,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('keeps classifying the other artifacts when one entry read throws', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     const firstId = await createEligibleArtifact('Partial failure first')
     const failingId = await createEligibleArtifact('Partial failure middle')
@@ -303,7 +308,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
     mocks.completion = null
     const artifactId = await createEligibleArtifact('Audited backfill')
 
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     await backfillArtifactCategories(store, { ownerId })
 
     const rows = await db
@@ -335,7 +340,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('classifies no more than the requested limit in one run', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     await createEligibleArtifact('Limit first')
     await createEligibleArtifact('Limit second')
@@ -349,7 +354,7 @@ describe.skipIf(!servicesReady)('classify-backfill', () => {
 
   it('reports a dry run without calling the provider or writing tags', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
 
     const artifactId = await createEligibleArtifact('Dry run')
     mocks.calls = 0
