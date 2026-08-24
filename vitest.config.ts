@@ -9,16 +9,33 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node',
-    // tests/integration/** needs Postgres on 5434 and S3-compatible storage on S3_ENDPOINT.
-    // Each of those files skips itself when the service is unreachable, so `vitest run` still
-    // passes on a machine with nothing started.
-    include: [
-      'tests/unit/**/*.test.ts',
-      'tests/integration/**/*.test.ts',
-      'packages/**/*.test.ts',
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'node',
+          include: ['tests/unit/**/*.test.ts', 'packages/**/*.test.ts'],
+          setupFiles: ['./tests/unit/setup-env.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          environment: 'node',
+          // tests/integration/** needs Postgres on 5434 and S3-compatible storage on
+          // S3_ENDPOINT. Each of those files skips itself when the service is unreachable, so
+          // `vitest run` still passes on a machine with nothing started.
+          include: ['tests/integration/**/*.test.ts'],
+          setupFiles: ['./tests/unit/setup-env.ts'],
+          // One database, no per-worker isolation: parallel files collide on instance-wide rows
+          // (the auto_categorize_enabled setting is a single keyed row that three files toggle).
+          // Serial costs ~35s for the whole directory and removes the entire failure class.
+          fileParallelism: false,
+        },
+      },
     ],
-    setupFiles: ['./tests/unit/setup-env.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

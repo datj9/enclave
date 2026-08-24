@@ -34,6 +34,11 @@ const { PATCH } = await import('@app/api/v1/categories/[id]/route')
 const ADMIN_EMAIL = 'categories-admin@example.test'
 const MEMBER_EMAIL = 'categories-member@example.test'
 
+// Category names are globally unique, so a name shared with another test file fails as soon as
+// vitest runs the two in parallel against the same database.
+const DOCS_NAME = 'Category Docs'
+const DOCS_SLUG = 'category-docs'
+
 let adminId = ''
 let memberId = ''
 
@@ -87,7 +92,7 @@ describe.skipIf(!database)('/api/v1/categories', () => {
   })
 
   it('POST creates an active category and returns its derived slug', async () => {
-    const response = await adminPost('Docs')
+    const response = await adminPost(DOCS_NAME)
 
     expect(response.status).toBe(201)
     const body = (await response.json()) as {
@@ -99,8 +104,8 @@ describe.skipIf(!database)('/api/v1/categories', () => {
         readonly createdAt: string
       }
     }
-    expect(body.data.name).toBe('Docs')
-    expect(body.data.slug).toBe('docs')
+    expect(body.data.name).toBe(DOCS_NAME)
+    expect(body.data.slug).toBe(DOCS_SLUG)
     expect(body.data.description).toBeNull()
     expect(body.data.isActive).toBe(true)
     expect(body.data.createdAt).toMatch(ISO_8601)
@@ -108,7 +113,7 @@ describe.skipIf(!database)('/api/v1/categories', () => {
 
   it('POST rejects a member with 403 and writes no row', async () => {
     mocks.sessionUser = { id: memberId, email: MEMBER_EMAIL, role: 'member', isActive: true }
-    const response = await POST(categoryRequest({ name: 'Docs' }))
+    const response = await POST(categoryRequest({ name: DOCS_NAME }))
 
     expect(response.status).toBe(403)
 

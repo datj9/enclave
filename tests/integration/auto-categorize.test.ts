@@ -53,6 +53,11 @@ vi.mock('@/lib/generation/collect', () => ({
 const OWNER_EMAIL = 'auto-categorize-owner@example.test'
 const ADMIN_EMAIL = 'auto-categorize-admin@example.test'
 
+// Category names are globally unique, and `listCategories` is instance-wide, so a name shared
+// with another test file both fails this file's setup and lets its slug match the wrong id.
+const DOCS_NAME = 'Autocat Docs'
+const DOCS_REPLY = '["autocat-docs"]'
+
 function bundle(marker: string): BundleFile[] {
   return [{ path: 'index.html', content: Buffer.from(`<!doctype html><p>${marker}`, 'utf8') }]
 }
@@ -78,7 +83,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
     adminId = await createTestOwner(ADMIN_EMAIL)
 
     const docs = await createCategory({
-      name: 'Docs',
+      name: DOCS_NAME,
       description: 'The documentation category',
       createdBy: adminId,
     })
@@ -108,7 +113,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('an upload writes model-sourced tags when the setting is on', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
 
@@ -125,7 +130,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('an upload writes no tags when the setting is off', async () => {
     await setAutoCategorizeEnabled(false, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
 
@@ -140,7 +145,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('an upload writes no tags when no category is active', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
     await db.update(categories).set({ isActive: false }).where(eq(categories.id, docsId))
@@ -178,7 +183,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('a provider failure leaves the artifact untagged and the upload successful', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = true
     mocks.calls = 0
 
@@ -194,7 +199,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('a new version re-classifies an artifact whose source is model', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
 
@@ -217,7 +222,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('an unparseable reply on a later version leaves existing model tags in place', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
 
@@ -261,7 +266,7 @@ describe.skipIf(!servicesReady)('auto-categorize', () => {
 
   it('a new version leaves a manually-tagged artifact untouched', async () => {
     await setAutoCategorizeEnabled(true, adminId)
-    mocks.completion = '["docs"]'
+    mocks.completion = DOCS_REPLY
     mocks.shouldThrow = false
     mocks.calls = 0
 
