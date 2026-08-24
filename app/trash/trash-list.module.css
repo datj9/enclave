@@ -19,8 +19,14 @@
   border-bottom: 1px solid var(--color-rule);
 }
 
+/* Releases the flex item's min-content floor, so a long title wraps instead of widening the row. */
+.rowText {
+  min-width: 0;
+}
+
 .rowName {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .rowMeta {

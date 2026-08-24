@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { HttpError } from '@/lib/http'
 import { clientIpFromHeaders, consumeRateLimit, resetRateLimits } from '@/lib/rate-limit'
-import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
+import {
+  enforceAuthRateLimit,
+  enforceChangePasswordUserRateLimit,
+  enforceForgotPasswordEmailRateLimit,
+} from '@/lib/auth/rate-limit-auth'
 
 const RULE = { limit: 3, windowSeconds: 60 } as const
 
@@ -100,5 +104,65 @@ describe('enforceAuthRateLimit', () => {
     for (let attempt = 0; attempt < 30; attempt += 1) enforceAuthRateLimit(request, 'signin')
 
     expect(() => enforceAuthRateLimit(request, 'setup')).not.toThrow()
+  })
+
+  it('keeps forgot-password and signin on separate counters', () => {
+    const request = requestFrom('203.0.113.10')
+    for (let attempt = 0; attempt < 30; attempt += 1) enforceAuthRateLimit(request, 'signin')
+
+    expect(() => enforceAuthRateLimit(request, 'forgot-password')).not.toThrow()
+  })
+
+  it('keeps change-password and signin on separate counters', () => {
+    const request = requestFrom('203.0.113.11')
+    for (let attempt = 0; attempt < 30; attempt += 1) enforceAuthRateLimit(request, 'signin')
+
+    expect(() => enforceAuthRateLimit(request, 'change-password')).not.toThrow()
+  })
+})
+
+describe('enforceChangePasswordUserRateLimit', () => {
+  it('caps change-password per user independently of IP', () => {
+    enforceChangePasswordUserRateLimit('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    for (let attempt = 0; attempt < 29; attempt += 1) {
+      enforceChangePasswordUserRateLimit('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    }
+
+    let caught: unknown
+    try {
+      enforceChangePasswordUserRateLimit('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(HttpError)
+    expect((caught as HttpError).code).toBe('RATE_LIMITED')
+    expect((caught as HttpError).status).toBe(429)
+    expect((caught as HttpError).headers['retry-after']).toMatch(/^\d+$/)
+
+    expect(() =>
+      enforceChangePasswordUserRateLimit('22222222-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
+    ).not.toThrow()
+  })
+})
+
+describe('enforceForgotPasswordEmailRateLimit', () => {
+  it('caps forgot-password per normalised email independently of IP', () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      enforceForgotPasswordEmailRateLimit('ops@example.com')
+    }
+
+    let caught: unknown
+    try {
+      enforceForgotPasswordEmailRateLimit('ops@example.com')
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(HttpError)
+    expect((caught as HttpError).code).toBe('RATE_LIMITED')
+    expect((caught as HttpError).status).toBe(429)
+
+    expect(() => enforceForgotPasswordEmailRateLimit('nobody@example.com')).not.toThrow()
   })
 })

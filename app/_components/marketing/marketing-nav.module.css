@@ -29,7 +29,7 @@
   display: inline-block;
   font-size: var(--text-sm);
   white-space: nowrap;
-  min-height: 2.75rem;
+  min-height: var(--control-md);
   padding-block: var(--space-2xs);
   text-decoration: underline;
   text-decoration-color: var(--color-rule);

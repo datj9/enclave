@@ -9,7 +9,7 @@ export function CtaStrip() {
           Nothing in enclave reports back to anyone. If this instance is already yours, sign in.
         </p>
       </div>
-      <a className={`button-primary ${styles.action}`} href="/signin">
+      <a className={`button-primary button-lg ${styles.action}`} href="/signin">
         Sign in →
       </a>
     </section>

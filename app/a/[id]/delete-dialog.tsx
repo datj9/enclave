@@ -91,7 +91,7 @@ export function DeleteDialog({
         if (isOpen) void refreshLiveShareCount()
       }}
     >
-      <Dialog.Trigger className={css(styles.trigger)} data-testid="delete-open">
+      <Dialog.Trigger className={`button-sm ${css(styles.trigger)}`} data-testid="delete-open">
         Delete
       </Dialog.Trigger>
 
@@ -111,7 +111,7 @@ export function DeleteDialog({
 
           <div className={styles.actions}>
             <button
-              className={styles.confirm}
+              className={`button-sm ${styles.confirm}`}
               type="button"
               aria-disabled={isBusy}
               data-testid="delete-confirm"

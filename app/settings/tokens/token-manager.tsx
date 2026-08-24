@@ -103,9 +103,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
         {created === null ? '' : CREATED_ANNOUNCEMENT}
       </p>
 
-      {created !== null && (
-        <RevealedToken created={created} onDismiss={() => setCreated(null)} />
-      )}
+      {created !== null && <RevealedToken created={created} onDismiss={() => setCreated(null)} />}
 
       <form className={styles.form} onSubmit={(event) => void handleCreate(event)}>
         {errorMessage !== null && (
@@ -133,7 +131,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
           <legend className="field-label">Scopes</legend>
           {API_TOKEN_SCOPES.map((scope) => (
             <label className={styles.scope} key={scope}>
-              <input name="scopes" type="checkbox" value={scope} />
+              <input className={styles.scopeCheckbox} name="scopes" type="checkbox" value={scope} />
               <span className={styles.scopeName}>{scope}</span>
               <span className={styles.scopeHint}>{SCOPE_LABEL[scope]}</span>
             </label>
@@ -191,8 +189,8 @@ function RevealedToken({
     <section className={styles.revealed} ref={panelRef} tabIndex={-1}>
       <h2 className={styles.revealedHeading}>Copy “{created.name}” now</h2>
       <p className={styles.revealedBody}>
-        This is the only time it is shown. Nothing can recover it afterwards — create a new token
-        if you lose it.
+        This is the only time it is shown. Nothing can recover it afterwards — create a new token if
+        you lose it.
       </p>
       <code className={styles.tokenValue}>{created.token}</code>
       <button className="button-secondary" type="button" onClick={onDismiss}>
@@ -227,7 +225,7 @@ function TokenTable({
     <ul className={styles.list}>
       {tokens.map((token) => (
         <li className={styles.row} key={token.id}>
-          <div>
+          <div className={styles.rowText}>
             <p className={styles.rowName}>{token.name}</p>
             <p className={styles.rowMeta}>
               {token.scopes.join(', ')} · last used {formatMoment(token.lastUsedAt)} · expires{' '}

@@ -74,8 +74,17 @@ export const envSchema = z.object({
 
   TRASH_RETENTION_DAYS: positiveIntFromString(30),
   AUDIT_RETENTION_DAYS: positiveIntFromString(365),
+  PASSWORD_RESET_RETENTION_DAYS: positiveIntFromString(7),
 
   RATE_LIMIT_AUTH_PER_IP_PER_HOUR: positiveIntFromString(30),
+
+  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_PORT: positiveIntFromString(587),
+  SMTP_SECURE: booleanFromString(false),
+  SMTP_USER: z.string().min(1).optional(),
+  SMTP_PASSWORD: z.string().min(1).optional(),
+  SMTP_FROM: z.string().min(1).optional(),
+  PASSWORD_RESET_TTL_SECONDS: positiveIntFromString(3600),
 })
 
 export type Env = z.infer<typeof envSchema>

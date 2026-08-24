@@ -43,6 +43,54 @@ describe('parseEnv', () => {
     expect(parsed.ARTIFACT_GRANT_TTL_SECONDS).toBe(1800)
     expect(parsed.TRASH_RETENTION_DAYS).toBe(30)
     expect(parsed.AUDIT_RETENTION_DAYS).toBe(365)
+    expect(parsed.PASSWORD_RESET_RETENTION_DAYS).toBe(7)
+    expect(parsed.SMTP_PORT).toBe(587)
+    expect(parsed.SMTP_SECURE).toBe(false)
+    expect(parsed.PASSWORD_RESET_TTL_SECONDS).toBe(3600)
+    expect(parsed.SMTP_HOST).toBeUndefined()
+    expect(parsed.SMTP_USER).toBeUndefined()
+    expect(parsed.SMTP_PASSWORD).toBeUndefined()
+    expect(parsed.SMTP_FROM).toBeUndefined()
+  })
+
+  it('accepts an environment with no SMTP_HOST so the instance still boots', () => {
+    expect(() => parseEnv(REQUIRED_ENV)).not.toThrow()
+    expect(parseEnv(REQUIRED_ENV).SMTP_HOST).toBeUndefined()
+  })
+
+  it('coerces SMTP_SECURE=true to a boolean', () => {
+    expect(parseEnv(envWith({ SMTP_SECURE: 'true' })).SMTP_SECURE).toBe(true)
+  })
+
+  it('rejects a non-boolean SMTP_SECURE naming the variable', () => {
+    expect(() => parseEnv(envWith({ SMTP_SECURE: 'yes' }))).toThrow(/SMTP_SECURE/)
+  })
+
+  it('rejects a zero or negative PASSWORD_RESET_RETENTION_DAYS', () => {
+    expect(() => parseEnv(envWith({ PASSWORD_RESET_RETENTION_DAYS: '0' }))).toThrow(
+      /PASSWORD_RESET_RETENTION_DAYS/,
+    )
+  })
+
+  it('rejects a zero or negative PASSWORD_RESET_TTL_SECONDS', () => {
+    expect(() => parseEnv(envWith({ PASSWORD_RESET_TTL_SECONDS: '0' }))).toThrow(
+      /PASSWORD_RESET_TTL_SECONDS/,
+    )
+    expect(() => parseEnv(envWith({ PASSWORD_RESET_TTL_SECONDS: '-1' }))).toThrow(
+      /PASSWORD_RESET_TTL_SECONDS/,
+    )
+  })
+
+  it('accepts SMTP_HOST and SMTP_FROM when set', () => {
+    const parsed = parseEnv(
+      envWith({ SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'ops@example.com' }),
+    )
+    expect(parsed.SMTP_HOST).toBe('smtp.example.com')
+    expect(parsed.SMTP_FROM).toBe('ops@example.com')
+  })
+
+  it('rejects an empty SMTP_HOST', () => {
+    expect(() => parseEnv(envWith({ SMTP_HOST: '' }))).toThrow(/SMTP_HOST/)
   })
 
   it('defaults registration to invite-only', () => {

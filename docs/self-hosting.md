@@ -16,6 +16,7 @@ difference between artifact isolation and no isolation at all.
 - [Scheduled jobs](#scheduled-jobs)
 - [Backup and restore](#backup-and-restore)
 - [Optional OIDC](#optional-oidc)
+- [Password reset mail](#password-reset-mail)
 - [Operating notes](#operating-notes)
 - [Troubleshooting](#troubleshooting)
 
@@ -41,10 +42,10 @@ relying on) and must not be exposed.
 enclave serves two different things from one process, and they must be two different browser
 origins:
 
-| Origin | Serves | Cookies it holds |
-|---|---|---|
-| `app.example.com` | The app, the API, the marketing page, share-link entry (`/s/{token}`) | The session cookie — **host-only**, never with a `Domain` attribute |
-| `{artifactId}.artifacts.example.com` | One artifact's document and its asset redirects | Only a grant cookie, scoped to that single subdomain |
+| Origin                               | Serves                                                                | Cookies it holds                                                    |
+| ------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `app.example.com`                    | The app, the API, the marketing page, share-link entry (`/s/{token}`) | The session cookie — **host-only**, never with a `Domain` attribute |
+| `{artifactId}.artifacts.example.com` | One artifact's document and its asset redirects                       | Only a grant cookie, scoped to that single subdomain                |
 
 One origin **per artifact**, not one origin for all artifacts. That is what makes it safe to run
 artifacts with `sandbox="… allow-same-origin …"`, which is in turn what lets an artifact use
@@ -54,7 +55,7 @@ removed in the same change — see [SECURITY.md](../SECURITY.md).
 
 ### Use a separate registrable domain
 
-**Strong recommendation:** put artifacts on a *different registrable domain* than the app.
+**Strong recommendation:** put artifacts on a _different registrable domain_ than the app.
 
 ```
 app        →  enclave.example.com
@@ -70,7 +71,7 @@ artifacts  →  {id}.artifacts.example.com      # same registrable domain — su
 
 The reason is cookie scope. Cookies are scoped by registrable domain, not by origin. On a shared
 parent domain, one mistake — a session cookie issued with `Domain=example.com` instead of
-host-only — makes that cookie readable by *every artifact*, and artifacts run arbitrary
+host-only — makes that cookie readable by _every artifact_, and artifacts run arbitrary
 model-generated JavaScript. A separate registrable domain removes the entire class of bug: there is
 no cookie either side could set that the other would ever see.
 
@@ -112,7 +113,7 @@ anonymous share-link view from, and what the per-IP sign-in rate limit counts.
 `X-Forwarded-For` because every supported deployment terminates TLS at a proxy. Without one in
 front, that header is client-controlled — a caller can set it freely, which makes the per-IP
 sign-in rate limit trivially bypassable and puts attacker-chosen values in your audit log. Make
-sure the proxy *overwrites* the header rather than appending to whatever the client sent;
+sure the proxy _overwrites_ the header rather than appending to whatever the client sent;
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends, so also ensure the app is
 unreachable except through the proxy.
 
@@ -145,13 +146,13 @@ permission to; it warns and carries on if storage is unreachable, and artifact u
 s3://<bucket>/artifacts/{artifactId}/{versionId}/{path}
 ```
 
-| Backend | `S3_ENDPOINT` | `S3_FORCE_PATH_STYLE` | Notes |
-|---|---|---|---|
-| AWS S3 | `https://s3.<region>.amazonaws.com` | `false` | Set `S3_REGION` to the bucket's real region. |
-| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `false` | `S3_REGION=auto`. |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | `false` | Use an application key, not the master key. |
-| Google Cloud Storage | `https://storage.googleapis.com` | `false` | Requires the bucket's HMAC interoperability keys, not a service-account JSON file. |
-| MinIO | `http(s)://<host>:9000` | `true` | Self-hosted. Path-style addressing is required. |
+| Backend              | `S3_ENDPOINT`                                   | `S3_FORCE_PATH_STYLE` | Notes                                                                              |
+| -------------------- | ----------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------- |
+| AWS S3               | `https://s3.<region>.amazonaws.com`             | `false`               | Set `S3_REGION` to the bucket's real region.                                       |
+| Cloudflare R2        | `https://<account-id>.r2.cloudflarestorage.com` | `false`               | `S3_REGION=auto`.                                                                  |
+| Backblaze B2         | `https://s3.<region>.backblazeb2.com`           | `false`               | Use an application key, not the master key.                                        |
+| Google Cloud Storage | `https://storage.googleapis.com`                | `false`               | Requires the bucket's HMAC interoperability keys, not a service-account JSON file. |
+| MinIO                | `http(s)://<host>:9000`                         | `true`                | Self-hosted. Path-style addressing is required.                                    |
 
 The bucket must be **private**. enclave hands out short-lived presigned URLs for assets; a
 world-readable bucket makes revocation meaningless because the object URL keeps working forever.
@@ -220,28 +221,28 @@ fails to start rather than half-working. `.env.example` is the committed templat
 
 ### App
 
-| Variable | Required | Example | What it does |
-|---|---|---|---|
-| `APP_URL` | yes | `https://enclave.example.com` | The app's public origin. Share links, invite links and the OIDC redirect URI are all built from it. Must be the URL users actually reach. |
-| `ARTIFACT_ORIGIN_TEMPLATE` | yes | `https://{id}.example-artifacts.dev` | The artifact origin pattern. **Must contain `{id}`.** Startup fails without it. This is also how inbound requests are recognised as artifact-origin requests. |
+| Variable                   | Required | Example                              | What it does                                                                                                                                                    |
+| -------------------------- | -------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_URL`                  | yes      | `https://enclave.example.com`        | The app's public origin. Share links, invite links, password-reset links and the OIDC redirect URI are all built from it. Must be the URL users actually reach. |
+| `ARTIFACT_ORIGIN_TEMPLATE` | yes      | `https://{id}.example-artifacts.dev` | The artifact origin pattern. **Must contain `{id}`.** Startup fails without it. This is also how inbound requests are recognised as artifact-origin requests.   |
 
 ### Database
 
-| Variable | Required | Example | What it does |
-|---|---|---|---|
-| `DATABASE_URL` | yes | `postgresql://enclave:secret@db.internal:5432/enclave` | Postgres connection string. Note that `.env.example` uses port **5434** — that is the host-side port the compose file publishes, chosen because 5432 and 5433 commonly collide with a locally installed Postgres. Inside the compose network the app talks to `postgres:5432`, which `docker-compose.yml` sets for you. |
+| Variable       | Required | Example                                                | What it does                                                                                                                                                                                                                                                                                                            |
+| -------------- | -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL` | yes      | `postgresql://enclave:secret@db.internal:5432/enclave` | Postgres connection string. Note that `.env.example` uses port **5434** — that is the host-side port the compose file publishes, chosen because 5432 and 5433 commonly collide with a locally installed Postgres. Inside the compose network the app talks to `postgres:5432`, which `docker-compose.yml` sets for you. |
 
 ### Object storage
 
-| Variable | Required | Example | What it does |
-|---|---|---|---|
-| `S3_ENDPOINT` | yes | `https://s3.eu-west-1.amazonaws.com` | Storage API endpoint the **server** dials. |
-| `S3_PUBLIC_ENDPOINT` | no | `http://localhost:9000` | The endpoint presigned URLs are signed with, i.e. the one **browsers** must reach. Defaults to `S3_ENDPOINT`; only set it when the two differ, such as the bundled MinIO profile. |
-| `S3_REGION` | yes | `eu-west-1` | Region. `auto` for R2, `us-east-1` for MinIO. |
-| `S3_BUCKET` | yes | `enclave-artifacts` | Bucket name. Created on boot if absent and permitted. |
-| `S3_ACCESS_KEY_ID` | yes | — | Access key. |
-| `S3_SECRET_ACCESS_KEY` | yes | — | Secret key. |
-| `S3_FORCE_PATH_STYLE` | no (`true`) | `false` | Path-style addressing. `true` for MinIO, `false` for AWS S3, R2, B2 and GCS. |
+| Variable               | Required    | Example                              | What it does                                                                                                                                                                      |
+| ---------------------- | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `S3_ENDPOINT`          | yes         | `https://s3.eu-west-1.amazonaws.com` | Storage API endpoint the **server** dials.                                                                                                                                        |
+| `S3_PUBLIC_ENDPOINT`   | no          | `http://localhost:9000`              | The endpoint presigned URLs are signed with, i.e. the one **browsers** must reach. Defaults to `S3_ENDPOINT`; only set it when the two differ, such as the bundled MinIO profile. |
+| `S3_REGION`            | yes         | `eu-west-1`                          | Region. `auto` for R2, `us-east-1` for MinIO.                                                                                                                                     |
+| `S3_BUCKET`            | yes         | `enclave-artifacts`                  | Bucket name. Created on boot if absent and permitted.                                                                                                                             |
+| `S3_ACCESS_KEY_ID`     | yes         | —                                    | Access key.                                                                                                                                                                       |
+| `S3_SECRET_ACCESS_KEY` | yes         | —                                    | Secret key.                                                                                                                                                                       |
+| `S3_FORCE_PATH_STYLE`  | no (`true`) | `false`                              | Path-style addressing. `true` for MinIO, `false` for AWS S3, R2, B2 and GCS.                                                                                                      |
 
 ### Secrets
 
@@ -251,10 +252,10 @@ Both must be at least 32 bytes. Generate each separately:
 openssl rand -base64 48
 ```
 
-| Variable | Required | What it does |
-|---|---|---|
-| `SESSION_SECRET` | yes | Signs session cookies, artifact grant cookies and handoff tokens. Rotating it invalidates every session and every open viewer. |
-| `ENCRYPTION_KEY` | yes | AES-256-GCM key for provider API keys that users store in their own settings. **Rotating this makes every stored user key undecryptable** — users must re-enter them. Back it up with the same care as the database. |
+| Variable         | Required | What it does                                                                                                                                                                                                         |
+| ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SESSION_SECRET` | yes      | Signs session cookies, artifact grant cookies and handoff tokens. Rotating it invalidates every session and every open viewer.                                                                                       |
+| `ENCRYPTION_KEY` | yes      | AES-256-GCM key for provider API keys that users store in their own settings. **Rotating this makes every stored user key undecryptable** — users must re-enter them. Back it up with the same care as the database. |
 
 ### Model providers
 
@@ -262,41 +263,53 @@ At least one key is needed to generate from a prompt. The app starts and serves 
 without any: the generate endpoint answers `400 PROVIDER_KEY_INVALID`, and `POST /api/v1/artifacts`
 keeps working, because pushing a bundle needs no model.
 
-| Variable | Required | Example | What it does |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | no | `sk-ant-…` | Instance-wide Anthropic key. Preferred when both are set. |
-| `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint — a local model server, a gateway, a different vendor. |
-| `OPENAI_API_KEY` | no | — | Key for that endpoint. |
-| `DEFAULT_MODEL` | yes | `claude-sonnet-4-6` | Model identifier passed to whichever provider is selected. |
+| Variable            | Required | Example                     | What it does                                                                          |
+| ------------------- | -------- | --------------------------- | ------------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY` | no       | `sk-ant-…`                  | Instance-wide Anthropic key. Preferred when both are set.                             |
+| `OPENAI_BASE_URL`   | no       | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint — a local model server, a gateway, a different vendor. |
+| `OPENAI_API_KEY`    | no       | —                           | Key for that endpoint.                                                                |
+| `DEFAULT_MODEL`     | yes      | `claude-sonnet-4-6`         | Model identifier passed to whichever provider is selected.                            |
 
 Users can store their own key per provider in settings; theirs takes precedence over the instance
 key, and they get the larger `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` when it is used.
 
 ### Registration
 
-| Variable | Required | Default | What it does |
-|---|---|---|---|
-| `ALLOW_OPEN_REGISTRATION` | no | `false` | `true` means anyone who can reach `/signup` becomes a member. Understand the consequence: "visible to the organization" then means visible to anyone who signs up. Leave it `false` and use invites unless the instance is deliberately public. |
+| Variable                  | Required | Default | What it does                                                                                                                                                                                                                                    |
+| ------------------------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ALLOW_OPEN_REGISTRATION` | no       | `false` | `true` means anyone who can reach `/signup` becomes a member. Understand the consequence: "visible to the organization" then means visible to anyone who signs up. Leave it `false` and use invites unless the instance is deliberately public. |
+
+### Optional SMTP (password reset)
+
+| Variable                     | Required | Default                     | What it does                                                                                                                                                                |
+| ---------------------------- | -------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SMTP_HOST`                  | no       | unset                       | SMTP hostname. If unset, the instance boots, forgot-password still returns the generic success page, and the audit row records `dispatched: false`. No reset email is sent. |
+| `SMTP_PORT`                  | no       | `587`                       | SMTP port.                                                                                                                                                                  |
+| `SMTP_SECURE`                | no       | `false`                     | `true`/`false`. Passed to nodemailer `secure` (`true` = TLS from the first hop, typically port 465).                                                                        |
+| `SMTP_USER`                  | no       | unset                       | SMTP auth user.                                                                                                                                                             |
+| `SMTP_PASSWORD`              | no       | unset                       | SMTP auth password.                                                                                                                                                         |
+| `SMTP_FROM`                  | no       | `enclave@<host of APP_URL>` | From address.                                                                                                                                                               |
+| `PASSWORD_RESET_TTL_SECONDS` | no       | `3600`                      | Lifetime of a password-reset token.                                                                                                                                         |
 
 ### Rate limits and quotas
 
-| Variable | Required | Default | What it does |
-|---|---|---|---|
-| `RATE_LIMIT_GENERATIONS_PER_HOUR` | no | `10` | Per-user generation attempts per hour. Exceeding it returns `429 RATE_LIMITED` with `Retry-After`. |
-| `QUOTA_GENERATIONS_PER_DAY` | no | `100` | Per-user daily generations on the instance key. |
-| `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` | no | `1000` | Per-user daily generations when the user brought their own key — their spend, so a looser cap. |
-| `RATE_LIMIT_AUTH_PER_IP_PER_HOUR` | no | `30` | Per-IP cap on sign-in and first-run setup attempts. Needs correct `X-Forwarded-For` behind a proxy, or every request looks like it came from the proxy. |
+| Variable                            | Required | Default | What it does                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RATE_LIMIT_GENERATIONS_PER_HOUR`   | no       | `10`    | Per-user generation attempts per hour. Exceeding it returns `429 RATE_LIMITED` with `Retry-After`.                                                                                                                                                                                                                        |
+| `QUOTA_GENERATIONS_PER_DAY`         | no       | `100`   | Per-user daily generations on the instance key.                                                                                                                                                                                                                                                                           |
+| `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` | no       | `1000`  | Per-user daily generations when the user brought their own key — their spend, so a looser cap.                                                                                                                                                                                                                            |
+| `RATE_LIMIT_AUTH_PER_IP_PER_HOUR`   | no       | `30`    | Per-IP cap on sign-in, first-run setup, forgot-password, reset-password, and change-password attempts. Forgot-password also applies this cap per normalised email. Change-password also applies this cap per user id. Needs correct `X-Forwarded-For` behind a proxy, or every request looks like it came from the proxy. |
 
 Counters are per user and held in the process. A multi-instance deployment therefore enforces these
 per instance, not globally — divide the numbers by your replica count, or run one instance.
 
 ### Bundle limits
 
-| Variable | Required | Default | What it does |
-|---|---|---|---|
-| `BUNDLE_MAX_FILES` | no | `50` | Files per bundle. Over it: `413 BUNDLE_TOO_LARGE`. |
-| `BUNDLE_MAX_TOTAL_BYTES` | no | `10485760` (10 MB) | Total bundle size. The HTTP request-body ceiling is derived from it, and that derivation happens when `next.config.ts` is evaluated — which is at build time for the standalone Docker image. Raising this in the container's environment alone will not raise the body limit; rebuild the image. Running from a checkout re-reads it at start. |
-| `BUNDLE_MAX_FILE_BYTES` | no | `2097152` (2 MB) | Largest single file. |
+| Variable                 | Required | Default            | What it does                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------ | -------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUNDLE_MAX_FILES`       | no       | `50`               | Files per bundle. Over it: `413 BUNDLE_TOO_LARGE`.                                                                                                                                                                                                                                                                                              |
+| `BUNDLE_MAX_TOTAL_BYTES` | no       | `10485760` (10 MB) | Total bundle size. The HTTP request-body ceiling is derived from it, and that derivation happens when `next.config.ts` is evaluated — which is at build time for the standalone Docker image. Raising this in the container's environment alone will not raise the body limit; rebuild the image. Running from a checkout re-reads it at start. |
+| `BUNDLE_MAX_FILE_BYTES`  | no       | `2097152` (2 MB)   | Largest single file.                                                                                                                                                                                                                                                                                                                            |
 
 File extensions are restricted to a fixed allowlist regardless of these values: `html css js mjs
 json svg png jpg jpeg webp woff2 txt md`. It is a constant in `src/lib/bundle/validate.ts`, not an
@@ -305,18 +318,19 @@ list and the served type cannot drift apart.
 
 ### Token lifetimes, in seconds
 
-| Variable | Required | Default | What it does |
-|---|---|---|---|
-| `PRESIGN_TTL_SECONDS` | no | `60` | Lifetime of a presigned asset URL. **This is your revocation window for assets** — a link already handed out keeps working this long after you revoke. Raising it trades revocation speed for fewer redirects. |
-| `HANDOFF_TTL_SECONDS` | no | `30` | Lifetime of the single-use token that carries authorization from the app origin to the artifact origin. Raise it only if you have very slow clients. |
-| `ARTIFACT_GRANT_TTL_SECONDS` | no | `1800` (30 min) | How long a viewer can keep reading one artifact before the app re-authorizes. This is the ceiling on how stale an *asset-path* authorization can be; the entry document is re-checked on every request regardless. |
+| Variable                     | Required | Default         | What it does                                                                                                                                                                                                       |
+| ---------------------------- | -------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PRESIGN_TTL_SECONDS`        | no       | `60`            | Lifetime of a presigned asset URL. **This is your revocation window for assets** — a link already handed out keeps working this long after you revoke. Raising it trades revocation speed for fewer redirects.     |
+| `HANDOFF_TTL_SECONDS`        | no       | `30`            | Lifetime of the single-use token that carries authorization from the app origin to the artifact origin. Raise it only if you have very slow clients.                                                               |
+| `ARTIFACT_GRANT_TTL_SECONDS` | no       | `1800` (30 min) | How long a viewer can keep reading one artifact before the app re-authorizes. This is the ceiling on how stale an _asset-path_ authorization can be; the entry document is re-checked on every request regardless. |
 
 ### Retention, in days
 
-| Variable | Required | Default | What it does |
-|---|---|---|---|
-| `TRASH_RETENTION_DAYS` | no | `30` | How long a deleted artifact can be restored. After this, the purge job removes rows and objects. Share links are killed at delete time, not at purge time. |
-| `AUDIT_RETENTION_DAYS` | no | `365` | How long audit rows are kept. Audit rows survive artifact purge, keeping `artifact_id` — that is deliberate, so a deletion is still accountable. |
+| Variable                        | Required | Default | What it does                                                                                                                                                                                                  |
+| ------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRASH_RETENTION_DAYS`          | no       | `30`    | How long a deleted artifact can be restored. After this, the purge job removes rows and objects. Share links are killed at delete time, not at purge time.                                                    |
+| `AUDIT_RETENTION_DAYS`          | no       | `365`   | How long audit rows are kept. Audit rows survive artifact purge, keeping `artifact_id` — that is deliberate, so a deletion is still accountable.                                                              |
+| `PASSWORD_RESET_RETENTION_DAYS` | no       | `7`     | How long a used or expired password-reset row is kept before the prune job drops it. Neither request path deletes spent rows, so without the job they stay forever. `audit_log` keeps the history regardless. |
 
 ### Retention windows are exact hours, not calendar days
 
@@ -367,7 +381,7 @@ the maintainer tags a release; until such a tag exists, building from source is 
 `docker-compose.yml` reflects that.
 
 **Two endpoints, when the browser cannot reach the one the server uses.** The app dials storage at
-`S3_ENDPOINT`, but a presigned URL is followed by the *browser* and signs its own host, so it cannot
+`S3_ENDPOINT`, but a presigned URL is followed by the _browser_ and signs its own host, so it cannot
 simply be rewritten afterwards. With AWS S3, R2, B2 and GCS this never comes up — one public
 endpoint serves both. It does come up with the bundled MinIO profile, where the app container
 resolves `http://minio:9000` on the compose network while the browser resolves
@@ -402,14 +416,15 @@ a database snapshot first (see below).
 
 ## Scheduled jobs
 
-Three entry points under `scripts/`. None of them run themselves — nothing in the app schedules
+Four entry points under `scripts/`. None of them run themselves — nothing in the app schedules
 anything, so if you do not wire these up, trash is never purged and audit rows accumulate forever.
 
-| Script | How often | What it does | Exit code |
-|---|---|---|---|
-| `scripts/sweep-pending.ts` | every minute | Reclaims artifact versions left `pending` for 15 minutes by a write that died mid-flight — a killed generation, a storage outage. Objects go first, then the row, so a storage failure leaves the row for the next run rather than an orphaned prefix. | Non-zero if any version was deferred — the next run retries. |
-| `scripts/purge-trash.ts` | daily | Permanently removes artifacts past `TRASH_RETENTION_DAYS`: storage objects first, then rows. Audit rows survive. | Non-zero if any artifact was deferred. |
-| `scripts/prune-audit.ts` | daily | Deletes audit rows past `AUDIT_RETENTION_DAYS`. | Always 0. |
+| Script                             | How often    | What it does                                                                                                                                                                                                                                           | Exit code                                                    |
+| ---------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `scripts/sweep-pending.ts`         | every minute | Reclaims artifact versions left `pending` for 15 minutes by a write that died mid-flight — a killed generation, a storage outage. Objects go first, then the row, so a storage failure leaves the row for the next run rather than an orphaned prefix. | Non-zero if any version was deferred — the next run retries. |
+| `scripts/purge-trash.ts`           | daily        | Permanently removes artifacts past `TRASH_RETENTION_DAYS`: storage objects first, then rows. Audit rows survive.                                                                                                                                       | Non-zero if any artifact was deferred.                       |
+| `scripts/prune-audit.ts`           | daily        | Deletes audit rows past `AUDIT_RETENTION_DAYS`.                                                                                                                                                                                                        | Always 0.                                                    |
+| `scripts/prune-password-resets.ts` | daily        | Deletes used and expired password-reset rows past `PASSWORD_RESET_RETENTION_DAYS`. The request paths only clear rows that are still outstanding, so this is the one thing that removes spent ones.                                                     | Always 0.                                                    |
 
 Run them with `tsx`, which resolves the path aliases their imports use:
 
@@ -417,6 +432,7 @@ Run them with `tsx`, which resolves the path aliases their imports use:
 * * * * *   cd /srv/enclave && pnpm exec tsx scripts/sweep-pending.ts >> /var/log/enclave-sweep.log 2>&1
 17 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/purge-trash.ts   >> /var/log/enclave-purge.log 2>&1
 34 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/prune-audit.ts   >> /var/log/enclave-audit.log 2>&1
+51 3 * * *  cd /srv/enclave && pnpm exec tsx scripts/prune-password-resets.ts >> /var/log/enclave-pwreset.log 2>&1
 ```
 
 From the image, the same commands work through compose:
@@ -466,10 +482,10 @@ concurrency here wastes money rather than corrupting data.
 
 **Two systems hold your data, and a backup of one is worthless without the other.**
 
-| System | Holds | If you lose it |
-|---|---|---|
-| Postgres | Users, artifacts, versions and their manifests, share links, API tokens, encrypted user provider keys, quotas, the audit log | Objects are orphaned bytes. Nothing knows which file belongs to which artifact, or who may read it. |
-| Object storage | Every file of every artifact version | Every artifact is a row pointing at nothing. The app answers `503`, not "gone". |
+| System         | Holds                                                                                                                        | If you lose it                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Postgres       | Users, artifacts, versions and their manifests, share links, API tokens, encrypted user provider keys, quotas, the audit log | Objects are orphaned bytes. Nothing knows which file belongs to which artifact, or who may read it. |
+| Object storage | Every file of every artifact version                                                                                         | Every artifact is a row pointing at nothing. The app answers `503`, not "gone".                     |
 
 Plus one secret: `ENCRYPTION_KEY`. Restore a database without it and every user-stored provider key
 is unrecoverable ciphertext. Keep it wherever you keep the rest of your secrets, and back that up.
@@ -502,11 +518,11 @@ Test a restore before you need one. A restore that has never been tried is a pla
 
 Set all three and a sign-in-with-provider option appears alongside email and password:
 
-| Variable | Example |
-|---|---|
-| `OIDC_ISSUER` | `https://accounts.google.com` |
-| `OIDC_CLIENT_ID` | — |
-| `OIDC_CLIENT_SECRET` | — |
+| Variable             | Example                       |
+| -------------------- | ----------------------------- |
+| `OIDC_ISSUER`        | `https://accounts.google.com` |
+| `OIDC_CLIENT_ID`     | —                             |
+| `OIDC_CLIENT_SECRET` | —                             |
 
 The redirect URI to register with your provider is built from `APP_URL`:
 
@@ -523,6 +539,31 @@ the race never burns it.
 
 This is deliberate: an OIDC issuer you do not control would otherwise be an open door onto your
 instance.
+
+## Password reset mail
+
+When `SMTP_HOST` is set, a forgot-password request with an active email+password account on the
+instance sends a plaintext-only reset mail:
+
+- Subject is fixed: `Reset your enclave password`.
+- The link is a capability URL: possession of it is all that is needed to reset that password, so
+  treat it like a secret and do not forward mail. `robots.txt` disallows `/reset-password`.
+- No HTML part; only a plain `text` body containing the link.
+- The token expires after `PASSWORD_RESET_TTL_SECONDS` and is single-use.
+- Requesting a second link invalidates the first, so a user who clicks an older mail sees the
+  generic failure. The mail says so.
+
+### Accepted risk: the token is in the URL
+
+A reset link has to carry the token where a mail client can render it, which means the query string.
+Inside the app that is mitigated as far as it can be: single-use, a 1 hour TTL, `/reset-password`
+excluded in `robots.txt`, redemption is a `POST` so no `Referer` carries the token off-origin, and
+`referrer-policy: strict-origin-when-cross-origin` is set on every response.
+
+What is left is outside this code: **browser history on the user's machine, and any reverse proxy or
+CDN in front of the app that logs full request URLs.** A default nginx or Cloudflare access log
+records the token in plaintext for its whole retention. If you terminate TLS in front of enclave,
+strip or hash query strings for `/reset-password` (and `/s/{token}`) in that log config.
 
 ## Operating notes
 
@@ -568,7 +609,7 @@ The `Host` header is not reaching the app, so every request looks like an app-or
 
 **Uploads answer `503 STORAGE_UNAVAILABLE` and the log warned about storage at boot.**
 Object storage is unreachable or the credentials cannot see the bucket. Verify `S3_ENDPOINT` from
-*inside* whatever runs the app, and check `S3_FORCE_PATH_STYLE` matches the backend (`true` for
+_inside_ whatever runs the app, and check `S3_FORCE_PATH_STYLE` matches the backend (`true` for
 MinIO, `false` for the rest).
 
 **Generation answers `400 PROVIDER_KEY_INVALID`.**

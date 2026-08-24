@@ -40,7 +40,9 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
 
   function handleProviderChange(provider: ProviderId): void {
     setSelectedProvider(provider)
-    setBaseUrl(storedKey !== null && storedKey.provider === provider ? (storedKey.baseUrl ?? '') : '')
+    setBaseUrl(
+      storedKey !== null && storedKey.provider === provider ? (storedKey.baseUrl ?? '') : '',
+    )
   }
 
   async function refreshStoredKey(): Promise<void> {
@@ -203,7 +205,7 @@ function StoredKeyRow({
 
   return (
     <section className={styles.row}>
-      <div>
+      <div className={styles.rowText}>
         <p className={styles.rowName}>
           {PROVIDER_LABEL[storedKey.provider]}{' '}
           <code className={styles.masked}>

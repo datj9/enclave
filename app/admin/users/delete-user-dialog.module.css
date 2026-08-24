@@ -1,6 +1,9 @@
 /* The only irreversible one of three otherwise identical row buttons. */
 .trigger {
-  padding: var(--space-3xs) var(--space-2xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--space-3xs);
   font: inherit;
   font-size: var(--text-sm);
   font-weight: 500;

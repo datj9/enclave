@@ -45,7 +45,11 @@ function requestBodyFrom(form: FormData): Record<string, unknown> {
   }
 }
 
-export function InviteManager({ initialInvites }: { readonly initialInvites: readonly InviteSummary[] }) {
+export function InviteManager({
+  initialInvites,
+}: {
+  readonly initialInvites: readonly InviteSummary[]
+}) {
   const [invites, setInvites] = useState(initialInvites)
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -79,7 +83,11 @@ export function InviteManager({ initialInvites }: { readonly initialInvites: rea
 
       const body = (await response.json()) as CreateResponse
       const email = String(form.get('email') ?? '').trim()
-      setCreated({ url: body.data.url, email: email === '' ? null : email, expiresAt: body.data.expiresAt })
+      setCreated({
+        url: body.data.url,
+        email: email === '' ? null : email,
+        expiresAt: body.data.expiresAt,
+      })
       await refresh()
     } finally {
       setIsBusy(false)
@@ -243,7 +251,7 @@ function InviteTable({
               <td>
                 {invite.status === 'outstanding' ? (
                   <button
-                    className={`button-secondary ${styles.compactButton}`}
+                    className="button-secondary button-sm"
                     type="button"
                     aria-disabled={isBusy}
                     onClick={() => onRevoke(invite.id)}
