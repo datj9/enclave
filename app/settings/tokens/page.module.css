@@ -24,14 +24,33 @@
 
 .scope {
   display: grid;
-  grid-template-columns: auto auto 1fr;
-  align-items: baseline;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
   gap: var(--space-2xs);
   font-size: var(--text-sm);
 }
 
+/*
+ * A checkbox is a control like any other, so it sits on the dense step and is promoted with a
+ * finger. The size goes on the input itself: the native box scales with it, where padding on
+ * the label around it would leave the hit target exactly where it was.
+ */
+.scopeCheckbox {
+  inline-size: var(--control-sm);
+  block-size: var(--control-sm);
+  margin: 0;
+}
+
+@media (pointer: coarse) {
+  .scopeCheckbox {
+    inline-size: var(--control-md);
+    block-size: var(--control-md);
+  }
+}
+
 .scopeName {
   font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 .scopeHint {
@@ -104,8 +123,14 @@
   border-bottom: 1px solid var(--color-rule);
 }
 
+/* Releases the flex item's min-content floor, so a long name wraps instead of widening the row. */
+.rowText {
+  min-width: 0;
+}
+
 .rowName {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .rowMeta {

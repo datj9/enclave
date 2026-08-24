@@ -30,6 +30,7 @@
 
 /* motion.md frequency rule — seen on every visit, so no entrance animation on mount. */
 .starter {
+  min-height: var(--control-md);
   padding: var(--space-2xs) var(--space-xs);
   border: 1px solid var(--color-rule);
   border-radius: var(--radius-pill);

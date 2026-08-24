@@ -189,7 +189,7 @@ function CategoryTable({
               </td>
               <td>
                 <button
-                  className={`button-secondary ${styles.compactButton}`}
+                  className="button-secondary button-sm"
                   type="button"
                   aria-disabled={isBusy}
                   onClick={() => onToggleActive(category.id, category.isActive)}
@@ -234,11 +234,7 @@ function RenameControl({
         key={category.name}
         aria-label={`Rename ${category.name}`}
       />
-      <button
-        className={`button-secondary ${styles.compactButton}`}
-        type="submit"
-        aria-disabled={isBusy}
-      >
+      <button className="button-secondary button-sm" type="submit" aria-disabled={isBusy}>
         Rename
       </button>
     </form>

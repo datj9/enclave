@@ -32,9 +32,9 @@
   color: var(--color-ink-2);
 }
 
+/* An answer is body copy, so it stays on --text-base — --text-sm is for labels and metadata. */
 .answer {
   color: var(--color-ink-2);
-  font-size: var(--text-sm);
   margin: 0 0 var(--space-sm);
   padding-inline-end: var(--space-sm);
 }
