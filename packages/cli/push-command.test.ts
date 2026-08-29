@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as PushCoreModule from '../push-core/src/index.ts'
 
 import { push, PushError } from '../push-core/src/index.ts'
-import type { PushResult, UploadPlan } from '../push-core/src/index.ts'
+import type { DeadLink, PushResult, UploadPlan } from '../push-core/src/index.ts'
 import { apiClient } from './src/api-client.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
@@ -429,6 +429,43 @@ describe('push command', () => {
     expect(stdout).toMatch(/^ {2}app\.js\.map {17}unsupported \(\.map\)$/m)
   })
 
+  it('warns about a link to a file the bundle does not contain, without failing the push', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toContain('warning: 1 links point at files not in this bundle:')
+    expect(stderr).toContain('index.html → gone.html')
+  })
+
+  it('--json dry run puts dead links in the result and keeps the warning off stderr', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(0)
+    const payload = JSON.parse(stdout) as {
+      readonly deadLinks: readonly DeadLink[]
+    } & { readonly uploaded: readonly string[] }
+    expect(payload.deadLinks).toEqual([{ from: 'index.html', to: 'gone.html' }])
+    expect(stderr).not.toContain('warning:')
+  })
+
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
     const emptyDirectory = join(workspace, 'empty')
     mkdirSync(emptyDirectory)
@@ -524,7 +561,11 @@ describe('push command', () => {
 
     expect(exitCode).toBe(0)
     expect(stdout).not.toContain('✓')
-    expect(JSON.parse(stdout) as PushResult).toEqual(SUCCESS_RESULT)
+    // The dead-link check appends its findings to the result, even when it found none.
+    expect(JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] }).toEqual({
+      ...SUCCESS_RESULT,
+      deadLinks: [],
+    })
   })
 
   it('refuses when the state host differs', async () => {
@@ -866,7 +907,10 @@ describe('push command', () => {
       expect(await pushOnce(true)).toBe(0)
 
       expect(vi.mocked(push).mock.calls[0]?.[0]?.onUploadStart).toBeUndefined()
-      expect(JSON.parse(stdout) as PushResult).toEqual(SUCCESS_RESULT)
+      expect(JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] }).toEqual({
+        ...SUCCESS_RESULT,
+        deadLinks: [],
+      })
     })
   })
 

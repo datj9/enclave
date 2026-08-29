@@ -4,12 +4,19 @@ import { basename, join, resolve } from 'node:path'
 import {
   assertBundlePushable,
   collectBundle,
+  findDeadLinks,
   InvalidHostError,
   normaliseHost,
   push,
   PushError,
 } from '../../../push-core/src/index.ts'
-import type { PushResult, SkippedFile, SkipReason, UploadPlan } from '../../../push-core/src/index.ts'
+import type {
+  DeadLink,
+  PushResult,
+  SkippedFile,
+  SkipReason,
+  UploadPlan,
+} from '../../../push-core/src/index.ts'
 import type { Visibility } from '../../../push-core/src/types.ts'
 import { apiClient } from '../api-client.ts'
 import { tokenFor } from '../credentials.ts'
@@ -60,6 +67,22 @@ function writeSkippedBlock(skipped: readonly SkippedFile[]): void {
   process.stdout.write(`skipped ${String(skipped.length)} files:\n`)
   for (const file of skipped) {
     process.stdout.write(`  ${file.path.padEnd(pathColumnWidth)}  ${reasonText(file)}\n`)
+  }
+}
+
+/**
+ * Advice, not a refusal: the artifact origin 404s an unmatched path with a page that names
+ * nothing, so a link the bundle cannot satisfy is worth saying out loud before it ships. stderr,
+ * never stdout — stdout carries the result contract. Same `reduce` pattern as writeSkippedBlock.
+ */
+function writeDeadLinkBlock(deadLinks: readonly DeadLink[]): void {
+  if (deadLinks.length === 0) return
+  const fromColumnWidth = deadLinks.reduce((widest, link) => Math.max(widest, link.from.length), 0)
+  process.stderr.write(
+    `warning: ${String(deadLinks.length)} links point at files not in this bundle:\n`,
+  )
+  for (const link of deadLinks) {
+    process.stderr.write(`  ${link.from.padEnd(fromColumnWidth)} → ${link.to}\n`)
   }
 }
 
@@ -241,12 +264,16 @@ function reportDryRun(options: PushCommandOptions): number {
   }
 
   const uploaded = bundle.files.map((file) => file.path)
+  const deadLinks = findDeadLinks(bundle.files)
 
   if (options.isJson) {
-    process.stdout.write(`${JSON.stringify({ uploaded, skipped: bundle.skipped })}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ uploaded, skipped: bundle.skipped, deadLinks })}\n`,
+    )
     return 0
   }
 
+  writeDeadLinkBlock(deadLinks)
   writeSkippedBlock(bundle.skipped)
   process.stdout.write(
     `✓ ${String(uploaded.length)} files, ${String(kilobytesOf(options.directory, uploaded))} KB\n`,
@@ -433,6 +460,11 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
 
   const isProgressVisible = !options.isJson
 
+  // `push()` collects internally and holds no files, so the dead-link check that needs them reads
+  // the directory once more — a few files off local disk, and it stays out of the network path.
+  const bundle = collectBundle(options.directory)
+  const deadLinks = findDeadLinks(bundle.files)
+
   let result: PushResult
   try {
     result = await push({
@@ -482,10 +514,11 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   })
 
   if (options.isJson) {
-    process.stdout.write(`${JSON.stringify(result)}\n`)
+    process.stdout.write(`${JSON.stringify({ ...result, deadLinks })}\n`)
     return 0
   }
 
+  writeDeadLinkBlock(deadLinks)
   reportPushed(options, canonicalHost, result, republishTarget !== null)
   return 0
 }
