@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type BrowserContext,
   type Page,
+  type Response as PlaywrightResponse,
 } from '@playwright/test'
 
 /**
@@ -68,6 +69,42 @@ function artifactOrigin(artifactId: string): string {
   return `http://${artifactId}.artifacts.localhost:3000`
 }
 
+const GRANT_COOKIE = 'enclave_grant'
+
+/**
+ * The grant-miss redirect off an artifact origin, wherever it sits in the chain.
+ *
+ * `redirectedFrom()` steps back one hop only, and the app origin adds hops of its own after the
+ * 302 — `/a/{id}` answers a signed-out visitor with a 307 to `/signin`. Matching on the artifact
+ * origin's host keeps the assertion on the hop under test.
+ */
+async function grantMissRedirect(
+  response: PlaywrightResponse | null | undefined,
+  artifactId: string,
+): Promise<PlaywrightResponse | null> {
+  const host = new URL(artifactOrigin(artifactId)).host
+  let hop = response?.request() ?? null
+
+  while (hop !== null) {
+    if (new URL(hop.url()).host === host) {
+      const hopResponse = await hop.response()
+      if (hopResponse !== null && hopResponse.status() === 302) return hopResponse
+    }
+    hop = hop.redirectedFrom()
+  }
+
+  return null
+}
+
+/** The grant cookie for one artifact origin, or undefined when the browser holds none. */
+async function grantCookie(
+  context: BrowserContext,
+  artifactId: string,
+): Promise<string | undefined> {
+  const cookies = await context.cookies(artifactOrigin(artifactId))
+  return cookies.find((cookie) => cookie.name === GRANT_COOKIE)?.value
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test.describe('direct artifact entry', () => {
@@ -100,13 +137,14 @@ test.describe('direct artifact entry', () => {
   })
 
   test('a cold paste of an artifact origin lands on the rendered artifact', async () => {
-    // No grant cookie for this origin yet: the paste is the first thing this context does.
-    expect(await viewer.cookies(artifactOrigin(artifactId))).toHaveLength(0)
+    // No grant cookie for this origin yet: the paste is the first thing this context does. The
+    // app-origin session cookie is present and irrelevant, so only the grant is asserted.
+    expect(await grantCookie(viewer, artifactId)).toBeUndefined()
 
     const response = await page.goto(`${artifactOrigin(artifactId)}/`)
 
-    // The 302 is the hop before the one that answered, and it names the canonical viewer page.
-    const redirect = await response?.request().redirectedFrom()?.response()
+    // The hop off the artifact origin names the canonical viewer page.
+    const redirect = await grantMissRedirect(response, artifactId)
     expect(redirect?.status()).toBe(302)
     expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactId}`)
     expect(redirect?.headers()['cache-control']).toBe('no-store')
@@ -137,7 +175,7 @@ test.describe('direct artifact entry', () => {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactId)}/`)
 
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, artifactId)
       expect(redirect?.status()).toBe(302)
 
       // The artifact is private, so the app origin sends a signed-out visitor to sign in. The
@@ -160,7 +198,7 @@ test.describe('direct artifact entry', () => {
 
       // The §7 pair, from a real browser: the artifact origin has not consulted Postgres when it
       // answers, so a nonexistent id gets the same 302 to the same shape of URL as a real one.
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, missingId)
       expect(redirect?.status()).toBe(302)
       expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${missingId}`)
 

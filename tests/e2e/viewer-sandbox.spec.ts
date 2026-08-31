@@ -1,4 +1,12 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Frame, type Page } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Frame,
+  type Page,
+  type Response as PlaywrightResponse,
+} from '@playwright/test'
 
 /**
  * The sandboxed viewer, end to end through the running app: grill-result §4.2's handoff flow and
@@ -102,6 +110,32 @@ async function openViewer(page: Page, artifactId: string, label: string): Promis
   const frame = page.frames().find((candidate) => candidate.url().startsWith(artifactOrigin(artifactId)))
   expect(frame, 'the artifact frame is on its own origin').toBeTruthy()
   return frame as Frame
+}
+
+/**
+ * The grant-miss redirect off an artifact origin, wherever it sits in the chain.
+ *
+ * `redirectedFrom()` steps back exactly one hop, and the app origin adds its own hops after the
+ * 302 — Next.js answers `/a/{id}` for a signed-out visitor with a 307 to `/signin`. Walking the
+ * whole chain and matching on the artifact origin's host is what makes this assertion about the
+ * hop under test rather than about whatever the app origin did afterwards.
+ */
+async function grantMissRedirect(
+  response: PlaywrightResponse | null | undefined,
+  artifactId: string,
+): Promise<PlaywrightResponse | null> {
+  const host = new URL(artifactOrigin(artifactId)).host
+  let hop = response?.request() ?? null
+
+  while (hop !== null) {
+    if (new URL(hop.url()).host === host) {
+      const hopResponse = await hop.response()
+      if (hopResponse !== null && hopResponse.status() === 302) return hopResponse
+    }
+    hop = hop.redirectedFrom()
+  }
+
+  return null
 }
 
 async function grantCookieValue(context: BrowserContext, artifactId: string): Promise<string> {
@@ -350,8 +384,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     try {
       const replayPage = await replay.newPage()
       const response = await replayPage.goto(enterUrl ?? '')
-      // page.goto follows the 302; the prior hop is the grant-miss redirect.
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, artifactA)
       expect(redirect?.status()).toBe(302)
       expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
       // Lands on the app origin (sign-in, or the viewer page's own refusal) — never artifact bytes.
@@ -368,7 +401,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/__enter`)
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, artifactA)
       expect(redirect?.status()).toBe(302)
       expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
     } finally {
@@ -383,7 +416,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/`)
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, artifactA)
       expect(redirect?.status()).toBe(302)
       expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
       expect(anonymousPage.url()).toBe(`${APP_ORIGIN}/signin`)
@@ -415,7 +448,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
 
       const attackerPage = await attacker.newPage()
       const response = await attackerPage.goto(`${artifactOrigin(artifactB)}/`)
-      const redirect = await response?.request().redirectedFrom()?.response()
+      const redirect = await grantMissRedirect(response, artifactB)
       expect(redirect?.status()).toBe(302)
       expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactB}`)
       // The planted cookie is still Alice's token for A — verifyGrantToken refused it for B, so

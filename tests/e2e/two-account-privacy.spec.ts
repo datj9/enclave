@@ -229,8 +229,13 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
     try {
       const page = await anonymous.newPage()
 
-      const origin = await page.goto(`${artifactOrigin(sharedArtifact)}/`)
-      expect(origin?.status()).toBe(404)
+      // The artifact origin cannot authorize a visitor with no grant cookie, so it sends the
+      // navigation back to the app origin — which, for a signed-out visitor, is the sign-in page.
+      // US-3·AC3 is that nothing of the artifact is readable, and that is what is asserted here;
+      // the status of the first hop is not what carries the guarantee.
+      await page.goto(`${artifactOrigin(sharedArtifact)}/`)
+      await expect(page).toHaveURL(/\/signin/)
+      await expect(page.locator('#marker')).toHaveCount(0)
 
       await page.goto(`${APP_ORIGIN}/a/${sharedArtifact}`)
       await expect(page).toHaveURL(/\/signin/)
