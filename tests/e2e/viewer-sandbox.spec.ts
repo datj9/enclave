@@ -337,7 +337,9 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(fetched.label).toBe('A')
   })
 
-  test('a replayed handoff token is a 404', async ({ browser }) => {
+  test('a replayed handoff token is sent back to the viewer page, not into the artifact', async ({
+    browser,
+  }) => {
     await openViewer(page, artifactA, 'A')
 
     const enterUrl = await page.locator('iframe[title="Artifact"]').getAttribute('src')
@@ -348,37 +350,52 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     try {
       const replayPage = await replay.newPage()
       const response = await replayPage.goto(enterUrl ?? '')
-      expect(response?.status()).toBe(404)
+      // page.goto follows the 302; the prior hop is the grant-miss redirect.
+      const redirect = await response?.request().redirectedFrom()?.response()
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
+      // Lands on the app origin (sign-in, or the viewer page's own refusal) — never artifact bytes.
+      expect(replayPage.url().startsWith(APP_ORIGIN)).toBe(true)
+      expect(replayPage.url().startsWith(artifactOrigin(artifactA))).toBe(false)
+      await expect(replayPage.locator('#marker')).toHaveCount(0)
     } finally {
       await replay.close()
     }
   })
 
-  test('/__enter without a token is a 404', async ({ browser }) => {
+  test('/__enter without a token is a 302 to the viewer page', async ({ browser }) => {
     const anonymous = await browser.newContext()
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/__enter`)
-      expect(response?.status()).toBe(404)
+      const redirect = await response?.request().redirectedFrom()?.response()
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
     } finally {
       await anonymous.close()
     }
   })
 
-  test('an unauthenticated request to an artifact origin is a 404 (US-3·AC3)', async ({
+  test('an unauthenticated request to an artifact origin cannot read it (US-3·AC3)', async ({
     browser,
   }) => {
     const anonymous = await browser.newContext()
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/`)
-      expect(response?.status()).toBe(404)
+      const redirect = await response?.request().redirectedFrom()?.response()
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
+      expect(anonymousPage.url()).toBe(`${APP_ORIGIN}/signin`)
+      await expect(anonymousPage.locator('#marker')).toHaveCount(0)
     } finally {
       await anonymous.close()
     }
   })
 
-  test("artifact A's grant cookie presented on artifact B's host is a 404", async ({ browser }) => {
+  test("artifact A's grant cookie presented on artifact B's host cannot read B", async ({
+    browser,
+  }) => {
     await openViewer(page, artifactA, 'A')
     const stolen = await grantCookieValue(viewer, artifactA)
 
@@ -398,7 +415,15 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
 
       const attackerPage = await attacker.newPage()
       const response = await attackerPage.goto(`${artifactOrigin(artifactB)}/`)
-      expect(response?.status()).toBe(404)
+      const redirect = await response?.request().redirectedFrom()?.response()
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactB}`)
+      // The planted cookie is still Alice's token for A — verifyGrantToken refused it for B, so
+      // nothing minted a usable grant and the page never shows B's content.
+      const cookies = await attacker.cookies(artifactOrigin(artifactB))
+      const grant = cookies.find((cookie) => cookie.name === GRANT_COOKIE)
+      expect(grant?.value).toBe(stolen)
+      await expect(attackerPage.locator('#marker')).toHaveCount(0)
     } finally {
       await attacker.close()
     }
