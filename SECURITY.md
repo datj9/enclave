@@ -107,15 +107,21 @@ happens on the app origin, and the artifact origin only trusts a signed token:
 3. The viewer page frames `https://{id}.artifacts.example.com/__enter?t=…`.
 4. `/__enter` validates the token, **re-checks authorization** — so a share revoked in the seconds
    since step 2 fails here — and sets a grant cookie for that subdomain only, 30-minute lifetime.
-   Replaying the same token afterwards is a 404.
+   Replaying the same token afterwards is refused and the token is burnt; a top-level replay is
+   answered with a redirect to `/a/{id}`, which re-authorizes from scratch.
 5. The entry document is streamed from object storage **through the app process**, with
    authorization re-checked on every single request.
 6. Any other path is authorized from the grant cookie, resolved against the version's manifest by
    exact match, and answered with a redirect to a freshly minted presigned URL.
 
-Every failure on the artifact origin — unauthorized, revoked, replayed, wrong host, unknown path —
-returns the same `404` with the same body. Nothing there distinguishes "exists but you may not read
-it" from "does not exist".
+Every failure at or below the authorization check on the artifact origin — unauthorized, revoked,
+wrong host, unknown path — returns the same `404` with the same body. A grant miss above the first
+database call (no cookie, expired or forged grant, missing or burnt handoff token) is answered by
+intent: a top-level navigation gets `302` to `{APP_URL}/a/{id}`; a framed navigation gets a 404
+re-entry page with a link to the same URL; a subresource stays the bare 404. That grant-miss answer
+is identical for any well-formed artifact host, whether or not the artifact exists — the
+no-existence-oracle invariant — because the origin has not yet consulted the database. Nothing at
+or below authorization distinguishes "exists but you may not read it" from "does not exist".
 
 ### Revocation: instant for the document, ≤60 s for assets
 
