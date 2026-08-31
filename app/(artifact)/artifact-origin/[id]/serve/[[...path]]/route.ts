@@ -8,6 +8,7 @@ import {
 } from '@/lib/artifacts/authorize'
 import { GRANT_COOKIE_NAME, verifyGrantToken } from '@/lib/artifacts/grant'
 import {
+  artifactEntryUnavailable,
   artifactIdFromHost,
   artifactNotAvailable,
   artifactStorageUnavailable,
@@ -104,10 +105,13 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   if (hostArtifactId === null || hostArtifactId !== id) return artifactNotAvailable()
 
   const cookie = request.cookies.get(GRANT_COOKIE_NAME)?.value
-  if (cookie === undefined) return artifactNotAvailable()
+  // §5.1: must sit strictly above authorizeArtifactRead — no Postgres yet, so this answer is
+  // identical for an artifact that exists and one that never did.
+  if (cookie === undefined) return artifactEntryUnavailable(hostArtifactId, request.headers)
 
   const grant = await verifyGrantToken(cookie, hostArtifactId)
-  if (grant === null) return artifactNotAvailable()
+  // §5.1: same invariant as the no-cookie branch — HMAC only, no database.
+  if (grant === null) return artifactEntryUnavailable(hostArtifactId, request.headers)
 
   const authorized = await authorizeArtifactRead(grant.artifactId, grant.viewerRef)
   if (authorized === null || authorized.versionId !== grant.versionId) {
