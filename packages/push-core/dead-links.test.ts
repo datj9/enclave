@@ -128,4 +128,16 @@ describe('findDeadLinks', () => {
     ].join('\n')
     expect(findDeadLinks([file('index.html', markup)])).toEqual([])
   })
+
+  it('reports the path the browser would request when a reference walks above the root', () => {
+    expect(findDeadLinks([file('docs/a.html', '<a href="../../etc/passwd">x</a>')])).toEqual([
+      { from: 'docs/a.html', to: 'etc/passwd' },
+    ])
+    expect(
+      findDeadLinks([
+        file('docs/a.html', '<a href="../../index.html">home</a>'),
+        file('index.html', '<!doctype html>'),
+      ]),
+    ).toEqual([])
+  })
 })

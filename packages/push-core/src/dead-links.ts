@@ -37,6 +37,17 @@ function isExternalReference(reference: string): boolean {
 }
 
 /**
+ * A browser clamps `..` at the origin root: from `/docs/a.html`, `../../x.html` is a request for
+ * `/x.html`. `posix.normalize` keeps the `../` prefix instead, which both reads as a filesystem
+ * path in the warning and reports dead a link that in fact resolves onto a file the bundle has.
+ */
+function clampToRoot(path: string): string {
+  let clamped = path
+  while (clamped.startsWith('../')) clamped = clamped.slice(3)
+  return clamped === '..' ? '' : clamped
+}
+
+/**
  * The origin's directory-index behaviour is the server's business, not this check's: a reference
  * that points at a directory rather than a file is skipped, `/` included — the serve route answers
  * it with the manifest's entry path, which every pushable bundle has.
@@ -59,7 +70,9 @@ function resolveReference(from: string, reference: string): string | null {
   }
   const isRootAbsolute = stripped.startsWith('/')
   const directory = isRootAbsolute ? '' : from.slice(0, from.lastIndexOf('/') + 1)
-  const resolved = posix.normalize(directory + (isRootAbsolute ? stripped.slice(1) : stripped))
+  const resolved = clampToRoot(
+    posix.normalize(directory + (isRootAbsolute ? stripped.slice(1) : stripped)),
+  )
   if (resolved === '' || resolved === '.' || resolved.endsWith('/')) return null
   return resolved
 }
