@@ -6,7 +6,12 @@ import {
   userIdFromViewerRef,
 } from '@/lib/artifacts/authorize'
 import { createGrantCookie } from '@/lib/artifacts/grant'
-import { artifactIdFromHost, artifactNotAvailable, requestHost } from '@/lib/artifacts/origin'
+import {
+  artifactEntryUnavailable,
+  artifactIdFromHost,
+  artifactNotAvailable,
+  requestHost,
+} from '@/lib/artifacts/origin'
 import { recordAuditEvent } from '@/lib/audit'
 import { consumeHandoffToken } from '@/lib/handoff'
 import { clientIpFromHeaders } from '@/lib/rate-limit'
@@ -31,11 +36,16 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   if (hostArtifactId === null || hostArtifactId !== id) return artifactNotAvailable()
 
   const token = request.nextUrl.searchParams.get('t')
-  if (token === null) return artifactNotAvailable()
+  // §5.1: must sit strictly above authorizeArtifactRead — no Postgres yet, so this answer is
+  // identical for an artifact that exists and one that never did.
+  if (token === null) return artifactEntryUnavailable(hostArtifactId, request.headers)
 
-  // Burns the token: a replay of this exact request lands on the 404 below.
+  // Burns the token: a replay of this exact request lands on the same re-entry path below.
   const claims = await consumeHandoffToken(token)
-  if (claims === null || claims.artifactId !== hostArtifactId) return artifactNotAvailable()
+  // §5.1: same invariant — JWT + in-process Map only, no database (§5.1 / handoff.ts).
+  if (claims === null || claims.artifactId !== hostArtifactId) {
+    return artifactEntryUnavailable(hostArtifactId, request.headers)
+  }
 
   // §7: the grant the token stands for may have been revoked in the 30 seconds it was valid.
   const authorized = await authorizeArtifactRead(claims.artifactId, claims.viewerRef)

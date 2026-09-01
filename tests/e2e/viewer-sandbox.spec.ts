@@ -1,4 +1,12 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Frame, type Page } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Frame,
+  type Page,
+  type Response as PlaywrightResponse,
+} from '@playwright/test'
 
 /**
  * The sandboxed viewer, end to end through the running app: grill-result §4.2's handoff flow and
@@ -102,6 +110,32 @@ async function openViewer(page: Page, artifactId: string, label: string): Promis
   const frame = page.frames().find((candidate) => candidate.url().startsWith(artifactOrigin(artifactId)))
   expect(frame, 'the artifact frame is on its own origin').toBeTruthy()
   return frame as Frame
+}
+
+/**
+ * The grant-miss redirect off an artifact origin, wherever it sits in the chain.
+ *
+ * `redirectedFrom()` steps back exactly one hop, and the app origin adds its own hops after the
+ * 302 — Next.js answers `/a/{id}` for a signed-out visitor with a 307 to `/signin`. Walking the
+ * whole chain and matching on the artifact origin's host is what makes this assertion about the
+ * hop under test rather than about whatever the app origin did afterwards.
+ */
+async function grantMissRedirect(
+  response: PlaywrightResponse | null | undefined,
+  artifactId: string,
+): Promise<PlaywrightResponse | null> {
+  const host = new URL(artifactOrigin(artifactId)).host
+  let hop = response?.request() ?? null
+
+  while (hop !== null) {
+    if (new URL(hop.url()).host === host) {
+      const hopResponse = await hop.response()
+      if (hopResponse !== null && hopResponse.status() === 302) return hopResponse
+    }
+    hop = hop.redirectedFrom()
+  }
+
+  return null
 }
 
 async function grantCookieValue(context: BrowserContext, artifactId: string): Promise<string> {
@@ -337,7 +371,9 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(fetched.label).toBe('A')
   })
 
-  test('a replayed handoff token is a 404', async ({ browser }) => {
+  test('a replayed handoff token is sent back to the viewer page, not into the artifact', async ({
+    browser,
+  }) => {
     await openViewer(page, artifactA, 'A')
 
     const enterUrl = await page.locator('iframe[title="Artifact"]').getAttribute('src')
@@ -348,37 +384,51 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     try {
       const replayPage = await replay.newPage()
       const response = await replayPage.goto(enterUrl ?? '')
-      expect(response?.status()).toBe(404)
+      const redirect = await grantMissRedirect(response, artifactA)
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
+      // Lands on the app origin (sign-in, or the viewer page's own refusal) — never artifact bytes.
+      expect(replayPage.url().startsWith(APP_ORIGIN)).toBe(true)
+      expect(replayPage.url().startsWith(artifactOrigin(artifactA))).toBe(false)
+      await expect(replayPage.locator('#marker')).toHaveCount(0)
     } finally {
       await replay.close()
     }
   })
 
-  test('/__enter without a token is a 404', async ({ browser }) => {
+  test('/__enter without a token is a 302 to the viewer page', async ({ browser }) => {
     const anonymous = await browser.newContext()
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/__enter`)
-      expect(response?.status()).toBe(404)
+      const redirect = await grantMissRedirect(response, artifactA)
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
     } finally {
       await anonymous.close()
     }
   })
 
-  test('an unauthenticated request to an artifact origin is a 404 (US-3·AC3)', async ({
+  test('an unauthenticated request to an artifact origin cannot read it (US-3·AC3)', async ({
     browser,
   }) => {
     const anonymous = await browser.newContext()
     try {
       const anonymousPage = await anonymous.newPage()
       const response = await anonymousPage.goto(`${artifactOrigin(artifactA)}/`)
-      expect(response?.status()).toBe(404)
+      const redirect = await grantMissRedirect(response, artifactA)
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactA}`)
+      expect(anonymousPage.url()).toBe(`${APP_ORIGIN}/signin`)
+      await expect(anonymousPage.locator('#marker')).toHaveCount(0)
     } finally {
       await anonymous.close()
     }
   })
 
-  test("artifact A's grant cookie presented on artifact B's host is a 404", async ({ browser }) => {
+  test("artifact A's grant cookie presented on artifact B's host cannot read B", async ({
+    browser,
+  }) => {
     await openViewer(page, artifactA, 'A')
     const stolen = await grantCookieValue(viewer, artifactA)
 
@@ -398,7 +448,15 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
 
       const attackerPage = await attacker.newPage()
       const response = await attackerPage.goto(`${artifactOrigin(artifactB)}/`)
-      expect(response?.status()).toBe(404)
+      const redirect = await grantMissRedirect(response, artifactB)
+      expect(redirect?.status()).toBe(302)
+      expect(redirect?.headers()['location']).toBe(`${APP_ORIGIN}/a/${artifactB}`)
+      // The planted cookie is still Alice's token for A — verifyGrantToken refused it for B, so
+      // nothing minted a usable grant and the page never shows B's content.
+      const cookies = await attacker.cookies(artifactOrigin(artifactB))
+      const grant = cookies.find((cookie) => cookie.name === GRANT_COOKIE)
+      expect(grant?.value).toBe(stolen)
+      await expect(attackerPage.locator('#marker')).toHaveCount(0)
     } finally {
       await attacker.close()
     }

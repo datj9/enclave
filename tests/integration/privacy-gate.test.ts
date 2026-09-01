@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { GET as enterArtifactOrigin } from '@app/(artifact)/artifact-origin/[id]/enter/route'
+import { GET as serveArtifactOrigin } from '@app/(artifact)/artifact-origin/[id]/serve/[[...path]]/route'
 import {
   DELETE as deleteArtifactRoute,
   GET as getArtifactRoute,
@@ -20,7 +21,8 @@ import {
   authorizeArtifactRead,
   userViewerRef,
 } from '@/lib/artifacts/authorize'
-import { artifactViewUrl } from '@/lib/artifacts/naming'
+import { createGrantCookie, GRANT_COOKIE_NAME } from '@/lib/artifacts/grant'
+import { artifactPageUrl, artifactViewUrl } from '@/lib/artifacts/naming'
 import {
   readArtifactView,
   softDeleteArtifact,
@@ -149,6 +151,30 @@ async function enterArtifact(viewerRef: string): Promise<number> {
   })
 
   return (await enterArtifactOrigin(request, routeContext(artifactId))).status
+}
+
+function grantTokenFrom(setCookie: string): string {
+  return setCookie.slice(`${GRANT_COOKIE_NAME}=`.length).split(';')[0] ?? ''
+}
+
+/** Drives `/serve` the way a top-level navigation does, without needing object storage. */
+async function serveTopLevel(
+  id: string,
+  options: { readonly cookie?: string } = {},
+): Promise<Response> {
+  const origin = new URL(artifactViewUrl(id))
+  const headers: Record<string, string> = {
+    host: origin.host,
+    'sec-fetch-dest': 'document',
+  }
+  if (options.cookie !== undefined) {
+    headers.cookie = `${GRANT_COOKIE_NAME}=${options.cookie}`
+  }
+
+  return await serveArtifactOrigin(new NextRequest(origin, { headers }), {
+    // Key absent (not undefined): how the optional catch-all arrives for `/`.
+    params: Promise.resolve({ id }),
+  })
 }
 
 /** Drizzle wraps the driver error, so the trigger's message arrives on `cause`. */
@@ -537,6 +563,63 @@ describe.skipIf(!database)('S4 privacy gate and audit log', () => {
 
       expect(result.prunedRowCount).toBeGreaterThanOrEqual(1)
       expect(await auditRowsFor(staleArtifactId)).toHaveLength(1)
+    })
+  })
+
+  describe('direct artifact entry does not weaken the gate', () => {
+    it('gives a signed-in but refused viewer nothing but the app origin\'s own refusal', async () => {
+      await setVisibility('private')
+
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(bobId))).toBeNull()
+
+      // A cryptographically valid grant for Alice's artifact, but bound to Bob. authorizeArtifactRead
+      // refuses him, so /serve stays on the uniform 404 — the redirect is only for a grant miss.
+      const bobGrant = grantTokenFrom(
+        await createGrantCookie({
+          artifactId,
+          versionId,
+          viewerRef: userViewerRef(bobId),
+        }),
+      )
+      const response = await serveTopLevel(artifactId, { cookie: bobGrant })
+
+      expect(response.status).toBe(404)
+      expect(response.headers.get('location')).toBeNull()
+    })
+
+    it('redirects Bob\'s cookieless top-level request and still refuses him at the gate', async () => {
+      await setVisibility('private')
+
+      const response = await serveTopLevel(artifactId)
+
+      expect(response.status).toBe(302)
+      expect(response.headers.get('location')).toBe(artifactPageUrl(artifactId))
+      expect(await authorizeArtifactRead(artifactId, userViewerRef(bobId))).toBeNull()
+    })
+
+    it('redirects identically for an artifact id that does not exist', async () => {
+      const missingId = '99999999-9999-4999-8999-999999999999'
+      await setVisibility('private')
+
+      const real = await serveTopLevel(artifactId)
+      const missing = await serveTopLevel(missingId)
+
+      expect(real.status).toBe(302)
+      expect(missing.status).toBe(real.status)
+      expect(missing.headers.get('location')).toBe(artifactPageUrl(missingId))
+      expect(real.headers.get('location')).toBe(artifactPageUrl(artifactId))
+      expect(await authorizeArtifactRead(missingId, userViewerRef(bobId))).toBeNull()
+    })
+
+    it('writes no artifact.view row for a request that only redirects', async () => {
+      await setVisibility('org')
+      const before = (await auditRowsFor(artifactId)).filter((row) => row.action === 'artifact.view')
+
+      const response = await serveTopLevel(artifactId)
+
+      expect(response.status).toBe(302)
+      const after = (await auditRowsFor(artifactId)).filter((row) => row.action === 'artifact.view')
+      expect(after).toHaveLength(before.length)
     })
   })
 })
