@@ -18,11 +18,19 @@ export interface DeadLink {
  */
 const REFERENCE_PATTERN = /(?<![-\w])(?:href|src)\s*=\s*["']([^"']*)["']/gi
 
+/**
+ * The one path on an artifact origin that is reserved rather than served from the bundle. Copied
+ * from `src/lib/artifacts/origin.ts` rather than imported: that module pulls in `@/env`, which
+ * validates server environment on import and has no business inside the CLI.
+ */
+const ORIGIN_RESERVED_PATH = '/__enter'
+
 /** `:` before the first `/` is the whole scheme test: `https:` and `mailto:` both pass it, and a
- *  relative path never contains `:`. A leading `/` — `//` included — may be served by a route. */
+ *  relative path never contains `:`. `//host/x` is another origin; a *single* leading `/` is not.
+ *  The proxy rewrites every artifact-origin path onto the bundle, so the root is the bundle. */
 function isExternalReference(reference: string): boolean {
   if (reference.startsWith('#')) return true
-  if (reference.startsWith('/')) return true
+  if (reference.startsWith('//')) return true
   const colonIndex = reference.indexOf(':')
   const slashIndex = reference.indexOf('/')
   return colonIndex !== -1 && (slashIndex === -1 || colonIndex < slashIndex)
@@ -30,8 +38,12 @@ function isExternalReference(reference: string): boolean {
 
 /**
  * The origin's directory-index behaviour is the server's business, not this check's: a reference
- * that points at a directory rather than a file is skipped, and one that walks above the bundle
- * root resolves to nothing in the manifest, which is reported like any other miss.
+ * that points at a directory rather than a file is skipped, `/` included — the serve route answers
+ * it with the manifest's entry path, which every pushable bundle has.
+ *
+ * A root-absolute reference resolves against the bundle root, not the referring file's directory,
+ * because that is what the proxy does with it: every pathname but `/__enter` is rewritten onto
+ * `/serve<pathname>` and matched against the manifest exactly.
  */
 function resolveReference(from: string, reference: string): string | null {
   const stripped = reference.split(/[?#]/, 1)[0]
@@ -40,12 +52,14 @@ function resolveReference(from: string, reference: string): string | null {
     stripped === '' ||
     stripped.endsWith('/') ||
     stripped === '.' ||
-    stripped === '..'
+    stripped === '..' ||
+    stripped === ORIGIN_RESERVED_PATH
   ) {
     return null
   }
-  const directory = from.slice(0, from.lastIndexOf('/') + 1)
-  const resolved = posix.normalize(directory + stripped)
+  const isRootAbsolute = stripped.startsWith('/')
+  const directory = isRootAbsolute ? '' : from.slice(0, from.lastIndexOf('/') + 1)
+  const resolved = posix.normalize(directory + (isRootAbsolute ? stripped.slice(1) : stripped))
   if (resolved === '' || resolved === '.' || resolved.endsWith('/')) return null
   return resolved
 }

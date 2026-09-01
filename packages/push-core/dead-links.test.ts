@@ -41,7 +41,6 @@ describe('findDeadLinks', () => {
       '<a href="https://example.com/x.html">web</a>',
       '<a href="mailto:a@b.c">mail</a>',
       '<a href="//cdn/x.js">cdn</a>',
-      '<a href="/api/thing">api</a>',
       '<a href="">none</a>',
     ].join('\n')
 
@@ -106,5 +105,27 @@ describe('findDeadLinks', () => {
     expect(
       findDeadLinks([file('index.html', '<svg><use xlink:href="icons.svg#star"/></svg>')]),
     ).toEqual([{ from: 'index.html', to: 'icons.svg' }])
+  })
+
+  it('resolves a root-absolute reference against the bundle root, which is what the origin serves', () => {
+    expect(findDeadLinks([file('index.html', '<a href="/REPORT.html">r</a>')])).toEqual([
+      { from: 'index.html', to: 'REPORT.html' },
+    ])
+    expect(
+      findDeadLinks([
+        file('docs/a.html', '<a href="/index.html">home</a>'),
+        file('index.html', '<!doctype html>'),
+      ]),
+    ).toEqual([])
+  })
+
+  it('leaves the other leading-slash shapes alone', () => {
+    const markup = [
+      '<a href="//cdn/x.js">cdn</a>',
+      '<a href="/__enter">enter</a>',
+      '<a href="/">home</a>',
+      '<a href="/docs/">docs</a>',
+    ].join('\n')
+    expect(findDeadLinks([file('index.html', markup)])).toEqual([])
   })
 })
