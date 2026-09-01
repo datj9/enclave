@@ -447,7 +447,7 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(0)
-    expect(stderr).toContain('warning: 1 links point at files not in this bundle:')
+    expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
     expect(stderr).toContain('index.html → gone.html')
   })
 
@@ -549,8 +549,44 @@ describe('push command', () => {
     })
 
     expect(exitCode).toBe(0)
-    expect(stderrWhenPushCalled).toContain('warning: 1 links point at files not in this bundle:')
+    expect(stderrWhenPushCalled).toContain('warning: 1 link points at a file not in this bundle:')
     expect(stderrWhenPushCalled).toContain('index.html → gone.html')
+  })
+
+  it('warns about a root-absolute link the bundle cannot satisfy', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="/REPORT.html">report</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
+    expect(stderr).toContain('index.html → REPORT.html')
+  })
+
+  it('counts links in the plural only when there is more than one', async () => {
+    writeFileSync(
+      join(projectDirectory, 'index.html'),
+      '<a href="gone.html">a</a><img src="missing.png">',
+    )
+
+    expect(
+      await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      }),
+    ).toBe(0)
+    expect(stderr).toContain('warning: 2 links point at files not in this bundle:')
   })
 
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {

@@ -79,8 +79,11 @@ function writeSkippedBlock(skipped: readonly SkippedFile[]): void {
 function writeDeadLinkBlock(deadLinks: readonly DeadLink[]): void {
   if (deadLinks.length === 0) return
   const fromColumnWidth = deadLinks.reduce((widest, link) => Math.max(widest, link.from.length), 0)
+  const count = deadLinks.length
   process.stderr.write(
-    `warning: ${String(deadLinks.length)} links point at files not in this bundle:\n`,
+    count === 1
+      ? 'warning: 1 link points at a file not in this bundle:\n'
+      : `warning: ${String(count)} links point at files not in this bundle:\n`,
   )
   for (const link of deadLinks) {
     process.stderr.write(`  ${link.from.padEnd(fromColumnWidth)} → ${link.to}\n`)
