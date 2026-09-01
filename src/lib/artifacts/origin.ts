@@ -97,6 +97,7 @@ export function artifactEntryIntent(headers: Headers): ArtifactEntryIntent {
   const dest = headers.get('sec-fetch-dest')
   if (dest === 'document') return 'top-level'
   if (dest === 'iframe' || dest === 'frame') return 'framed'
+  // object/embed included here deliberately: frame-src names iframes only, so they get the bare 404, not the interstitial.
   if (dest !== null && dest !== '') return 'subresource'
 
   // No Sec-Fetch-Dest (old Safari, curl, bots): first Accept type starting with text/html →

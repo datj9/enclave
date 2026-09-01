@@ -17,6 +17,7 @@ const VERSION_ID = 'dead3286-0f07-495d-ba76-e4f9727f337c'
 const OTHER_VERSION_ID = 'beef3286-0f07-495d-ba76-e4f9727f337c'
 const ARTIFACT_HOST = `${ARTIFACT_ID}.artifacts.localhost:3000`
 const OTHER_HOST = `${OTHER_ID}.artifacts.localhost:3000`
+const NON_ARTIFACT_HOST = 'not-a-uuid.artifacts.localhost:3000'
 const VIEWER_URL = `http://localhost:3000/a/${ARTIFACT_ID}`
 const VIEWER_REF = `user:${ARTIFACT_ID}`
 
@@ -39,6 +40,20 @@ const recordShareLinkView = vi.fn()
 
 vi.mock('@/lib/storage/s3', () => ({
   objectStore: () => ({ getObjectStream, presignGetUrl }),
+}))
+
+// FIX-2: every slice reaches Postgres through @/db, so a proxy that funnels every symbol into one
+// spy keeps the existence-oracle guard symbol-agnostic — any query entrypoint trips it.
+const { dbQuerySpy } = vi.hoisted(() => ({ dbQuerySpy: vi.fn() }))
+
+vi.mock('@/db', () => ({
+  db: new Proxy(
+    {},
+    {
+      get: (_target: object, property: string | symbol) =>
+        property === 'then' ? undefined : dbQuerySpy,
+    },
+  ),
 }))
 
 vi.mock('@/lib/artifacts/grant', () => ({
@@ -116,14 +131,15 @@ async function serve(
 
 async function enter(
   headers: Record<string, string>,
-  options: { readonly token?: string } = {},
+  options: { readonly token?: string; readonly host?: string } = {},
 ): Promise<Response> {
+  const host = options.host ?? ARTIFACT_HOST
   const url =
     options.token === undefined
-      ? `http://${ARTIFACT_HOST}/__enter`
-      : `http://${ARTIFACT_HOST}/__enter?t=${encodeURIComponent(options.token)}`
+      ? `http://${host}/__enter`
+      : `http://${host}/__enter?t=${encodeURIComponent(options.token)}`
   const request = new NextRequest(url, {
-    headers: { host: ARTIFACT_HOST, ...headers },
+    headers: { host, ...headers },
   })
   return await enterGet(request, { params: Promise.resolve({ id: ARTIFACT_ID }) })
 }
@@ -134,6 +150,7 @@ describe('/serve without a usable grant', () => {
     presignGetUrl.mockReset()
     verifyGrantToken.mockReset()
     createGrantCookie.mockReset()
+    dbQuerySpy.mockReset()
     vi.mocked(authorizeArtifactRead).mockReset()
     vi.mocked(authorizeArtifactRead).mockResolvedValue(authorizedVersion())
     verifyGrantToken.mockResolvedValue(grantClaims())
@@ -198,6 +215,14 @@ describe('/serve without a usable grant', () => {
     expect(authorizeArtifactRead).not.toHaveBeenCalled()
     expect(getObjectStream).not.toHaveBeenCalled()
   })
+
+  it('consults no database symbol before redirecting a grant miss', async () => {
+    const response = await serve('', { 'sec-fetch-dest': 'document' })
+
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe(VIEWER_URL)
+    expect(dbQuerySpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('/serve loop guard', () => {
@@ -257,6 +282,18 @@ describe('/serve loop guard', () => {
 
     expect(response.status).toBe(404)
     expect(response.headers.get('location')).toBeNull()
+  })
+
+  it('keeps a non-UUID host on the bare 404, before authorization is asked', async () => {
+    const response = await serve(
+      '',
+      { 'sec-fetch-dest': 'document' },
+      { host: NON_ARTIFACT_HOST },
+    )
+
+    expect(response.status).toBe(404)
+    await expect(response.text()).resolves.toContain('no longer available')
+    expect(authorizeArtifactRead).not.toHaveBeenCalled()
   })
 })
 
@@ -322,6 +359,18 @@ describe('/__enter without a usable token', () => {
 
     expect(response.status).toBe(404)
     expect(response.headers.get('location')).toBeNull()
+  })
+
+  it('keeps a non-UUID host on the bare 404 even with a handoff token', async () => {
+    const response = await enter(
+      { 'sec-fetch-dest': 'document' },
+      { token: 'fresh-handoff-token', host: NON_ARTIFACT_HOST },
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('location')).toBeNull()
+    expect(authorizeArtifactRead).not.toHaveBeenCalled()
+    expect(consumeHandoffToken).not.toHaveBeenCalled()
   })
 
   it('sets no grant cookie on any of these responses', async () => {
