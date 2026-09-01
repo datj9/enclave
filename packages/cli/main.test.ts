@@ -224,6 +224,7 @@ describe('per-command --help', () => {
     expect(topic).toContain('2 MB')
     expect(topic).toContain('--artifact')
     expect(topic).toContain('--force publishes anyway')
+    expect(topic).toContain('deadLinks')
   })
 
   it('gives rm its own topic rather than push s', async () => {
