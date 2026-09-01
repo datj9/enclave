@@ -484,6 +484,9 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
   const bundle = collectOrReport(options)
   if (typeof bundle === 'number') return bundle
   const deadLinks = findDeadLinks(bundle.files)
+  // Before the request, not after it: a warning that arrives once the version exists is a
+  // post-mortem. Under --json the same findings ride in the result object instead.
+  if (!options.isJson) writeDeadLinkBlock(deadLinks)
 
   let result: PushResult
   try {
@@ -539,7 +542,6 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
     return 0
   }
 
-  writeDeadLinkBlock(deadLinks)
   reportPushed(options, canonicalHost, result, republishTarget !== null)
   return 0
 }

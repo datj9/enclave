@@ -531,6 +531,28 @@ describe('push command', () => {
     ])
   })
 
+  it('warns about dead links before the upload, not after the version exists', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+    let stderrWhenPushCalled = ''
+    vi.mocked(push).mockImplementation(async () => {
+      stderrWhenPushCalled = stderr
+      return SUCCESS_RESULT
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderrWhenPushCalled).toContain('warning: 1 links point at files not in this bundle:')
+    expect(stderrWhenPushCalled).toContain('index.html → gone.html')
+  })
+
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
     const emptyDirectory = join(workspace, 'empty')
     mkdirSync(emptyDirectory)
