@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PushCoreModule from '../push-core/src/index.ts'
 
-import { push, PushError } from '../push-core/src/index.ts'
+import { collectBundle, push, PushError } from '../push-core/src/index.ts'
 import type { DeadLink, PushResult, UploadPlan } from '../push-core/src/index.ts'
 import { apiClient } from './src/api-client.ts'
 import { runPush } from './src/commands/push.ts'
@@ -15,9 +15,12 @@ import { USER_AGENT } from './src/version.ts'
 
 vi.mock('./src/api-client.ts', () => ({ apiClient: vi.fn() }))
 
+const { collectBundle: realCollectBundle } =
+  await vi.importActual<typeof PushCoreModule>('../push-core/src/index.ts')
+
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
-  return { ...actual, push: vi.fn() }
+  return { ...actual, push: vi.fn(), collectBundle: vi.fn() }
 })
 
 const HOST = 'enclave.example.com'
@@ -77,11 +80,13 @@ describe('push command', () => {
       return true
     })
     vi.mocked(push).mockResolvedValue(SUCCESS_RESULT)
+    vi.mocked(collectBundle).mockImplementation(realCollectBundle)
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.mocked(push).mockReset()
+    vi.mocked(collectBundle).mockReset()
 
     if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
     else process.env['XDG_CONFIG_HOME'] = originalConfigHome
@@ -464,6 +469,66 @@ describe('push command', () => {
     } & { readonly uploaded: readonly string[] }
     expect(payload.deadLinks).toEqual([{ from: 'index.html', to: 'gone.html' }])
     expect(stderr).not.toContain('warning:')
+  })
+
+  it('reports an unreadable directory in the --json error envelope, not as a bare throw', async () => {
+    vi.mocked(collectBundle).mockImplementationOnce(() => {
+      throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(push).not.toHaveBeenCalled()
+    expect(stdout).toBe('')
+    expect(JSON.parse(stderr) as { readonly error: { code: string; message: string } }).toEqual({
+      error: { code: 'UNREADABLE_DIRECTORY', message: expect.stringContaining('EACCES') },
+    })
+  })
+
+  it('reports an unreadable directory on the dry-run path too', async () => {
+    vi.mocked(collectBundle).mockImplementationOnce(() => {
+      throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(push).not.toHaveBeenCalled()
+    expect(stdout).toBe('')
+    expect(JSON.parse(stderr) as { readonly error: { code: string; message: string } }).toEqual({
+      error: { code: 'UNREADABLE_DIRECTORY', message: expect.stringContaining('EACCES') },
+    })
+  })
+
+  it('hands push the bundle it already read rather than making it read the tree again', async () => {
+    await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(vi.mocked(collectBundle)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(push).mock.calls[0]?.[0]?.bundle?.files.map((file) => file.path)).toEqual([
+      'index.html',
+    ])
   })
 
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {

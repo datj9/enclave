@@ -11,6 +11,7 @@ import {
   PushError,
 } from '../../../push-core/src/index.ts'
 import type {
+  CollectResult,
   DeadLink,
   PushResult,
   SkippedFile,
@@ -169,6 +170,23 @@ function refuseUnusableDirectory(options: PushCommandOptions): number | null {
   return null
 }
 
+/**
+ * The bundle, or an exit code. `refuseUnusableDirectory` catches a missing or non-directory path;
+ * what is left is a file that exists and cannot be read — mode 000, or deleted between the walk
+ * and the read. That throw used to reach the network catch, which is the whole reason `--json`
+ * once reported a local fs failure as `UNEXPECTED_RESPONSE`; escaping `runPush` entirely is worse,
+ * because then stderr carries a bare line instead of the error object `--json` promises.
+ */
+function collectOrReport(options: PushCommandOptions): CollectResult | number {
+  try {
+    return collectBundle(options.directory)
+  } catch (error) {
+    const text = messageOf(error)
+    reportError(options.isJson, 'UNREADABLE_DIRECTORY', text, `✗ ${text}`)
+    return 1
+  }
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -251,7 +269,8 @@ function resolveHost(state: ProjectState | null, options: PushCommandOptions): H
 }
 
 function reportDryRun(options: PushCommandOptions): number {
-  const bundle = collectBundle(options.directory)
+  const bundle = collectOrReport(options)
+  if (typeof bundle === 'number') return bundle
 
   try {
     assertBundlePushable(bundle.files, bundle.skipped)
@@ -460,15 +479,17 @@ export async function runPush(options: PushCommandOptions): Promise<number> {
 
   const isProgressVisible = !options.isJson
 
-  // `push()` collects internally and holds no files, so the dead-link check that needs them reads
-  // the directory once more — a few files off local disk, and it stays out of the network path.
-  const bundle = collectBundle(options.directory)
+  // The only read of the directory on this path: the dead-link check needs the files and `push`
+  // takes the same bundle, so a 10 MB tree is not walked and read twice on the way to one request.
+  const bundle = collectOrReport(options)
+  if (typeof bundle === 'number') return bundle
   const deadLinks = findDeadLinks(bundle.files)
 
   let result: PushResult
   try {
     result = await push({
       directory: options.directory,
+      bundle,
       host: canonicalHost,
       token,
       title: options.title ?? basename(resolve(options.directory)),
