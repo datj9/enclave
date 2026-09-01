@@ -10,7 +10,13 @@ export interface DeadLink {
   readonly to: string
 }
 
-const REFERENCE_PATTERN = /\b(?:href|src)\s*=\s*["']([^"']*)["']/g
+/**
+ * `(?<![-\w])` rather than `\b`: `-` is not a word character, so `\b` matches inside `data-href`
+ * and reports a value no browser will ever fetch. `:` stays permitted before the name, which is
+ * what keeps `xlink:href` on a `<use>` — a real fetch — in scope. The `i` flag because HTML
+ * attribute names are case-insensitive: `<a HREF="…">` is the same link.
+ */
+const REFERENCE_PATTERN = /(?<![-\w])(?:href|src)\s*=\s*["']([^"']*)["']/gi
 
 /** `:` before the first `/` is the whole scheme test: `https:` and `mailto:` both pass it, and a
  *  relative path never contains `:`. A leading `/` — `//` included — may be served by a route. */
@@ -50,6 +56,11 @@ function resolveReference(from: string, reference: string): string | null {
  * saying out loud before it ships. `\u0000` separates the two paths so `from` and `to` cannot
  * collide in the dedup key; one nav repeated in ten pages is ten entries, the same href twice in
  * one file is one.
+ *
+ * A scan, not a parse, and warn-only for that reason. It reads markup a browser would never
+ * execute — a reference inside an html comment or a `<script>` string literal is reported — and
+ * it misses an unquoted `href=gone.html`, a value built at runtime, and `srcset`. A parser would
+ * fix the first two, nothing would fix the third, and none of it can fail a push.
  */
 export function findDeadLinks(files: readonly BundleFile[]): readonly DeadLink[] {
   const present = new Set(files.map((file) => file.path))

@@ -87,4 +87,24 @@ describe('findDeadLinks', () => {
       ]),
     ).toEqual([{ from: 'index.html', to: 'missing.html' }])
   })
+
+  it('ignores an attribute whose name merely ends in href or src', () => {
+    expect(
+      findDeadLinks([
+        file('index.html', '<div data-href="nope.html"></div><img data-src="late.png">'),
+      ]),
+    ).toEqual([])
+  })
+
+  it('matches attribute names case-insensitively, as html does', () => {
+    expect(findDeadLinks([file('index.html', '<a HREF="gone.html">gone</a>')])).toEqual([
+      { from: 'index.html', to: 'gone.html' },
+    ])
+  })
+
+  it('checks xlink:href, which is a real fetch on a <use>', () => {
+    expect(
+      findDeadLinks([file('index.html', '<svg><use xlink:href="icons.svg#star"/></svg>')]),
+    ).toEqual([{ from: 'index.html', to: 'icons.svg' }])
+  })
 })
