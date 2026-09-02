@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PushCoreModule from '../push-core/src/index.ts'
 
-import { push, PushError } from '../push-core/src/index.ts'
-import type { PushResult, UploadPlan } from '../push-core/src/index.ts'
+import { collectBundle, push, PushError } from '../push-core/src/index.ts'
+import type { DeadLink, PushResult, UploadPlan } from '../push-core/src/index.ts'
 import { apiClient } from './src/api-client.ts'
 import { runPush } from './src/commands/push.ts'
 import type { ProjectState } from './src/state.ts'
@@ -15,9 +15,12 @@ import { USER_AGENT } from './src/version.ts'
 
 vi.mock('./src/api-client.ts', () => ({ apiClient: vi.fn() }))
 
+const { collectBundle: realCollectBundle } =
+  await vi.importActual<typeof PushCoreModule>('../push-core/src/index.ts')
+
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
-  return { ...actual, push: vi.fn() }
+  return { ...actual, push: vi.fn(), collectBundle: vi.fn() }
 })
 
 const HOST = 'enclave.example.com'
@@ -77,11 +80,13 @@ describe('push command', () => {
       return true
     })
     vi.mocked(push).mockResolvedValue(SUCCESS_RESULT)
+    vi.mocked(collectBundle).mockImplementation(realCollectBundle)
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.mocked(push).mockReset()
+    vi.mocked(collectBundle).mockReset()
 
     if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
     else process.env['XDG_CONFIG_HOME'] = originalConfigHome
@@ -429,6 +434,161 @@ describe('push command', () => {
     expect(stdout).toMatch(/^ {2}app\.js\.map {17}unsupported \(\.map\)$/m)
   })
 
+  it('warns about a link to a file the bundle does not contain, without failing the push', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
+    expect(stderr).toContain('index.html → gone.html')
+  })
+
+  it('--json dry run puts dead links in the result and keeps the warning off stderr', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(0)
+    const payload = JSON.parse(stdout) as {
+      readonly deadLinks: readonly DeadLink[]
+    } & { readonly uploaded: readonly string[] }
+    expect(payload.deadLinks).toEqual([{ from: 'index.html', to: 'gone.html' }])
+    expect(stderr).not.toContain('warning:')
+  })
+
+  it('reports an unreadable directory in the --json error envelope, not as a bare throw', async () => {
+    vi.mocked(collectBundle).mockImplementationOnce(() => {
+      throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(push).not.toHaveBeenCalled()
+    expect(stdout).toBe('')
+    expect(JSON.parse(stderr) as { readonly error: { code: string; message: string } }).toEqual({
+      error: { code: 'UNREADABLE_DIRECTORY', message: expect.stringContaining('EACCES') },
+    })
+  })
+
+  it('reports an unreadable directory on the dry-run path too', async () => {
+    vi.mocked(collectBundle).mockImplementationOnce(() => {
+      throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: true,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(push).not.toHaveBeenCalled()
+    expect(stdout).toBe('')
+    expect(JSON.parse(stderr) as { readonly error: { code: string; message: string } }).toEqual({
+      error: { code: 'UNREADABLE_DIRECTORY', message: expect.stringContaining('EACCES') },
+    })
+  })
+
+  it('hands push the bundle it already read rather than making it read the tree again', async () => {
+    await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(vi.mocked(collectBundle)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(push).mock.calls[0]?.[0]?.bundle?.files.map((file) => file.path)).toEqual([
+      'index.html',
+    ])
+  })
+
+  it('warns about dead links before the upload, not after the version exists', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
+    let stderrWhenPushCalled = ''
+    vi.mocked(push).mockImplementation(async () => {
+      stderrWhenPushCalled = stderr
+      return SUCCESS_RESULT
+    })
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: false,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderrWhenPushCalled).toContain('warning: 1 link points at a file not in this bundle:')
+    expect(stderrWhenPushCalled).toContain('index.html → gone.html')
+  })
+
+  it('warns about a root-absolute link the bundle cannot satisfy', async () => {
+    writeFileSync(join(projectDirectory, 'index.html'), '<a href="/REPORT.html">report</a>')
+
+    const exitCode = await runPush({
+      directory: projectDirectory,
+      host: HOST,
+      isNew: false,
+      isForced: false,
+      isDryRun: true,
+      isJson: false,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
+    expect(stderr).toContain('index.html → REPORT.html')
+  })
+
+  it('counts links in the plural only when there is more than one', async () => {
+    writeFileSync(
+      join(projectDirectory, 'index.html'),
+      '<a href="gone.html">a</a><img src="missing.png">',
+    )
+
+    expect(
+      await runPush({
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      }),
+    ).toBe(0)
+    expect(stderr).toContain('warning: 2 links point at files not in this bundle:')
+  })
+
   it('--dry-run fails a bundle with no index.html rather than reporting success', async () => {
     const emptyDirectory = join(workspace, 'empty')
     mkdirSync(emptyDirectory)
@@ -524,7 +684,11 @@ describe('push command', () => {
 
     expect(exitCode).toBe(0)
     expect(stdout).not.toContain('✓')
-    expect(JSON.parse(stdout) as PushResult).toEqual(SUCCESS_RESULT)
+    // The dead-link check appends its findings to the result, even when it found none.
+    expect(JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] }).toEqual({
+      ...SUCCESS_RESULT,
+      deadLinks: [],
+    })
   })
 
   it('refuses when the state host differs', async () => {
@@ -866,7 +1030,10 @@ describe('push command', () => {
       expect(await pushOnce(true)).toBe(0)
 
       expect(vi.mocked(push).mock.calls[0]?.[0]?.onUploadStart).toBeUndefined()
-      expect(JSON.parse(stdout) as PushResult).toEqual(SUCCESS_RESULT)
+      expect(JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] }).toEqual({
+        ...SUCCESS_RESULT,
+        deadLinks: [],
+      })
     })
   })
 

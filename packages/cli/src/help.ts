@@ -72,6 +72,14 @@ const PUSH_HELP = `enclave push — publish a directory, or append a version to 
                .enclave.json records
   --dry-run    print what would be uploaded and skipped, and make no request
 ${JSON_FLAG}${HOST_FLAGS}
+Dead links: every html file in the bundle is scanned for href and src values,
+and any that resolves to a path the bundle does not hold is printed to stderr
+before anything is uploaded. It is advice, never a refusal — the push goes
+ahead. Under --json the same findings are in the result object instead, as
+deadLinks: [{from, to}], on a dry run and on a real push alike. A leading /
+is resolved against the bundle root, because on an artifact origin the root is
+the bundle; off-site addresses, fragments and directory paths are left alone.
+
 What goes up:
   index.html at the root of <dir> is required — it is the page served
   13 extensions: html css js mjs json svg png jpg jpeg webp woff2 txt md

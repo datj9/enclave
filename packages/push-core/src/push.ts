@@ -105,7 +105,9 @@ async function errorFrom(response: Response): Promise<PushError> {
 }
 
 export async function push(options: PushOptions): Promise<PushResult> {
-  const { files, skipped } = collectBundle(options.directory)
+  // Validation runs on the bundle whoever produced it: a caller that pre-collected does not get a
+  // laxer check than one that did not.
+  const { files, skipped } = options.bundle ?? collectBundle(options.directory)
   assertBundlePushable(files, skipped)
 
   // After validation, so a caller announcing the upload can never announce one that is refused.
