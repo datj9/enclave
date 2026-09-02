@@ -1,6 +1,6 @@
 {
   "name": "enclave-artifacts",
-  "version": "0.5.0",
+  "version": "0.4.2",
   "description": "Publish and manage artifacts on a self-hosted enclave instance",
   "keywords": [
     "enclave",
