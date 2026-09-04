@@ -10,6 +10,7 @@ import { env } from '@/env'
 import { listShareLinks, listShareableVersions } from '@/lib/shares/manage'
 import { ArtifactFrame } from './artifact-frame'
 import { DeleteDialog } from './delete-dialog'
+import { DownloadMenu } from './download-menu'
 import { PrivacySwitch } from './privacy-switch'
 import { ShareDialog } from './share-dialog'
 import styles from './page.module.css'
@@ -99,6 +100,8 @@ export default async function ArtifactViewerPage({
         {categories.length > 0 && (
           <p className={styles.tags}>{categories.map((category) => category.name).join(' · ')}</p>
         )}
+        {/* Visible to every viewer, not just the owner: the download is the viewer's own copy. */}
+        <DownloadMenu downloadBasePath={`/a/${id}/download`} />
         {shareState !== null && (
           <div className={styles.ownerControls}>
             <PrivacySwitch

@@ -7,6 +7,7 @@ import { readArtifactTitle } from '@/lib/artifacts/page-read'
 import { signHandoffToken } from '@/lib/handoff'
 import { resolveShareLinkByToken } from '@/lib/shares/links'
 import { ArtifactFrame } from '../../a/[id]/artifact-frame'
+import { DownloadMenu } from '../../a/[id]/download-menu'
 import styles from './page.module.css'
 
 /**
@@ -59,6 +60,7 @@ export default async function SharedArtifactPage({
       <header className={styles.bar}>
         <p className={styles.brand}>enclave</p>
         <p className={styles.note}>Shared with you · read-only</p>
+        <DownloadMenu downloadBasePath={`/s/${token}/download`} />
       </header>
       <main className={styles.main} id="main" tabIndex={-1}>
         <h1 className={styles.title}>{title}</h1>
