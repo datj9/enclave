@@ -11,5 +11,7 @@ import TurndownService from 'turndown'
 
 export function htmlToMarkdown(html: string): string {
   const turndown = new TurndownService()
+  // Turndown keeps these bodies as text by default, so an app's CSS and JS would land in the .md.
+  turndown.remove(['script', 'style', 'noscript', 'template', 'title'])
   return turndown.turndown(html)
 }

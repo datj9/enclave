@@ -170,10 +170,15 @@ function isStylesheetLink(tag: string): boolean {
   return /(?:^|\s)rel\s*=\s*["']?stylesheet["']?/i.test(tag)
 }
 
+/** The attribute string minus its `src=...`; `data-src` is not `src` and stays. */
+function withoutSrcAttribute(attributes: string): string {
+  return attributes.replace(/\s*(?<![\w-])src\s*=\s*(["']).*?\1/i, '')
+}
+
 const LINK_TAG_RE = /<link\b[^>]*>/gi
-const SCRIPT_TAG_RE = /<script\b[^>]*src\s*=\s*["']([^"']+)["'][^>]*>\s*<\/script>/gi
+const SCRIPT_TAG_RE = /<script\b([^>]*)>\s*<\/script>/gi
 const IMG_TAG_RE = /<img\b[^>]*>/gi
-const CSS_URL_RE = /url\(\s*["']?([^"')]+)["']?\s*\)/gi
+const CSS_URL_RE = /url\(\s*["']?([^"')]+)["']?\s*\)/g
 
 async function replaceStylesheetLinks(
   html: string,
@@ -198,12 +203,15 @@ async function replaceScriptTags(
   input: InlineBundleInput,
   assets: AssetCache,
 ): Promise<string> {
-  return replaceAsync(html, SCRIPT_TAG_RE, async (whole, src: string) => {
-    if (isExternal(src)) return whole
-    const inlined = await assets.textFor(resolveAssetRef(src, input.entryPath))
-    return inlined === null || inlined.js === undefined
-      ? whole
-      : `<script>${escapeScriptBody(inlined.js)}</script>`
+  return replaceAsync(html, SCRIPT_TAG_RE, async (whole, attributes: string) => {
+    const src = valueOfAttribute(whole, 'src')
+    if (src === null) return whole
+    const ref = stripQueryAndHash(src.trim())
+    if (ref === null || isExternal(ref)) return whole
+    const inlined = await assets.textFor(resolveAssetRef(ref, input.entryPath))
+    if (inlined === null || inlined.js === undefined) return whole
+    // type="module", defer, nonce survive; only src goes, the body now carries the code.
+    return `<script${withoutSrcAttribute(attributes)}>${escapeScriptBody(inlined.js)}</script>`
   })
 }
 
@@ -241,31 +249,25 @@ async function replaceCssUrls(
 }
 
 /**
- * `String.prototype.replace` with an async replacer: collects every match's replacement first, then
- * splices them in. Keeps `store.getObject` calls sequential per pass, which is all the parallelism
- * this util needs.
+ * `String.prototype.replace` with an async replacer. `matchAll` clones the regex, so the shared
+ * module-level `/g` patterns carry no `lastIndex` between two downloads running at once. Store
+ * reads stay sequential per pass, which is all the parallelism this util needs.
  */
 async function replaceAsync(
   html: string,
   regex: RegExp,
   replacer: (match: string, ...groups: string[]) => Promise<string>,
 ): Promise<string> {
-  regex.lastIndex = 0
-  const matches: Array<{ start: number; end: number; replacement: string }> = []
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(html)) !== null) {
-    const groups = match.slice(1)
-    const replacement = await replacer(match[0], ...groups)
-    matches.push({ start: match.index, end: match.index + match[0].length, replacement })
-  }
-  if (matches.length === 0) return html
+  const found = Array.from(html.matchAll(regex))
+  if (found.length === 0) return html
 
   let out = ''
   let cursor = 0
-  for (const { start, end, replacement } of matches) {
-    out += html.slice(cursor, start)
+  for (const match of found) {
+    const replacement = await replacer(match[0], ...match.slice(1))
+    out += html.slice(cursor, match.index)
     out += replacement
-    cursor = end
+    cursor = match.index + match[0].length
   }
   out += html.slice(cursor)
   return out

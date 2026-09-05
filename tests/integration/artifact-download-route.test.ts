@@ -48,7 +48,7 @@ function bundle(indexHtml: string, appJs = 'console.log(1)'): BundleFile[] {
 }
 
 function entryHtml(label: string): string {
-  return `<!doctype html><h1>${label}</h1><a href="https://example.com/report">report</a>`
+  return `<!doctype html><h1>${label}</h1><a href="https://example.com/report">report</a><script src="app.js"></script>`
 }
 
 function downloadRequestA(id: string, format: string): NextRequest {
@@ -106,6 +106,7 @@ describe.skipIf(!servicesReady)('GET /a/[id]/download', () => {
     expect(response.headers.get('content-disposition')).toBe(
       'attachment; filename="sales-dash.md"',
     )
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
     // Turndown of the entry HTML: the <h1> and the <a> survive as markdown.
     expect(body).toContain('Version one')
     expect(body).toContain('[report](https://example.com/report)')
@@ -243,6 +244,9 @@ describe.skipIf(!servicesReady)('GET /s/[token]/download', () => {
     // The pinned v1, not the artifact's current v2.
     expect(body).toContain('Pinned version')
     expect(body).not.toContain('Current version')
+    // The manifest-listed script is inlined with its real content type, not left as a relative src.
+    expect(body).toContain('<script>console.log(1)</script>')
+    expect(body).not.toContain('src="app.js"')
   })
 
   it('US5: a revoked or expired share token is a 404', async () => {

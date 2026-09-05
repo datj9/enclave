@@ -75,6 +75,19 @@ describe('htmlToMarkdown', () => {
     expect(markdown).toContain('Sales dash')
     expect(markdown).toContain('[the report](https://example.com/report)')
   })
+
+  it('drops <title>, <style>, <script> and <noscript> bodies from the markdown', () => {
+    const markdown = htmlToMarkdown(
+      '<html><head><title>My Title</title><style>body{color:red}</style></head>' +
+        '<body><h1>Hi</h1><script>const x = 1</script><noscript>no js</noscript><p>text</p></body></html>',
+    )
+    expect(markdown).toContain('Hi')
+    expect(markdown).toContain('text')
+    expect(markdown).not.toContain('My Title')
+    expect(markdown).not.toContain('color:red')
+    expect(markdown).not.toContain('const x = 1')
+    expect(markdown).not.toContain('no js')
+  })
 })
 
 describe('inlineBundle · self-contained HTML (US2)', () => {
@@ -209,6 +222,32 @@ describe('inlineBundle · self-contained HTML (US2)', () => {
     expect(html).not.toContain('"</script><img src=x onerror=alert(1)>"')
   })
 
+  it('keeps the script tag attributes other than src, and strips ?query before resolving', async () => {
+    const { store, manifest } = storeWith({
+      [ENTRY_PATH]: HTML_OBJECT(
+        '<!doctype html><script type="module" crossorigin src="/assets/index.js?v=3"></script>',
+      ),
+      'assets/index.js': JS_OBJECT('export const answer = 42'),
+    })
+
+    const html = await inlineBundle({ artifactId: ARTIFACT_ID, versionId: VERSION_ID, entryPath: ENTRY_PATH, manifest }, store)
+
+    expect(html).toContain('<script type="module" crossorigin>export const answer = 42</script>')
+    expect(html).not.toContain('src="/assets/index.js')
+  })
+
+  it('does not treat data-src on a script as src', async () => {
+    const { store, manifest } = storeWith({
+      [ENTRY_PATH]: HTML_OBJECT('<!doctype html><script data-src="lazy.js"></script>'),
+      'lazy.js': JS_OBJECT('console.log("lazy")'),
+    })
+
+    const html = await inlineBundle({ artifactId: ARTIFACT_ID, versionId: VERSION_ID, entryPath: ENTRY_PATH, manifest }, store)
+
+    expect(html).toContain('<script data-src="lazy.js"></script>')
+    expect(html).not.toContain('console.log("lazy")')
+  })
+
   it('inlines CSS url() references inside <style> and style attributes', async () => {
     const { store, manifest } = storeWith({
       [ENTRY_PATH]: HTML_OBJECT(
@@ -223,6 +262,40 @@ describe('inlineBundle · self-contained HTML (US2)', () => {
     expect(html).toContain('url("data:image/png;base64,')
     expect(html).not.toContain('url("img/logo.png")')
     expect(html).not.toContain('url(img/logo.png)')
+  })
+
+  it('two downloads running at once do not corrupt each other', async () => {
+    const first = storeWith({
+      [ENTRY_PATH]: HTML_OBJECT(
+        '<p>A1</p><img src="a1.png"><p>A2</p><img src="a2.png"><p>A3</p><img src="a3.png">',
+      ),
+      'a1.png': PNG_OBJECT([0x01]),
+      'a2.png': PNG_OBJECT([0x02]),
+      'a3.png': PNG_OBJECT([0x03]),
+    })
+    const second = storeWith({
+      [ENTRY_PATH]: HTML_OBJECT('<img src="b1.png"><img src="b2.png">'),
+      'b1.png': PNG_OBJECT([0x0b]),
+      'b2.png': PNG_OBJECT([0x0c]),
+    })
+    const input = (manifest: readonly ManifestEntry[]) => ({
+      artifactId: ARTIFACT_ID,
+      versionId: VERSION_ID,
+      entryPath: ENTRY_PATH,
+      manifest,
+    })
+
+    const expectedFirst = await inlineBundle(input(first.manifest), first.store)
+    const expectedSecond = await inlineBundle(input(second.manifest), second.store)
+    const [concurrentFirst, concurrentSecond] = await Promise.all([
+      inlineBundle(input(first.manifest), first.store),
+      inlineBundle(input(second.manifest), second.store),
+    ])
+
+    expect(concurrentFirst).toBe(expectedFirst)
+    expect(concurrentSecond).toBe(expectedSecond)
+    expect(concurrentFirst).not.toContain('src="a')
+    expect(concurrentSecond).not.toContain('src="b')
   })
 
   it('throws ENTRY_MISSING when the entry document is not in storage', async () => {

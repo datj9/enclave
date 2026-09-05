@@ -63,6 +63,7 @@ export async function GET(
         'content-type': contentType,
         // The slug is ASCII, so a plain filename= is enough; no filename* needed.
         'content-disposition': `attachment; filename="${slugFromTitle(title)}.${format}"`,
+        'cache-control': 'private, no-store',
       },
     })
   } catch (error) {

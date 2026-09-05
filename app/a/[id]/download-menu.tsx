@@ -34,19 +34,19 @@ export function DownloadMenu({ downloadBasePath }: { readonly downloadBasePath: 
 
   async function downloadPdf(): Promise<void> {
     setErrorMessage(null)
-    let response: Response
+    let blob: Blob
     try {
-      response = await fetch(`${downloadBasePath}?format=html`)
+      const response = await fetch(`${downloadBasePath}?format=html`)
+      if (!response.ok) {
+        setErrorMessage(PRINT_ERROR)
+        return
+      }
+      blob = await response.blob()
     } catch {
       setErrorMessage(PRINT_ERROR)
       return
     }
-    if (!response.ok) {
-      setErrorMessage(PRINT_ERROR)
-      return
-    }
 
-    const blob = await response.blob()
     const url = URL.createObjectURL(blob)
     const win = window.open(url)
     if (win === null) {

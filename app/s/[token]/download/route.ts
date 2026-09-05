@@ -53,6 +53,7 @@ export async function GET(
       headers: {
         'content-type': contentType,
         'content-disposition': `attachment; filename="${slugFromTitle(title)}.${format}"`,
+        'cache-control': 'private, no-store',
       },
     })
   } catch (error) {
