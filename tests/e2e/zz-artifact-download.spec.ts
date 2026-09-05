@@ -201,7 +201,7 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
   test('a blocked pop-up surfaces the inline alert', async ({ browser }) => {
     const context = await browser.newContext()
     const page = await context.newPage()
-    page.addInitScript(() => {
+    await page.addInitScript(() => {
       window.open = () => null
     })
     await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
@@ -209,7 +209,8 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
     await page.getByTestId('download-open').click()
     await page.getByTestId('download-pdf').click()
 
-    await expect(page.getByRole('alert')).toHaveText(
+    // Scope to the menu: Next.js renders a page-level role="alert" route announcer too.
+    await expect(page.getByTestId('download-menu').getByRole('alert')).toHaveText(
       'The pop-up was blocked. Allow pop-ups and try again.',
     )
     await context.close()
@@ -232,7 +233,9 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
     await page.getByTestId('download-open').click()
     await page.getByTestId('download-pdf').click()
 
-    await expect(page.getByRole('alert')).toHaveText('The PDF could not be prepared.')
+    await expect(page.getByTestId('download-menu').getByRole('alert')).toHaveText(
+      'The PDF could not be prepared.',
+    )
     await context.close()
   })
 })
