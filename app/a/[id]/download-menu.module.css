@@ -1,0 +1,41 @@
+/*
+ * The download menu floats under its trigger, attached by base-ui's Positioner (which already
+ * sets `position: absolute` inline); this module supplies the surface and the item rows.
+ */
+
+.positioner {
+  z-index: var(--z-dropdown);
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: var(--space-2xs);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+}
+
+/*
+ * Three items of equal weight and equal height; the PDF row is the only one that acts, and the
+ * visual rhythm is what makes that legible before the user clicks.
+ */
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-height: var(--control-sm);
+  padding: var(--space-3xs) var(--space-xs);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}
+
+.item:hover,
+.item[data-highlighted] {
+  background: var(--color-paper-2);
+}
