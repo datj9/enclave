@@ -20,8 +20,10 @@ import {
  * The `.md` row navigates to the download route (the `attachment` header makes the browser save
  * it), which Playwright sees as a `download` event carrying the slug filename.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on
- * an empty database.
+ * The `zz-` prefix keeps this file sorted after `setup-and-signin.spec.ts` (the suite runs
+ * serially, one worker, in filename order). That spec asserts `/setup` is still open on an empty
+ * database, so any spec that creates the admin user — this one does, in `beforeAll` — must run
+ * after it. Same convention as `zz-direct-artifact-entry.spec.ts`.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'
@@ -192,14 +194,14 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
     // One object URL opened, one print on the popup.
     expect(probe.opens.length).toBe(1)
     expect(probe.opens[0]).toMatch(/^blob:/)
-    // No inline error surfaced: the menu is the only alert region, and it stays quiet.
-    await expect(viewerPage.getByRole('alert')).toHaveCount(0)
+    // No inline error surfaced: the menu's own alert region stays quiet on the happy path.
+    await expect(viewerPage.getByTestId('download-menu').getByRole('alert')).toHaveCount(0)
   })
 
   test('a blocked pop-up surfaces the inline alert', async ({ browser }) => {
     const context = await browser.newContext()
     const page = await context.newPage()
-    page.addInitScript(() => {
+    await page.addInitScript(() => {
       window.open = () => null
     })
     await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
@@ -207,7 +209,8 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
     await page.getByTestId('download-open').click()
     await page.getByTestId('download-pdf').click()
 
-    await expect(page.getByRole('alert')).toHaveText(
+    // Scope to the menu: Next.js renders a page-level role="alert" route announcer too.
+    await expect(page.getByTestId('download-menu').getByRole('alert')).toHaveText(
       'The pop-up was blocked. Allow pop-ups and try again.',
     )
     await context.close()
@@ -230,7 +233,9 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
     await page.getByTestId('download-open').click()
     await page.getByTestId('download-pdf').click()
 
-    await expect(page.getByRole('alert')).toHaveText('The PDF could not be prepared.')
+    await expect(page.getByTestId('download-menu').getByRole('alert')).toHaveText(
+      'The PDF could not be prepared.',
+    )
     await context.close()
   })
 })
