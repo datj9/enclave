@@ -186,8 +186,9 @@ test.describe('per-format download for a non-owner viewer (US3)', () => {
       .toBe(1)
     const probe = await readProbe(viewerPage)
 
-    // The print window is sourced from the self-contained HTML download.
-    expect(probe.fetches).toEqual([`${APP_ORIGIN}/a/${artifactId}/download?format=html`])
+    // The print window is sourced from the self-contained HTML download. The menu fetches the
+    // route by its relative path, so the probe records it verbatim (no origin prefix).
+    expect(probe.fetches).toEqual([`/a/${artifactId}/download?format=html`])
     // One object URL opened, one print on the popup.
     expect(probe.opens.length).toBe(1)
     expect(probe.opens[0]).toMatch(/^blob:/)
