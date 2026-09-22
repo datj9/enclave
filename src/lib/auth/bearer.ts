@@ -7,7 +7,7 @@ import { users } from '@/db/schema/users'
 import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
-import { requireSessionUser } from '@/lib/api/guards'
+import { requireSameOriginRequest, requireSessionUser } from '@/lib/api/guards'
 import { databaseNowEpoch, tryEpochToDate } from '@/lib/shares/clock'
 import { enforceAuthRateLimit } from './rate-limit-auth'
 
@@ -188,7 +188,9 @@ export async function revokeApiToken(
   const revoked = await db
     .update(apiTokens)
     .set({ revokedAt: sql`now()` })
-    .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)))
+    .where(
+      and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)),
+    )
     .returning({ id: apiTokens.id })
 
   if (revoked.length === 0) return await isOwnedToken(userId, tokenId)
@@ -237,7 +239,10 @@ export async function resolveApiToken(plaintext: string): Promise<ApiTokenPrinci
 
   if (row === undefined) return null
 
-  await db.update(apiTokens).set({ lastUsedAt: sql`now()` }).where(eq(apiTokens.id, row.id))
+  await db
+    .update(apiTokens)
+    .set({ lastUsedAt: sql`now()` })
+    .where(eq(apiTokens.id, row.id))
 
   return { kind: 'apiToken', userId: row.userId, tokenId: row.id, scopes: row.scopes }
 }
@@ -272,7 +277,12 @@ export async function requireApiPrincipal(
   requiredScope: ApiTokenScope,
 ): Promise<ApiPrincipal> {
   const bearerToken = bearerTokenFromHeaders(request.headers)
-  if (bearerToken === null) return { kind: 'user', userId: (await requireSessionUser()).id }
+  if (bearerToken === null) {
+    // The session cookie is ambient, so a cookie-authenticated write must prove it came from the
+    // app itself (§8). Bearer callers are exempt: a page cannot attach their header cross-site.
+    requireSameOriginRequest(request)
+    return { kind: 'user', userId: (await requireSessionUser()).id }
+  }
 
   // A plaintext hop in production means the token already crossed the network in the clear
   // (§8, A.10.1.1). Development runs over http on localhost, so the refusal is production-only.
