@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { readCredentials } from './src/credentials.ts'
 import { runLogin } from './src/commands/login.ts'
+import { capturedStream, testContext, type TestContext } from './test-context.ts'
 import { USER_AGENT } from './src/version.ts'
 
 /**
@@ -34,18 +35,19 @@ vi.mock('node:readline', () => ({
 const HOST = 'enclave.example.com'
 
 let configDirectory: string
-let originalConfigHome: string | undefined
-let originalEnvironmentToken: string | undefined
-let written: string[]
-let writtenToStderr: string[]
+let ctx: TestContext
 
 function stdout(): string {
-  return written.join('')
+  return ctx.stdout.text()
 }
 
 /** Failures go to stderr, never stdout — the same contract every other command keeps. */
 function stderrOutput(): string {
-  return writtenToStderr.join('')
+  return ctx.stderr.text()
+}
+
+function storedCredentials(): ReturnType<typeof readCredentials> {
+  return readCredentials(ctx.env)
 }
 
 function respondWith(status: number, body = '{"data":{"items":[],"nextCursor":null}}'): void {
@@ -71,39 +73,22 @@ function respondWithSequence(statuses: number[]): void {
 
 beforeEach(() => {
   configDirectory = mkdtempSync(join(tmpdir(), 'enclave-login-'))
-  originalConfigHome = process.env['XDG_CONFIG_HOME']
-  process.env['XDG_CONFIG_HOME'] = configDirectory
-  // `login` now reads ENCLAVE_TOKEN, so a developer's own shell must not leak into these cases.
-  originalEnvironmentToken = process.env['ENCLAVE_TOKEN']
-  delete process.env['ENCLAVE_TOKEN']
+  // A private environment: a developer's own ENCLAVE_TOKEN cannot leak into these cases.
+  ctx = testContext({ XDG_CONFIG_HOME: configDirectory })
 
   answer = 'enc_a_valid_looking_token'
-  written = []
-  writtenToStderr = []
   createInterfaceMock.mockClear()
-  vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-    written.push(String(chunk))
-    return true
-  })
-  vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
-    writtenToStderr.push(String(chunk))
-    return true
-  })
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
-  if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
-  else process.env['XDG_CONFIG_HOME'] = originalConfigHome
-  if (originalEnvironmentToken === undefined) delete process.env['ENCLAVE_TOKEN']
-  else process.env['ENCLAVE_TOKEN'] = originalEnvironmentToken
   rmSync(configDirectory, { recursive: true, force: true })
 })
 
 describe('runLogin', () => {
   it('names every scope the CLI needs, not only artifacts:write', async () => {
     respondWith(200)
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
 
     // The probe reads, so an artifacts:write-only token 403s. Instruction and probe must agree.
     expect(stderrOutput()).toContain('artifacts:read')
@@ -113,7 +98,7 @@ describe('runLogin', () => {
 
   it('points at the token page on the resolved base url', async () => {
     respondWith(200)
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
 
     expect(stderrOutput()).toContain(`https://${HOST}/settings/tokens`)
   })
@@ -121,13 +106,13 @@ describe('runLogin', () => {
   it('saves the token and returns 0 when the probe succeeds', async () => {
     respondWith(200)
 
-    expect(await runLogin(HOST)).toBe(0)
-    expect(readCredentials()[HOST]?.token).toBe('enc_a_valid_looking_token')
+    expect(await runLogin({ host: HOST }, ctx)).toBe(0)
+    expect(storedCredentials()[HOST]?.token).toBe('enc_a_valid_looking_token')
   })
 
   it('probes a read endpoint with the token as a bearer header', async () => {
     respondWith(200)
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[0]).toBe(`https://${HOST}/api/v1/artifacts?limit=1`)
@@ -138,7 +123,7 @@ describe('runLogin', () => {
 
   it('identifies itself with a User-Agent naming the CLI and its version', async () => {
     respondWith(200)
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect((call?.[1]?.headers as Record<string, string>)['user-agent']).toBe(USER_AGENT)
@@ -147,47 +132,47 @@ describe('runLogin', () => {
   it('explains which scopes are missing on 403 rather than printing a bare status', async () => {
     respondWith(403)
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(stderrOutput()).toContain('missing a scope')
     expect(stderrOutput()).not.toContain('the server returned 403')
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('reports a rejected token on 401 and saves nothing', async () => {
     respondWith(401)
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(stderrOutput()).toContain('rejected')
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('reports an unreachable host and saves nothing', async () => {
     globalThis.fetch = vi.fn(async () => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(stderrOutput()).toContain('could not reach')
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('refuses an empty token without contacting the server', async () => {
     respondWith(200)
     answer = '   '
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(globalThis.fetch).not.toHaveBeenCalled()
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('never writes the token to stdout', async () => {
     respondWith(200)
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
 
     expect(stdout()).not.toContain('enc_a_valid_looking_token')
   })
 
   it('probes the exact single-scheme url for a host that already carries one', async () => {
     respondWith(200)
-    await runLogin('http://127.0.0.1:3000')
+    await runLogin({ host: 'http://127.0.0.1:3000' }, ctx)
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[0]).toBe('http://127.0.0.1:3000/api/v1/artifacts?limit=1')
@@ -197,9 +182,9 @@ describe('runLogin', () => {
   it('skips the prompt and uses the given token when --token is supplied', async () => {
     respondWith(200)
 
-    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(0)
+    expect(await runLogin({ host: HOST, token: 'enc_from_the_flag' }, ctx)).toBe(0)
     expect(createInterfaceMock).not.toHaveBeenCalled()
-    expect(readCredentials()[HOST]?.token).toBe('enc_from_the_flag')
+    expect(storedCredentials()[HOST]?.token).toBe('enc_from_the_flag')
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
@@ -209,28 +194,28 @@ describe('runLogin', () => {
 
   it('skips the prompt and uses ENCLAVE_TOKEN when no --token is supplied', async () => {
     // CI has no TTY to answer the prompt, and --help already promises ENCLAVE_TOKEN works.
-    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
     respondWith(200)
 
-    expect(await runLogin(HOST)).toBe(0)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(0)
     expect(createInterfaceMock).not.toHaveBeenCalled()
-    expect(readCredentials()[HOST]?.token).toBe('enc_from_the_environment')
+    expect(storedCredentials()[HOST]?.token).toBe('enc_from_the_environment')
   })
 
   it('prefers --token over ENCLAVE_TOKEN', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
     respondWith(200)
 
-    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(0)
-    expect(readCredentials()[HOST]?.token).toBe('enc_from_the_flag')
+    expect(await runLogin({ host: HOST, token: 'enc_from_the_flag' }, ctx)).toBe(0)
+    expect(storedCredentials()[HOST]?.token).toBe('enc_from_the_flag')
   })
 
   it('falls back to the prompt when ENCLAVE_TOKEN is set but empty', async () => {
-    process.env['ENCLAVE_TOKEN'] = '   '
+    ctx.env['ENCLAVE_TOKEN'] = '   '
     respondWith(200)
 
-    expect(await runLogin(HOST)).toBe(0)
-    expect(readCredentials()[HOST]?.token).toBe('enc_a_valid_looking_token')
+    expect(await runLogin({ host: HOST }, ctx)).toBe(0)
+    expect(storedCredentials()[HOST]?.token).toBe('enc_a_valid_looking_token')
   })
 
   it('refuses a redirected probe without saving the token', async () => {
@@ -238,32 +223,32 @@ describe('runLogin', () => {
       Promise.resolve(new Response('', { status: 302, headers: { location: '/sso' } })),
     ) as typeof fetch
 
-    expect(await runLogin(HOST, 'enc_garbage')).toBe(1)
+    expect(await runLogin({ host: HOST, token: 'enc_garbage' }, ctx)).toBe(1)
     expect(stderrOutput()).toContain('redirected the API probe')
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('refuses a 200 that is not an enclave list envelope', async () => {
     respondWith(200, '<html>login</html>')
 
-    expect(await runLogin(HOST, 'enc_garbage')).toBe(1)
+    expect(await runLogin({ host: HOST, token: 'enc_garbage' }, ctx)).toBe(1)
     expect(stderrOutput()).toContain('not an enclave artifacts list')
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('probes with redirect: manual so a proxy SSO bounce cannot fake success', async () => {
     respondWith(200)
-    await runLogin(HOST, 'enc_x')
+    await runLogin({ host: HOST, token: 'enc_x' }, ctx)
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(call?.[1]).toMatchObject({ redirect: 'manual' })
   })
 
   it('sends the flag token as the bearer header, not the environment token', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
     respondWith(200)
 
-    await runLogin(HOST, 'enc_from_the_flag')
+    await runLogin({ host: HOST, token: 'enc_from_the_flag' }, ctx)
 
     const call = vi.mocked(globalThis.fetch).mock.calls[0]
     expect((call?.[1]?.headers as Record<string, string>)['authorization']).toBe(
@@ -286,23 +271,23 @@ describe('runLogin with --token ""', () => {
   })
 
   it('fails loudly and never consults ENCLAVE_TOKEN when --token is the empty string', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_from_the_environment'
     respondWith(200)
 
-    expect(await runLogin(HOST, '')).toBe(1)
+    expect(await runLogin({ host: HOST, token: '' }, ctx)).toBe(1)
     expect(stderrOutput()).toMatch(/no token was entered/)
     expect(globalThis.fetch).not.toHaveBeenCalled()
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('fails loudly without falling through to the prompt when ENCLAVE_TOKEN is unset', async () => {
     respondWith(200)
 
-    expect(await runLogin(HOST, '')).toBe(1)
+    expect(await runLogin({ host: HOST, token: '' }, ctx)).toBe(1)
     expect(stderrOutput()).toMatch(/no token was entered/)
     expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(createInterfaceMock).not.toHaveBeenCalled()
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 })
 
@@ -323,24 +308,24 @@ describe('runLogin token recovery', () => {
   }
 
   it('prompts for a replacement when ENCLAVE_TOKEN is rejected on a TTY', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = 'fresh-token'
     withStdinTTY(true)
     respondWithSequence([401, 200])
 
-    expect(await runLogin(HOST)).toBe(0)
-    expect(readCredentials()[HOST]?.token).toBe('fresh-token')
+    expect(await runLogin({ host: HOST }, ctx)).toBe(0)
+    expect(storedCredentials()[HOST]?.token).toBe('fresh-token')
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
   it('does not prompt when ENCLAVE_TOKEN is rejected without a TTY', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     withStdinTTY(false)
     respondWith(401)
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
     expect(stderrOutput()).toMatch(/that token was rejected/)
   })
 
@@ -348,66 +333,66 @@ describe('runLogin token recovery', () => {
     withStdinTTY(true)
     respondWith(401)
 
-    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(1)
+    expect(await runLogin({ host: HOST, token: 'enc_from_the_flag' }, ctx)).toBe(1)
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('retries once and no more when the replacement is also rejected', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = 'fresh-token'
     withStdinTTY(true)
     respondWithSequence([401, 401])
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('explains the missing scope before prompting on a 403 from ENCLAVE_TOKEN', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = 'fresh-token'
     withStdinTTY(true)
     respondWithSequence([403, 200])
 
-    expect(await runLogin(HOST)).toBe(0)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(0)
     expect(stderrOutput()).toMatch(/missing a scope/)
   })
 
   it('returns 1 without saving when the prompted replacement is empty', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = ''
     withStdinTTY(true)
     respondWith(401)
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     expect(stderrOutput()).toMatch(/no token was entered/)
-    expect(readCredentials()[HOST]).toBeUndefined()
+    expect(storedCredentials()[HOST]).toBeUndefined()
   })
 
   it('reports the same message for a 500 on the primary probe and a 500 on the retry probe', async () => {
     respondWith(500)
-    expect(await runLogin(HOST, 'enc_from_the_flag')).toBe(1)
+    expect(await runLogin({ host: HOST, token: 'enc_from_the_flag' }, ctx)).toBe(1)
     expect(stderrOutput()).toMatch(/the server returned 500/)
 
-    writtenToStderr = []
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.stderr.clear()
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = 'fresh-token'
     withStdinTTY(true)
     respondWithSequence([401, 500])
 
-    expect(await runLogin(HOST)).toBe(1)
+    expect(await runLogin({ host: HOST }, ctx)).toBe(1)
     expect(stderrOutput()).toMatch(/the server returned 500/)
   })
 
   it('never writes either token to stdout or stderr', async () => {
-    process.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
+    ctx.env['ENCLAVE_TOKEN'] = 'enc_stale_env_token'
     answer = 'enc_fresh_prompt_token'
     withStdinTTY(true)
     respondWithSequence([401, 200])
 
-    await runLogin(HOST)
+    await runLogin({ host: HOST }, ctx)
     expect(stdout()).not.toContain('enc_stale_env_token')
     expect(stdout()).not.toContain('enc_fresh_prompt_token')
     expect(stderrOutput()).not.toContain('enc_stale_env_token')
@@ -420,16 +405,6 @@ describe('runLogin with a real stdin close', () => {
 
   beforeEach(() => {
     originalStdin = process.stdin
-    written = []
-    writtenToStderr = []
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-      written.push(String(chunk))
-      return true
-    })
-    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
-      writtenToStderr.push(String(chunk))
-      return true
-    })
   })
 
   afterEach(() => {
@@ -451,7 +426,7 @@ describe('runLogin with a real stdin close', () => {
     Object.defineProperty(process, 'stdin', { value: fakeStdin, configurable: true })
 
     respondWith(200)
-    const resultPromise = runLoginWithRealReadline('http://127.0.0.1:3000')
+    const resultPromise = runLoginWithRealReadline({ host: 'http://127.0.0.1:3000' }, ctx)
     fakeStdin.end()
 
     await expect(resultPromise).resolves.toBe(1)
@@ -462,29 +437,20 @@ describe('runLogin with a real stdin close', () => {
 
 describe('runLogin masking a real stdin', () => {
   let originalStdin: typeof process.stdin
-  let originalIsTTY: PropertyDescriptor | undefined
 
   beforeEach(() => {
     originalStdin = process.stdin
-    originalIsTTY = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY')
-    written = []
-    writtenToStderr = []
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-      written.push(String(chunk))
-      return true
-    })
-    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
-      writtenToStderr.push(String(chunk))
-      return true
-    })
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     Object.defineProperty(process, 'stdin', { value: originalStdin, configurable: true })
-    if (originalIsTTY === undefined) delete (process.stderr as { isTTY?: boolean }).isTTY
-    else Object.defineProperty(process.stderr, 'isTTY', originalIsTTY)
   })
+
+  /** The mask is drawn only for a terminal, and it is the context's stderr that says so. */
+  function withStderrTTY(isTTY: boolean): void {
+    ctx = { ...ctx, stderr: capturedStream(isTTY) }
+  }
 
   async function loginTyping(keystrokes: string): Promise<number> {
     vi.doUnmock('node:readline')
@@ -495,14 +461,14 @@ describe('runLogin masking a real stdin', () => {
     Object.defineProperty(process, 'stdin', { value: fakeStdin, configurable: true })
 
     respondWith(200)
-    const resultPromise = runLoginWithRealReadline('http://127.0.0.1:3000')
+    const resultPromise = runLoginWithRealReadline({ host: 'http://127.0.0.1:3000' }, ctx)
     for (const chunk of keystrokes) fakeStdin.write(chunk)
     fakeStdin.write('\r')
     return resultPromise
   }
 
   it('emits a real ESC byte before [K rather than the literal characters', async () => {
-    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
+    withStderrTTY(true)
 
     await loginTyping('abc')
 
@@ -510,23 +476,23 @@ describe('runLogin masking a real stdin', () => {
   })
 
   it('renders a mask width that tracks the real buffer, not a stale keypress count', async () => {
-    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
+    withStderrTTY(true)
 
     // Ctrl-U clears the buffer entirely; the old code kept counting keypresses regardless.
     const result = await loginTyping('abcdef\x15xy')
 
     expect(result).toBe(0)
-    const maskFrames = writtenToStderr.filter((chunk) => chunk.startsWith('\rToken: '))
+    const maskFrames = ctx.stderr.chunks().filter((chunk) => chunk.startsWith('\rToken: '))
     expect(maskFrames).toContain('\rToken: \x1b[K')
     expect(maskFrames[maskFrames.length - 1]).toBe(`\rToken: ${'*'.repeat(2)}\x1b[K`)
   })
 
   it('writes no mask and no escape codes when stderr is not a TTY', async () => {
-    Object.defineProperty(process.stderr, 'isTTY', { value: false, configurable: true })
+    withStderrTTY(false)
 
     await loginTyping('abc')
 
-    expect(writtenToStderr.some((chunk) => chunk.includes('*'))).toBe(false)
-    expect(writtenToStderr.some((chunk) => chunk.includes('\x1b'))).toBe(false)
+    expect(ctx.stderr.chunks().some((chunk) => chunk.includes('*'))).toBe(false)
+    expect(ctx.stderr.chunks().some((chunk) => chunk.includes('\x1b'))).toBe(false)
   })
 })

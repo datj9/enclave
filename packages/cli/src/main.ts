@@ -14,8 +14,17 @@ import { runLogin } from './commands/login.ts'
 import { runLogout } from './commands/logout.ts'
 import { runPush } from './commands/push.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './commands/shares.ts'
-import { EXIT_OK, EXIT_USAGE } from './exit-codes.ts'
+import { CliError, reportFailure } from './errors.ts'
+import { EXIT_OK, EXIT_USAGE, type ExitCode } from './exit-codes.ts'
 import { HELP_BY_LABEL } from './help.ts'
+import {
+  printDiagnostic,
+  printJson,
+  printLine,
+  processContext,
+  type CliContext,
+  type Environment,
+} from './output.ts'
 import { cliVersion, UNKNOWN_VERSION } from './version.ts'
 
 const USAGE = `enclave — publish and manage artifacts on a self-hosted instance
@@ -69,28 +78,31 @@ const OPTION_CONFIG = {
   insecure: { type: 'boolean', default: false },
 } as const
 
-interface ParsedValues {
-  readonly host?: string
-  readonly token?: string
-  readonly title?: string
-  readonly visibility?: string
-  readonly artifact?: string
-  readonly limit?: string
-  readonly cursor?: string
-  readonly version?: string
-  readonly expires?: string
-  readonly new: boolean
-  readonly force: boolean
-  readonly 'dry-run': boolean
-  readonly json: boolean
-  readonly help: boolean
-  readonly insecure: boolean
+type OptionConfig = typeof OPTION_CONFIG
+type OptionName = keyof OptionConfig
+type OptionValue<Name extends OptionName> = OptionConfig[Name]['type'] extends 'boolean'
+  ? boolean
+  : string
+
+/**
+ * Derived from OPTION_CONFIG rather than copied beside it, so a new flag cannot be declared in one
+ * and forgotten in the other. A flag with a `default` is always present; the rest may be absent.
+ */
+type ParsedValues = {
+  readonly [
+    Name in OptionName as OptionConfig[Name] extends { default: unknown } ? Name : never
+  ]: OptionValue<Name>
+} & {
+  readonly [
+    Name in OptionName as OptionConfig[Name] extends { default: unknown } ? never : Name
+  ]?: OptionValue<Name>
 }
 
 type CommandHandler = (
   positionals: readonly string[],
   values: ParsedValues,
-) => Promise<number> | number
+  ctx: CliContext,
+) => Promise<ExitCode> | ExitCode
 
 /**
  * `options` is the closed set of flags a command accepts, `--help` aside. Without it `parseArgs`
@@ -114,19 +126,23 @@ class UsageError extends Error {}
  * goes wholly to stderr — printing the banner on stdout would break `enclave … --json | jq` the
  * same way a stray error line does.
  */
-function usage(message?: string): number {
+function usage(ctx: CliContext, message?: string): ExitCode {
   if (message === undefined) {
-    process.stdout.write(USAGE)
+    ctx.stdout.write(USAGE)
     return EXIT_OK
   }
-  process.stderr.write(`${message}\n\n${USAGE}`)
+  printDiagnostic(ctx, `${message}\n\n${USAGE}`.trimEnd())
   return EXIT_USAGE
 }
 
 /** `push` is the exception: it recovers a host from .enclave.json, so it resolves its own. */
-function requireHost(flag: string | undefined, isInsecureAllowed: boolean): string {
+function requireHost(
+  flag: string | undefined,
+  isInsecureAllowed: boolean,
+  env: Environment,
+): string {
   const fromFlag = flag?.trim()
-  const fromEnv = process.env['ENCLAVE_HOST']?.trim()
+  const fromEnv = env['ENCLAVE_HOST']?.trim()
   const host = fromFlag !== undefined && fromFlag !== '' ? fromFlag : fromEnv
   if (host === undefined || host === '') {
     throw new UsageError('no host — pass --host or set ENCLAVE_HOST')
@@ -136,6 +152,19 @@ function requireHost(flag: string | undefined, isInsecureAllowed: boolean): stri
   } catch (error) {
     if (error instanceof InvalidHostError) throw new UsageError(error.message)
     throw error
+  }
+}
+
+interface NetworkContext {
+  readonly host: string
+  readonly isInsecureAllowed: boolean
+}
+
+/** The host and transport every network command shares, resolved the one way they all agree on. */
+function networkContext(values: ParsedValues, ctx: CliContext): NetworkContext {
+  return {
+    host: requireHost(values.host, values.insecure, ctx.env),
+    isInsecureAllowed: values.insecure,
   }
 }
 
@@ -168,14 +197,13 @@ function parseVisibility(raw: string | undefined): 'private' | 'org' | 'public' 
 }
 
 /** `--json` has a consumer, so the version has to be an object there and a bare line otherwise. */
-function writeVersion(isJson: boolean): number {
+function writeVersion(ctx: CliContext, isJson: boolean): ExitCode {
   const version = cliVersion()
   if (version === UNKNOWN_VERSION) {
-    process.stderr.write(
-      'could not read the CLI package.json — reporting an unknown version\n',
-    )
+    printDiagnostic(ctx, 'could not read the CLI package.json — reporting an unknown version')
   }
-  process.stdout.write(isJson ? `${JSON.stringify({ version })}\n` : `${version}\n`)
+  if (isJson) printJson(ctx, { version })
+  else printLine(ctx, version)
   return EXIT_OK
 }
 
@@ -197,169 +225,206 @@ function globalVersionRequest(argv: readonly string[]): { readonly isJson: boole
 const SHARE_COMMANDS: Readonly<Record<string, CommandSpec>> = {
   create: {
     options: [...NETWORK_OPTIONS, 'version', 'expires', 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 2)
-      return runShareCreate({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 2, 'id'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-        ...(values.version === undefined ? {} : { versionId: values.version }),
-        ...(values.expires === undefined ? {} : { expires: values.expires }),
-      })
+      return runShareCreate(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 2, 'id'),
+          isJson: values.json,
+          ...(values.version === undefined ? {} : { versionId: values.version }),
+          ...(values.expires === undefined ? {} : { expires: values.expires }),
+        },
+        ctx,
+      )
     },
   },
   list: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 2)
-      return runShareList({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 2, 'id'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runShareList(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 2, 'id'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
   revoke: {
     options: [...NETWORK_OPTIONS, 'artifact'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 2)
-      return runShareRevoke({
-        host: requireHost(values.host, values.insecure),
-        shareId: requirePositional(positionals, 2, 'shareId'),
-        isInsecureAllowed: values.insecure,
-        ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
-      })
+      return runShareRevoke(
+        {
+          ...networkContext(values, ctx),
+          shareId: requirePositional(positionals, 2, 'shareId'),
+          ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
+        },
+        ctx,
+      )
     },
   },
 }
 
-/** Every command takes the same two arguments, which is what lets this be a table and not a switch. */
+/** Every command takes the same three arguments, which is what lets this be a table and not a switch. */
 const COMMANDS: Readonly<Record<string, CommandSpec>> = {
   version: {
     options: ['json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 0)
-      return writeVersion(values.json)
+      return writeVersion(ctx, values.json)
     },
   },
 
   login: {
     options: [...NETWORK_OPTIONS, 'token'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 0)
-      return runLogin(requireHost(values.host, values.insecure), values.token, values.insecure)
+      return runLogin(
+        {
+          ...networkContext(values, ctx),
+          ...(values.token === undefined ? {} : { token: values.token }),
+        },
+        ctx,
+      )
     },
   },
 
   logout: {
     options: [...NETWORK_OPTIONS],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 0)
-      return runLogout(requireHost(values.host, values.insecure))
+      return runLogout(networkContext(values, ctx).host, ctx)
     },
   },
 
   push: {
-    options: [...NETWORK_OPTIONS, 'title', 'visibility', 'artifact', 'new', 'force', 'dry-run', 'json'],
-    run: (positionals, values) => {
+    options: [
+      ...NETWORK_OPTIONS,
+      'title',
+      'visibility',
+      'artifact',
+      'new',
+      'force',
+      'dry-run',
+      'json',
+    ],
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 1)
       const visibility = parseVisibility(values.visibility)
-      return runPush({
-        directory: requirePositional(positionals, 1, 'dir'),
-        isNew: values.new,
-        isForced: values.force,
-        isDryRun: values['dry-run'],
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-        ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
-        ...(values.title === undefined ? {} : { title: values.title }),
-        ...(visibility === undefined ? {} : { visibility }),
-        ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
-      })
+      // Not `networkContext`: push falls back to the host in .enclave.json, so it resolves its own.
+      return runPush(
+        {
+          directory: requirePositional(positionals, 1, 'dir'),
+          isNew: values.new,
+          isForced: values.force,
+          isDryRun: values['dry-run'],
+          isJson: values.json,
+          isInsecureAllowed: values.insecure,
+          ...(values.host === undefined || values.host.trim() === '' ? {} : { host: values.host }),
+          ...(values.title === undefined ? {} : { title: values.title }),
+          ...(visibility === undefined ? {} : { visibility }),
+          ...(values.artifact === undefined ? {} : { artifactRef: values.artifact }),
+        },
+        ctx,
+      )
     },
   },
 
   list: {
     options: [...NETWORK_OPTIONS, 'limit', 'cursor', 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 0)
       const limit = parseLimit(values.limit)
-      return runList({
-        host: requireHost(values.host, values.insecure),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-        ...(limit === undefined ? {} : { limit }),
-        ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
-      })
+      return runList(
+        {
+          ...networkContext(values, ctx),
+          isJson: values.json,
+          ...(limit === undefined ? {} : { limit }),
+          ...(values.cursor === undefined ? {} : { cursor: values.cursor }),
+        },
+        ctx,
+      )
     },
   },
 
   show: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 1)
-      return runShow({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 1, 'id'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runShow(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 1, 'id'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
 
   rename: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 2)
-      return runRename({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 1, 'id'),
-        title: requirePositional(positionals, 2, 'title'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runRename(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 1, 'id'),
+          title: requirePositional(positionals, 2, 'title'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
 
   privacy: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 2)
-      return runPrivacy({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 1, 'id'),
-        visibility: requirePositional(positionals, 2, 'visibility'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runPrivacy(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 1, 'id'),
+          visibility: requirePositional(positionals, 2, 'visibility'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
 
   rm: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 1)
-      return runRemove({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 1, 'id'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runRemove(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 1, 'id'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
 
   restore: {
     options: [...NETWORK_OPTIONS, 'json'],
-    run: (positionals, values) => {
+    run: (positionals, values, ctx) => {
       requireArity(positionals, 1)
-      return runRestore({
-        host: requireHost(values.host, values.insecure),
-        id: requirePositional(positionals, 1, 'id'),
-        isJson: values.json,
-        isInsecureAllowed: values.insecure,
-      })
+      return runRestore(
+        {
+          ...networkContext(values, ctx),
+          id: requirePositional(positionals, 1, 'id'),
+          isJson: values.json,
+        },
+        ctx,
+      )
     },
   },
 }
@@ -375,10 +440,10 @@ function commandLabel(positionals: readonly string[]): string {
  * than the exit-2 unknown-subcommand refusal that would otherwise reach it first. Own-property
  * lookups only, for the same reason `specFor` uses them: `toString` is not a command.
  */
-function helpFor(positionals: readonly string[]): number {
+function helpFor(ctx: CliContext, positionals: readonly string[]): ExitCode {
   const label = commandLabel(positionals)
-  if (!Object.hasOwn(HELP_BY_LABEL, label)) return usage()
-  process.stdout.write(HELP_BY_LABEL[label] ?? '')
+  if (!Object.hasOwn(HELP_BY_LABEL, label)) return usage(ctx)
+  ctx.stdout.write(HELP_BY_LABEL[label] ?? '')
   return EXIT_OK
 }
 
@@ -410,11 +475,7 @@ function suppliedOptions(tokens: readonly OptionToken[]): readonly string[] {
   )
 }
 
-function rejectForeignOptions(
-  supplied: readonly string[],
-  spec: CommandSpec,
-  label: string,
-): void {
+function rejectForeignOptions(supplied: readonly string[], spec: CommandSpec, label: string): void {
   const permitted = new Set<string>([...spec.options, ALWAYS_ALLOWED_OPTION])
   for (const name of supplied) {
     if (!permitted.has(name)) {
@@ -423,9 +484,30 @@ function rejectForeignOptions(
   }
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
+/**
+ * A command that takes `--json` and was given it answers a malformed invocation with the same
+ * `{"error":{…}}` envelope as any other failure, so a script parses one shape on every path. The
+ * banner is for a human; it would be noise in front of a parser.
+ */
+function refuseUsage(
+  ctx: CliContext,
+  message: string,
+  spec: CommandSpec | undefined,
+  values: ParsedValues,
+): ExitCode {
+  const isJson = values.json && spec?.options.includes('json') === true
+  if (!isJson) return usage(ctx, message)
+  return reportFailure(new CliError('USAGE_ERROR', message, { exitCode: EXIT_USAGE }), ctx, {
+    isJson,
+  })
+}
+
+export async function main(
+  argv: readonly string[],
+  ctx: CliContext = processContext(),
+): Promise<ExitCode> {
   const versionRequest = globalVersionRequest(argv)
-  if (versionRequest !== null) return writeVersion(versionRequest.isJson)
+  if (versionRequest !== null) return writeVersion(ctx, versionRequest.isJson)
 
   let parsed: {
     values: ParsedValues
@@ -440,7 +522,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       tokens: true,
     })
   } catch (error) {
-    return usage(error instanceof Error ? error.message : 'could not parse the arguments')
+    return usage(ctx, error instanceof Error ? error.message : 'could not parse the arguments')
   }
 
   const { values, positionals, tokens } = parsed
@@ -448,18 +530,19 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Flags with no command are a malformed invocation, not a request for help: answering on stdout
   // at exit 0 tells `enclave --json | jq` the run succeeded and then hands the parser prose.
   if (command === undefined) {
-    if (values.help || argv.length === 0) return usage()
-    return usage('no command — see the commands above')
+    if (values.help || argv.length === 0) return usage(ctx)
+    return usage(ctx, 'no command — see the commands above')
   }
-  if (values.help) return helpFor(positionals)
+  if (values.help) return helpFor(ctx, positionals)
 
+  let spec: CommandSpec | undefined
   try {
-    const spec = specFor(positionals)
-    if (spec === undefined) return usage(`unknown command '${command}'`)
+    spec = specFor(positionals)
+    if (spec === undefined) return usage(ctx, `unknown command '${command}'`)
     rejectForeignOptions(suppliedOptions(tokens), spec, commandLabel(positionals))
-    return await spec.run(positionals, values)
+    return await spec.run(positionals, values, ctx)
   } catch (error) {
-    if (error instanceof UsageError) return usage(error.message)
+    if (error instanceof UsageError) return refuseUsage(ctx, error.message, spec, values)
     throw error
   }
 }
