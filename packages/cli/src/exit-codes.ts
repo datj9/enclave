@@ -9,3 +9,5 @@ export const EXIT_FAILED = 1
 
 /** The command was malformed and never ran — bad flag, missing argument, unusable value. */
 export const EXIT_USAGE = 2
+
+export type ExitCode = typeof EXIT_OK | typeof EXIT_FAILED | typeof EXIT_USAGE
