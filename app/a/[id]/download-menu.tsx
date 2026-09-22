@@ -1,6 +1,6 @@
 'use client'
 
-import { Menu } from '@base-ui-components/react/menu'
+import { Menu } from '@base-ui/react/menu'
 import { useState } from 'react'
 
 import styles from './download-menu.module.css'
@@ -12,8 +12,8 @@ import styles from './download-menu.module.css'
  * `.md` and `.html` are plain navigations to the download route — the `attachment` header makes
  * the browser save the file. `.pdf` is client-side: it fetches the self-contained HTML, opens a
  * new window on an object URL, and prints it. No server-side PDF, no headless browser, and no
- * `sonner` toast here — the app mounts no `<Toaster/>`, so failures surface as an inline
- * `role="alert"` like `share-dialog.tsx` does.
+ * toast — the app has no toast surface, so failures surface as an inline `role="alert"` like
+ * `share-dialog.tsx` does.
  *
  * Note the inlined artifact `<script>` will not execute under the opener's `script-src` CSP: the
  * printed PDF is the un-hydrated HTML. Acceptable — and tests must not assert JS-rendered content.
@@ -23,11 +23,6 @@ const PRINT_ERROR = 'The PDF could not be prepared.'
 const POPUP_BLOCKED_ERROR = 'The pop-up was blocked. Allow pop-ups and try again.'
 /** Safari never fires `afterprint`; the object URL must still be revoked, eventually. */
 const REVOKE_FALLBACK_MS = 60_000
-
-/** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
-function css(className: string | undefined): string {
-  return className ?? ''
-}
 
 export function DownloadMenu({ downloadBasePath }: { readonly downloadBasePath: string }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -73,29 +68,29 @@ export function DownloadMenu({ downloadBasePath }: { readonly downloadBasePath: 
         Download
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner className={css(styles.positioner)} side="bottom" align="end" sideOffset={4}>
-          <Menu.Popup className={css(styles.popup)} data-testid="download-menu">
+        <Menu.Positioner className={styles.positioner} side="bottom" align="end" sideOffset={4}>
+          <Menu.Popup className={styles.popup} data-testid="download-menu">
             {errorMessage !== null && (
               <p className="form-error" role="alert">
                 {errorMessage}
               </p>
             )}
             <Menu.Item
-              className={css(styles.item)}
+              className={styles.item}
               data-testid="download-md"
               render={<a href={`${downloadBasePath}?format=md`} />}
             >
               Markdown (.md)
             </Menu.Item>
             <Menu.Item
-              className={css(styles.item)}
+              className={styles.item}
               data-testid="download-html"
               render={<a href={`${downloadBasePath}?format=html`} />}
             >
               HTML (.html)
             </Menu.Item>
             <Menu.Item
-              className={css(styles.item)}
+              className={styles.item}
               data-testid="download-pdf"
               closeOnClick={false}
               onClick={() => void downloadPdf()}

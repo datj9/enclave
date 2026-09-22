@@ -1,70 +1,8 @@
 /*
- * docs/motion.md § This project's surfaces, share dialog row: `scale(0.96) → 1` plus opacity over
- * 220 ms `ease-out`, backdrop the same duration, `transform-origin: center` because modals are the
- * documented exception to origin-aware scaling.
- *
- * `--dur-share` is 220 ms and lives here rather than in tokens.css: it is this one surface's
- * duration, not a scale step every surface picks from.
+ * The frame — backdrop, popup, title, description and their 220 ms entrance — is the shared modal
+ * shell in app/_components/ui/dialog.module.css (`.popup` + `.popupWide`). This file owns only
+ * what is particular to the share surface.
  */
-.backdrop,
-.popup {
-  --dur-share: 220ms;
-}
-
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: oklch(20% 0.01 60 / 0.44);
-  opacity: 1;
-  transition: opacity var(--dur-share) var(--ease-out-app);
-}
-
-.backdrop[data-starting-style],
-.backdrop[data-ending-style] {
-  opacity: 0;
-}
-
-.popup {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: var(--z-modal);
-  width: min(30rem, calc(100vw - 2 * var(--space-md)));
-  max-height: calc(100dvh - 2 * var(--space-lg));
-  overflow-y: auto;
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  background: var(--color-paper);
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-card);
-  transform-origin: center;
-  transform: translate(-50%, -50%) scale(1);
-  opacity: 1;
-  transition:
-    transform var(--dur-share) var(--ease-out-app),
-    opacity var(--dur-share) var(--ease-out-app);
-}
-
-.popup[data-starting-style],
-.popup[data-ending-style] {
-  transform: translate(-50%, -50%) scale(0.96);
-  opacity: 0;
-}
-
-.title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--text-md);
-  letter-spacing: -0.01em;
-}
-
-.description {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-ink-2);
-}
 
 .created {
   padding: var(--space-xs);
@@ -222,16 +160,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backdrop,
-  .popup,
   .copy {
-    transition-duration: var(--dur-share);
+    transition-duration: 220ms;
     transition-property: opacity;
-  }
-
-  .popup[data-starting-style],
-  .popup[data-ending-style] {
-    transform: translate(-50%, -50%);
   }
 
   .copy:active {

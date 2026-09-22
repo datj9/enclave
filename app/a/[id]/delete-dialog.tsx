@@ -1,11 +1,11 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
 import { useRouter } from 'next/navigation'
 import { useRef, useState } from 'react'
 
 import { deleteConfirmBody } from '@/lib/artifacts/delete-copy'
-import { css } from '@/lib/ui/class-name'
+import { cx } from '@/lib/ui/class-name'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from './delete-dialog.module.css'
 
 /**
@@ -13,8 +13,9 @@ import styles from './delete-dialog.module.css'
  * is the part a confirmation has to say out loud — the author reaches for delete precisely when a
  * link went somewhere it should not have.
  *
- * Motion is docs/motion.md § This project's surfaces: the popup scales in like the share dialog,
- * and the destructive button gets nothing at all. An instant response is what reads as trustworthy.
+ * The modal itself is the shared ConfirmDialog; this file owns the request, the live-link count and
+ * the trigger. Its motion rule — the destructive buttons get no animation at all — is in
+ * dialog.module.css for the confirm button and in delete-dialog.module.css for the trigger.
  */
 
 const DELETE_FAILED = 'That artifact could not be deleted.'
@@ -86,43 +87,25 @@ export function DeleteDialog({
   }
 
   return (
-    <Dialog.Root
+    <ConfirmDialog
       onOpenChange={(isOpen) => {
         if (isOpen) void refreshLiveShareCount()
       }}
-    >
-      <Dialog.Trigger className={`button-sm ${css(styles.trigger)}`} data-testid="delete-open">
-        Delete
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(styles.backdrop)} />
-        <Dialog.Popup className={css(styles.popup)} data-testid="delete-dialog">
-          <Dialog.Title className={css(styles.title)}>Delete this artifact?</Dialog.Title>
-          <Dialog.Description className={css(styles.description)}>
-            {deleteConfirmBody(liveShareCount, retentionDays)}
-          </Dialog.Description>
-
-          {errorMessage !== null && (
-            <p className="form-error" role="alert">
-              {errorMessage}
-            </p>
-          )}
-
-          <div className={styles.actions}>
-            <button
-              className={`button-sm ${styles.confirm}`}
-              type="button"
-              aria-disabled={isBusy}
-              data-testid="delete-confirm"
-              onClick={() => void handleDelete()}
-            >
-              Delete
-            </button>
-            <Dialog.Close className={css(styles.cancel)}>Keep it</Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      trigger={{
+        label: 'Delete',
+        className: cx('button-sm', styles.trigger),
+        testId: 'delete-open',
+      }}
+      title="Delete this artifact?"
+      body={deleteConfirmBody(liveShareCount, retentionDays)}
+      confirmLabel="Delete"
+      cancelLabel="Keep it"
+      tone="danger"
+      busy={isBusy}
+      error={errorMessage}
+      testId="delete-dialog"
+      confirmTestId="delete-confirm"
+      onConfirm={() => void handleDelete()}
+    />
   )
 }

@@ -1,6 +1,5 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
 import { useState } from 'react'
 
 import type { AdminUserSummary } from '@/lib/admin/users'
@@ -9,8 +8,8 @@ import {
   formatInstantStable,
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
-import { css } from '@/lib/ui/class-name'
-import dialogStyles from '../../a/[id]/delete-dialog.module.css'
+import { cx } from '@/lib/ui/class-name'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from '../admin.module.css'
 import deleteStyles from './delete-user-dialog.module.css'
 
@@ -222,37 +221,22 @@ function DeleteUserDialog({
   }
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
-      <Dialog.Trigger
-        className={`button-sm ${css(deleteStyles.trigger)}`}
-        data-testid="user-delete-open"
-      >
-        Delete
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(dialogStyles.backdrop)} />
-        <Dialog.Popup className={css(dialogStyles.popup)} data-testid="user-delete-dialog">
-          <Dialog.Title className={css(dialogStyles.title)}>Delete {person.email}?</Dialog.Title>
-          <Dialog.Description className={css(dialogStyles.description)}>
-            Their sign-in stops working and the account is removed. Their audit trail stays. This
-            cannot be undone — deactivate instead if you only want to end their access.
-          </Dialog.Description>
-
-          <div className={dialogStyles.actions}>
-            <button
-              className={`button-sm ${dialogStyles.confirm}`}
-              type="button"
-              aria-disabled={isBusy}
-              data-testid="user-delete-confirm"
-              onClick={() => void handleDelete()}
-            >
-              Delete account
-            </button>
-            <Dialog.Close className={css(dialogStyles.cancel)}>Cancel</Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      trigger={{
+        label: 'Delete',
+        className: cx('button-sm', deleteStyles.trigger),
+        testId: 'user-delete-open',
+      }}
+      title={`Delete ${person.email}?`}
+      body="Their sign-in stops working and the account is removed. Their audit trail stays. This cannot be undone — deactivate instead if you only want to end their access."
+      confirmLabel="Delete account"
+      tone="danger"
+      busy={isBusy}
+      testId="user-delete-dialog"
+      confirmTestId="user-delete-confirm"
+      onConfirm={() => void handleDelete()}
+    />
   )
 }
