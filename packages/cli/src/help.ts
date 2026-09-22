@@ -48,6 +48,7 @@ const LOGOUT_HELP = `enclave logout — forget the stored token for a host
 ${HOST_FLAGS}
 Only the entry for that host is removed; tokens for other hosts stay.
 ENCLAVE_TOKEN is read from the environment and cannot be removed from here.
+Exits 0 when no token was stored for the host, noting it on stderr.
 
 Examples:
   enclave logout --host enclave.example.com
