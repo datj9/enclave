@@ -2,17 +2,25 @@ import { eq, sql } from 'drizzle-orm'
 
 import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
+import { PENDING_SWEEP_AFTER_MINUTES } from '@/jobs/sweep-pending'
 import { recordAuditEvent } from '@/lib/audit'
 import { ENTRY_PATH, validateBundle, type BundleFile } from '@/lib/bundle/validate'
 import { classifyArtifactVersion } from '@/lib/categories/classify'
 import { HttpError } from '@/lib/http'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
-import { markVersionReady, totalBytesOf, uploadBundleObjects } from './bundle-write'
+import { runAfterResponse } from './after-response'
+import {
+  currentVersionNoOf,
+  markVersionReady,
+  totalBytesOf,
+  uploadBundleObjects,
+} from './bundle-write'
 import { CLIENT_MESSAGE_BY_CODE } from './create'
 import { artifactViewUrl } from './naming'
 
 const CONFLICT_MESSAGE = 'The artifact has a newer version than expected'
+const IN_FLIGHT_MESSAGE = 'Another version of this artifact is still uploading'
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -21,6 +29,23 @@ function isUniqueViolation(error: unknown): boolean {
     'code' in error &&
     (error as { readonly code?: unknown }).code === '23505'
   )
+}
+
+type Reader = Pick<typeof db, 'select'>
+
+/**
+ * The number of the version readers are currently served, or 0 before the first flip. Reads the
+ * pointer rather than `max(version_no)`: pending and abandoned versions are not "current".
+ */
+async function readCurrentVersionNo(reader: Reader, artifactId: string): Promise<number> {
+  const [row] = await reader
+    .select({
+      currentVersionNo: sql<number>`coalesce(${currentVersionNoOf}, 0)`,
+    })
+    .from(artifacts)
+    .where(eq(artifacts.id, artifactId))
+
+  return Number(row?.currentVersionNo ?? 0)
 }
 
 export interface AppendVersionInput {
@@ -42,7 +67,8 @@ export interface AppendedVersion {
  * row first, objects, then the flip — so a failure mid-upload leaves a `pending` version and
  * `current_version_id` pointing at the previous version, and the sweeper reclaims the orphan.
  *
- * `expectedVersionNo` present → refuse unless it equals the current version (a lost append race).
+ * `expectedVersionNo` present → refuse unless it equals the current (ready, served) version — a
+ * lost append race.
  * Absent → unconditional append (`--force`). The unique btree on `(artifact_id, version_no)` is
  * the backstop for a concurrent append that slips between the guard and the insert.
  */
@@ -83,12 +109,11 @@ export async function appendVersion(
         throw new HttpError('NOT_FOUND', 'Artifact not found')
       }
 
-      const [maxRow] = await transaction
-        .select({ currentVersionNo: sql<number>`coalesce(max(${artifactVersions.versionNo}), 0)` })
-        .from(artifactVersions)
-        .where(eq(artifactVersions.artifactId, input.artifactId))
-
-      const currentVersionNo = maxRow?.currentVersionNo ?? 0
+      // The guard compares against the version readers are served (`current_version_id`, always
+      // `ready`), because that is what the client saw and built on — not `max(version_no)`, which
+      // counts pending rows too, so one abandoned upload used to make every `--expected` push
+      // fail until the sweeper ran.
+      const currentVersionNo = await readCurrentVersionNo(transaction, input.artifactId)
 
       if (
         input.expectedVersionNo !== undefined &&
@@ -99,7 +124,34 @@ export async function appendVersion(
         })
       }
 
-      const versionNo = currentVersionNo + 1
+      // The new number is `max + 1` over every row, pending included: the unique index covers
+      // them all, so a stuck pending v3 keeps its number until the sweeper reclaims it.
+      //
+      // `inFlightVersionNo` is the other half of the guard. Another append that passed its own
+      // guard and is still uploading has not flipped `current_version_id` yet, so the check above
+      // alone would let two clients who both saw v1 each append on top of it. A pending version
+      // younger than the sweeper's cutoff is treated as that in-flight append and refused; an
+      // older one is an abandoned upload awaiting the sweeper and no longer blocks anyone.
+      const [numbers] = await transaction
+        .select({
+          maxVersionNo: sql<number>`coalesce(max(${artifactVersions.versionNo}), 0)`,
+          inFlightVersionNo: sql<number | null>`max(${artifactVersions.versionNo}) filter (where ${artifactVersions.status} = 'pending' and ${artifactVersions.versionNo} > ${currentVersionNo} and ${artifactVersions.createdAt} > now() - make_interval(mins => ${PENDING_SWEEP_AFTER_MINUTES}))`,
+        })
+        .from(artifactVersions)
+        .where(eq(artifactVersions.artifactId, input.artifactId))
+
+      const inFlightVersionNo = numbers?.inFlightVersionNo ?? null
+      if (input.expectedVersionNo !== undefined && inFlightVersionNo !== null) {
+        throw new HttpError('VERSION_CONFLICT', IN_FLIGHT_MESSAGE, {
+          details: {
+            expectedVersionNo: input.expectedVersionNo,
+            currentVersionNo,
+            inFlightVersionNo: Number(inFlightVersionNo),
+          },
+        })
+      }
+
+      const versionNo = Number(numbers?.maxVersionNo ?? 0) + 1
 
       const [version] = await transaction
         .insert(artifactVersions)
@@ -130,12 +182,7 @@ export async function appendVersion(
     .catch(async (error: unknown) => {
       if (!isUniqueViolation(error)) throw error
 
-      const [maxRow] = await db
-        .select({ currentVersionNo: sql<number>`coalesce(max(${artifactVersions.versionNo}), 0)` })
-        .from(artifactVersions)
-        .where(eq(artifactVersions.artifactId, input.artifactId))
-
-      const currentVersionNo = maxRow?.currentVersionNo ?? 0
+      const currentVersionNo = await readCurrentVersionNo(db, input.artifactId)
       throw new HttpError('VERSION_CONFLICT', CONFLICT_MESSAGE, {
         details: {
           ...(input.expectedVersionNo === undefined
@@ -158,14 +205,17 @@ export async function appendVersion(
     metadata: { versionNo: version.versionNo, fileCount: manifest.length },
   })
 
-  // Best-effort model tagging — the classifier never throws by contract, so no try/catch.
-  // A manually-tagged artifact is the author's own curation: skip re-classification entirely.
+  // Best-effort model tagging, after the response (inline outside a request) — see
+  // `runAfterResponse`. A manually-tagged artifact is the author's own curation: skip
+  // re-classification entirely.
   if (version.categorySource !== 'manual') {
-    await classifyArtifactVersion({
-      artifactId: version.artifactId,
-      title: version.title,
-      files: input.files,
-    })
+    await runAfterResponse(`classify artifact ${version.artifactId}`, () =>
+      classifyArtifactVersion({
+        artifactId: version.artifactId,
+        title: version.title,
+        files: input.files,
+      }),
+    )
   }
 
   return {

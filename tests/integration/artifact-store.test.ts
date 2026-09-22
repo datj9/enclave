@@ -4,7 +4,7 @@ import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
 import { createArtifactWithBundle } from '@/lib/artifacts/create'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
-import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
+import { DEFAULT_LIST_LIMIT, decodeListCursor } from '@/lib/artifacts/list-query'
 import { PENDING_SWEEP_AFTER_MINUTES, sweepPendingVersions } from '@/jobs/sweep-pending'
 import { HttpError } from '@/lib/http'
 import { storageKey, versionPrefix, type ObjectStore } from '@/lib/storage/object-store'
@@ -252,6 +252,43 @@ describe.skipIf(!servicesReady)('artifact write path', () => {
     const seen = [...firstPage.items, ...rest.items].map((item) => item.id)
     expect(new Set(seen).size).toBe(3)
     expect(seen).toEqual(expect.arrayContaining(created.map((artifact) => artifact.id)))
+  })
+
+  it('pages through rows created within the same millisecond without skipping any', async () => {
+    const created = []
+    for (const title of ['alpha', 'beta', 'gamma']) {
+      created.push(
+        await createArtifactWithBundle(
+          { ownerId, title, visibility: 'private', files: bundle() },
+          store,
+        ),
+      )
+    }
+
+    // Three distinct microseconds inside one millisecond. A millisecond cursor from the first
+    // row (…123) sorts before all three, so the old `created_at < cursor` returned nothing more.
+    const microseconds = ['900', '500', '100']
+    for (const [index, artifact] of created.entries()) {
+      await db
+        .update(artifacts)
+        .set({
+          createdAt: sql`${`2026-01-01T00:00:00.123${microseconds[index] ?? '000'}Z`}::timestamptz`,
+        })
+        .where(eq(artifacts.id, artifact.id))
+    }
+
+    const seen: string[] = []
+    let cursor: string | null = null
+    do {
+      const page: Awaited<ReturnType<typeof listOwnedArtifacts>> = await listOwnedArtifacts(
+        ownerId,
+        { limit: 1, cursor: cursor === null ? undefined : decodeListCursor(cursor) },
+      )
+      seen.push(...page.items.map((item) => item.id))
+      cursor = page.nextCursor
+    } while (cursor !== null && seen.length < 10)
+
+    expect(seen).toEqual(created.map((artifact) => artifact.id))
   })
 })
 

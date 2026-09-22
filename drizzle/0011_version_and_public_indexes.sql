@@ -1,0 +1,2 @@
+CREATE INDEX "artifacts_public_updated_idx" ON "artifacts" USING btree ("updated_at" DESC NULLS LAST) WHERE "artifacts"."visibility" = 'public' and "artifacts"."deleted_at" is null and "artifacts"."current_version_id" is not null;--> statement-breakpoint
+CREATE INDEX "share_links_version_idx" ON "share_links" USING btree ("version_id");

@@ -3,6 +3,7 @@ import { and, desc, eq, exists, isNull, lt, or, sql, type SQL } from 'drizzle-or
 import { db } from '@/db'
 import { artifactVersions, artifacts, type Visibility } from '@/db/schema/artifacts'
 import { artifactCategories, categories } from '@/db/schema/categories'
+import { HttpError } from '@/lib/http'
 import { encodeListCursor, type ListCursor, type ListQuery } from './list-query'
 import { artifactViewUrl } from './naming'
 import { readArtifactTags } from './tags'
@@ -41,12 +42,48 @@ export type ArtifactListQuery = Omit<ListQuery, 'categorySlug'> & {
   readonly categorySlug?: string | undefined
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** `created_at` as written by `cursorTimestampOf`: ISO 8601, UTC, exactly six fractional digits. */
+const MICROSECOND_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/
+
+/**
+ * `created_at` rendered by Postgres at its full microsecond precision. A JS `Date` holds
+ * milliseconds only, so a cursor built from `toISOString()` sits up to 999µs *before* the row it
+ * came from — and `created_at < cursor` then skips every row created later in that same
+ * millisecond, which bulk inserts and fast CLI pushes routinely produce.
+ */
+const cursorTimestampOf = sql<string>`to_char(${artifacts.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+
+function invalidCursor(): HttpError {
+  return new HttpError('VALIDATION_FAILED', 'The query parameters are not valid', {
+    details: { parameter: 'cursor' },
+  })
+}
+
+/**
+ * Normalises the cursor's timestamp into something Postgres will cast. A current cursor is used
+ * verbatim, keeping every microsecond. A cursor issued before this change (millisecond ISO, from
+ * `toISOString()`) is still accepted best-effort — it pages exactly as it used to — rather than
+ * breaking a client mid-pagination on deploy. Anything else is rejected as a bad cursor instead of
+ * reaching the database as an uncastable literal and surfacing as a 500.
+ */
+export function cursorTimestamp(raw: string): string {
+  if (MICROSECOND_TIMESTAMP.test(raw)) return raw
+
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) throw invalidCursor()
+  return parsed.toISOString()
+}
+
 /** Keyset predicate matching the `(created_at desc, id desc)` order exactly. */
-function afterCursor(cursor: ListCursor): SQL | undefined {
-  const createdAt = new Date(cursor.createdAt)
+export function afterCursor(cursor: ListCursor): SQL | undefined {
+  if (!UUID_PATTERN.test(cursor.id)) throw invalidCursor()
+
+  const createdAt = sql`${cursorTimestamp(cursor.createdAt)}::timestamptz`
   return or(
-    lt(artifacts.createdAt, createdAt),
-    and(eq(artifacts.createdAt, createdAt), lt(artifacts.id, cursor.id)),
+    sql`${artifacts.createdAt} < ${createdAt}`,
+    and(sql`${artifacts.createdAt} = ${createdAt}`, lt(artifacts.id, cursor.id)),
   )
 }
 
@@ -86,6 +123,7 @@ export async function listOwnedArtifacts(
       totalBytes: artifactVersions.totalBytes,
       createdAt: artifacts.createdAt,
       updatedAt: artifacts.updatedAt,
+      cursorCreatedAt: cursorTimestampOf,
     })
     .from(artifacts)
     .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
@@ -109,8 +147,16 @@ export async function listOwnedArtifacts(
   const tagsById = await readArtifactTags(page.map((row) => row.id))
 
   return {
+    // Field by field so the cursor-only `cursorCreatedAt` column never leaks into the API shape.
     items: page.map((row) => ({
-      ...row,
+      id: row.id,
+      title: row.title,
+      slug: row.slug,
+      visibility: row.visibility,
+      versionId: row.versionId,
+      versionNo: row.versionNo,
+      fileCount: row.fileCount,
+      totalBytes: row.totalBytes,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
       viewUrl: artifactViewUrl(row.id),
@@ -118,7 +164,7 @@ export async function listOwnedArtifacts(
     })),
     nextCursor:
       hasMore && last !== undefined
-        ? encodeListCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
+        ? encodeListCursor({ createdAt: last.cursorCreatedAt, id: last.id })
         : null,
   }
 }
