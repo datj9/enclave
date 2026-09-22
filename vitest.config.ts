@@ -30,7 +30,8 @@ export default defineConfig({
           // require-services.ts fails every file instead: a green run that silently skipped the
           // whole directory is worse than a red one.
           include: ['tests/integration/**/*.test.ts'],
-          setupFiles: ['./tests/unit/setup-env.ts', './tests/integration/require-services.ts'],
+          setupFiles: ['./tests/unit/setup-env.ts'],
+          globalSetup: ['./tests/integration/require-services.ts'],
           // One database, no per-worker isolation: parallel files collide on instance-wide rows
           // (the auto_categorize_enabled setting is a single keyed row that three files toggle).
           // Serial costs ~35s for the whole directory and removes the entire failure class.
