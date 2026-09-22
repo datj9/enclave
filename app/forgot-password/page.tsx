@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { AuthScreen } from '@app/_components/auth-screen'
 import { GENERIC_FORGOT_PASSWORD_SUCCESS } from '@/lib/auth/forgot-password'
@@ -32,12 +33,13 @@ export default async function ForgotPasswordPage({ searchParams }: ForgotPasswor
       caption="Enter the email for this instance."
       action="/api/auth/forgot-password"
       submitLabel="Send reset link"
+      submitPendingLabel="Sending"
       showPassword={false}
       errorMessage={errorMessageFor(error)}
       successMessage={sent === '1' ? GENERIC_FORGOT_PASSWORD_SUCCESS : null}
       footer={
         <p>
-          <a href="/signin">Back to sign in</a>
+          <Link href="/signin">Back to sign in</Link>
         </p>
       }
     />

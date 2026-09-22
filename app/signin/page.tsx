@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { AuthScreen } from '@app/_components/auth-screen'
 import { OidcSignin } from '@app/_components/oidc-signin'
@@ -34,9 +35,10 @@ export default async function SigninPage({ searchParams }: SigninPageProps) {
       caption="Enter the credentials for this instance."
       action="/api/auth/signin"
       submitLabel="Sign in"
+      submitPendingLabel="Signing in"
       passwordAutoComplete="current-password"
       errorMessage={errorMessageFor(error)}
-      footer={<a href="/forgot-password">Forgot password?</a>}
+      footer={<Link href="/forgot-password">Forgot password?</Link>}
       alternative={isOidcEnabled() ? <OidcSignin /> : null}
     />
   )

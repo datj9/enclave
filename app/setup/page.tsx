@@ -24,6 +24,7 @@ export default async function SetupPage({ searchParams }: SetupPageProps) {
       caption="This runs once. After this account exists, this page stops responding."
       action="/api/setup"
       submitLabel="Create administrator"
+      submitPendingLabel="Creating administrator"
       passwordAutoComplete="new-password"
       passwordHint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
       errorMessage={

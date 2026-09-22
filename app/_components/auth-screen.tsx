@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/auth/password'
+import { SubmitButton } from './submit-button'
 import styles from './auth-screen.module.css'
 
 interface AuthScreenProps {
@@ -8,6 +9,8 @@ interface AuthScreenProps {
   /** Route handler the form posts to. Plain HTML form — no client JavaScript required. */
   readonly action: string
   readonly submitLabel: string
+  /** Label while the form is posting — the button also refuses a second submit meanwhile. */
+  readonly submitPendingLabel?: string
   readonly passwordAutoComplete?: 'new-password' | 'current-password'
   readonly passwordHint?: string
   readonly errorMessage: string | null
@@ -29,6 +32,7 @@ export function AuthScreen({
   caption,
   action,
   submitLabel,
+  submitPendingLabel,
   passwordAutoComplete,
   passwordHint,
   errorMessage,
@@ -100,9 +104,7 @@ export function AuthScreen({
             </div>
           )}
 
-          <button className="button-primary" type="submit">
-            {submitLabel}
-          </button>
+          <SubmitButton pendingLabel={submitPendingLabel}>{submitLabel}</SubmitButton>
         </form>
 
         {footer !== undefined && <div className={styles.footer}>{footer}</div>}
