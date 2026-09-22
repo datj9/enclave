@@ -22,8 +22,10 @@ concurrency:
 env:
   NEXT_TELEMETRY_DISABLED: '1'
   # One place for the object-storage image. A dated release, never `latest`: the same commit must
-  # test against the same server next month. Keep in step with docker-compose.yml.
-  MINIO_IMAGE: minio/minio:RELEASE.2025-09-07T16-13-09Z
+  # test against the same server next month. From quay.io, MinIO's own registry — Docker Hub does
+  # not carry the dated tags. The digest is the one `minio/minio:latest` resolved to when this was
+  # pinned, so nothing changed underneath the tests. Keep in step with docker-compose.yml.
+  MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
 
 # Actions are pinned to the commit a release tag pointed at when it was pinned (the trailing
 # comment); a moved tag cannot change what runs. Dependabot keeps both in step.

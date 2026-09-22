@@ -50,8 +50,9 @@ services:
   # Any S3-compatible backend works in production (AWS S3, GCS, R2, B2).
   minio:
     # A dated release, not `latest`, so a fresh `up` next month runs the server this was tested
-    # against. Keep in step with MINIO_IMAGE in .github/workflows/ci.yml.
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # against (quay.io: Docker Hub does not carry the dated tags). Keep in step with MINIO_IMAGE in
+    # .github/workflows/ci.yml.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     profiles: ['minio']
     restart: unless-stopped
     command: server /data --console-address ":9001"
