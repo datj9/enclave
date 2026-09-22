@@ -1,10 +1,12 @@
 .claude
 .devkit
 .git
+.github
 .env
 .env.local
 .env.*.local
-node_modules
+# Root-anchored patterns miss nested installs, e.g. packages/*/node_modules.
+**/node_modules
 .next
 coverage
 playwright-report
@@ -15,3 +17,12 @@ dist
 *.tsbuildinfo
 .DS_Store
 *.log
+# Not part of the server or the operator toolbox. `next build` type-checks every *.ts under the
+# context (tsconfig include is **/*.ts), so leaving these out only narrows that check; CI still
+# type-checks the whole tree.
+docs
+tests
+packages
+*.md
+playwright.config.ts
+vitest.config.ts

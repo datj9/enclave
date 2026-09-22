@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1
 
+# Targets:
+#   runner  (default, last stage) — the server: Next.js standalone bundle + the env preflight only.
+#   tools   — full dependency tree + sources, for drizzle-kit and the scheduled jobs under scripts/.
+#             Its default command applies migrations. Built straight from the context, so it does
+#             not wait on `next build`.
+#   migrate — alias of `tools`.
+# The server image deliberately carries no drizzle-kit, tsx or dev dependencies; operator tasks
+# that need them run from `tools`/`migrate`, which is never the long-running container.
+
 FROM node:24-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
@@ -16,10 +25,43 @@ COPY . .
 # `next build` evaluates route modules, so src/env.ts must not require a real environment at
 # import time — it does not; validation happens on first property read.
 ENV NEXT_TELEMETRY_DISABLED=1
+# next.config.ts only emits `.next/standalone` when this is set; the runner stage depends on it.
 ENV BUILD_STANDALONE=true
 RUN pnpm build
+# scripts/check-env.ts runs outside the Next bundle, and the standalone trace does not include its
+# imports: Next bundles zod into server chunks rather than leaving it in node_modules, and dotenv
+# is a devDependency the app never imports. Both are dependency-free, so dereferencing pnpm's
+# symlinks into a flat copy is all the runner needs. If check-env.ts or src/env.ts gains an
+# import, add it here.
+RUN mkdir -p /preflight/node_modules \
+  && cp -rL node_modules/zod node_modules/dotenv /preflight/node_modules/
 
-FROM base AS runner
+# Operator toolbox. Migrations need drizzle-kit (a devDependency) and the jobs need tsx plus the
+# whole server-side source graph, so this keeps the full install. It is the old runner minus the
+# server bundle, plus tsconfig.json, which tsx needs to resolve the `@/*` aliases the jobs import.
+FROM base AS tools
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV TZ=UTC
+# Pin pnpm into an image-level cache so the non-root user never has to download it at run time.
+ENV COREPACK_HOME=/corepack
+RUN groupadd --system --gid 1001 nodejs \
+  && useradd --system --uid 1001 --gid nodejs --create-home enclave
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json pnpm-lock.yaml tsconfig.json drizzle.config.ts ./
+COPY drizzle ./drizzle
+COPY src ./src
+COPY scripts ./scripts
+RUN corepack install && chown -R enclave:nodejs "$COREPACK_HOME"
+USER enclave
+CMD ["pnpm", "db:migrate"]
+
+# Alias so `--target migrate` reads as what it does; the default command above already migrates.
+FROM tools AS migrate
+
+# Kept last so a plain `docker build .` still produces the server image.
+FROM node:24-bookworm-slim AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
@@ -31,17 +73,17 @@ ENV TZ=UTC
 RUN groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs enclave
 
-# Migrations plus the drizzle-kit toolchain: `docker compose run --rm app pnpm db:migrate`
-# is how an operator applies schema changes without a local Node install.
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
-COPY --from=builder /app/drizzle ./drizzle
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/scripts ./scripts
-
+# server.js, the traced node_modules subset and package.json (whose "type": "module" the
+# preflight's type stripping relies on).
 COPY --from=builder --chown=enclave:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=enclave:nodejs /app/.next/static ./.next/static
+# There is no public/ directory today; if one is added, copy it here as well:
+#   COPY --from=builder --chown=enclave:nodejs /app/public ./public
+
+# The env preflight: check-env.ts imports only src/env.ts (zod) and dotenv.
+COPY --from=builder /app/scripts/check-env.ts ./scripts/check-env.ts
+COPY --from=builder /app/src/env.ts ./src/env.ts
+COPY --from=builder /preflight/node_modules/ ./node_modules/
 
 USER enclave
 EXPOSE 3000
