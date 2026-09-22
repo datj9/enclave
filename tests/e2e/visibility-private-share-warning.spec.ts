@@ -5,8 +5,8 @@ import { expect, test, type APIRequestContext, type BrowserContext, type Page } 
  * handed out, so the owner is told how many there are before the downgrade commits — and is told
  * nothing at all when there are none.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database.
  */
 
 const APP_ORIGIN = process.env.E2E_BASE_URL ?? 'http://localhost:3000'

@@ -14,9 +14,10 @@ import { hashPassword } from '../../src/lib/auth/password'
  * for everyone but its owner, flipping it to Organization opens reads without opening writes, and
  * every transition leaves exactly one row in `audit_log`.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database. Artifact origins are driven through `page.goto`: Chrome resolves `*.localhost`
- * itself and treats it as a secure context, Node's resolver does neither.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database. Artifact origins are driven through
+ * `page.goto`: Chrome resolves `*.localhost` itself and treats it as a secure context, Node's
+ * resolver does neither.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'

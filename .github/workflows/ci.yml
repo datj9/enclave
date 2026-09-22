@@ -5,13 +5,66 @@ on:
   # silently never run on a repo whose default branch is called something else.
   push:
   pull_request:
+  # release.yml calls this workflow so an image is only pushed from a tag that passes it.
+  workflow_call:
+
+# Read-only token for every job. Nothing here writes to the repository or a registry.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run's result moot, so it is cancelled — except on
+# the default branch, where every commit keeps its own record. `github.workflow` is the CALLER's
+# name under `workflow_call`, so release.yml's run never shares (and cancels) this group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
 
 env:
   NEXT_TELEMETRY_DISABLED: '1'
+  # One place for the object-storage image. A dated release, never `latest`: the same commit must
+  # test against the same server next month. Keep in step with docker-compose.yml.
+  MINIO_IMAGE: minio/minio:RELEASE.2025-09-07T16-13-09Z
+
+# Actions are pinned to the commit a release tag pointed at when it was pinned (the trailing
+# comment); a moved tag cannot change what runs. Dependabot keeps both in step.
 
 jobs:
-  check:
+  static:
+    name: typecheck, lint, format
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # No `version` input: the action reads `packageManager` from package.json, and pinning both
+      # is a hard error the moment they drift ("Multiple versions of pnpm specified").
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: cp .env.example .env
+
+      - run: pnpm typecheck
+
+      - run: pnpm lint
+
+      # Reported, not enforced: the tree predates the check and ~120 files are not yet
+      # Prettier-clean. Drop `continue-on-error` once a formatting-only commit lands.
+      - run: pnpm format:check
+        continue-on-error: true
+
+  tests:
+    name: unit + integration (coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -33,13 +86,13 @@ jobs:
       # no longer publishes a `latest` tag. It is started as a step below instead.
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      # No `version` input: the action reads `packageManager` from package.json, and pinning both
-      # is a hard error the moment they drift ("Multiple versions of pnpm specified").
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -47,11 +100,11 @@ jobs:
       # Same image, credentials and port as the `minio` profile in docker-compose.yml, so nothing
       # differs between CI and a local stack. tests/integration/** writes real bundles to it.
       - name: start minio
-        run: |
+        run: &start-minio |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=enclave-dev-access-key \
             -e MINIO_ROOT_PASSWORD=enclave-dev-secret-key \
-            minio/minio:latest server /data
+            "$MINIO_IMAGE" server /data
           for i in $(seq 1 40); do
             curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && exit 0
             sleep 2
@@ -64,22 +117,86 @@ jobs:
 
       - run: cp .env.example .env
 
-      - run: pnpm typecheck
-
-      - run: pnpm lint
-
-      # Before `pnpm test`, not after: tests/integration/** queries the real schema.
+      # Before the tests, not after: tests/integration/** queries the real schema.
       - run: pnpm db:migrate
 
-      - run: pnpm test
+      # Both vitest projects under coverage, with the thresholds in vitest.config.ts enforced.
+      # CI=true (set by the runner) makes an unreachable Postgres or MinIO fail the integration
+      # files rather than skip them — see tests/integration/require-services.ts.
+      - run: pnpm test:coverage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e:
+    name: build + e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: enclave
+          POSTGRES_PASSWORD: enclave
+          POSTGRES_DB: enclave
+        ports: ['5434:5432']
+        options: >-
+          --health-cmd "pg_isready -U enclave -d enclave"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: start minio
+        run: *start-minio
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: cp .env.example .env
+
+      - run: pnpm db:migrate
 
       - run: pnpm build
 
-      - run: pnpm exec playwright install --with-deps chromium
+      # The browser download is keyed on the exact Playwright version, so a lockfile bump misses
+      # the cache instead of running a stale browser. The OS packages are not cacheable (they
+      # live under /usr), so a hit still installs those.
+      - id: playwright
+        name: resolve playwright version
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - run: pnpm test:e2e
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: failure()
         with:
           name: playwright-report

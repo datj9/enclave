@@ -12,8 +12,8 @@ import {
  * a paste, a bookmark, or a reload after the 30-minute grant lapsed — is sent back to `/a/{id}`
  * rather than dead-ending on the uniform 404.
  *
- * The `zz-` prefix keeps this file after `setup-and-signin.spec.ts`, which asserts `/setup` is
- * still open on an empty database. Artifact origins are driven through `page.goto` because Chrome
+ * Runs in the `chromium-late` project (playwright.config.ts), after `setup-and-signin.spec.ts`,
+ * which asserts `/setup` is still open on an empty database. Artifact origins are driven through `page.goto` because Chrome
  * resolves `*.localhost` to 127.0.0.1 itself and treats it as a secure context; Node's resolver
  * does neither, so an APIRequestContext cannot reach these hosts.
  */

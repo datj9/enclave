@@ -15,8 +15,8 @@ import postgres from 'postgres'
  * The artifact carries three versions and the link is pinned to v2, so "renders the pinned
  * version" is a real assertion rather than a tautology about the only version there is.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'

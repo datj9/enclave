@@ -5,8 +5,8 @@ import { expect, test, type APIRequestContext, type APIResponse } from '@playwri
  * browser, and a separate client holding only that token — no cookie, exactly what `curl` sends —
  * pushes a bundle that lands owned by the minting user.
  *
- * Sorts after `setup-and-signin.spec.ts` on purpose: that spec asserts `/setup` is still open on
- * an empty database, and Playwright runs spec files in path order with one worker.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts): that
+ * spec asserts `/setup` is still open on an empty database.
  */
 
 const ADMIN_EMAIL = 'ops@example.com'

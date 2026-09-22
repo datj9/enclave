@@ -14,7 +14,8 @@ import type { ObjectStore } from '@/lib/storage/object-store'
  * the real S3-compatible endpoint on `S3_ENDPOINT` — start them with
  * `docker compose --profile minio up -d` and apply migrations with `pnpm db:migrate` first.
  *
- * `probeServices` lets each spec skip itself instead of failing when either is absent.
+ * `probeServices` lets each spec skip itself instead of failing when either is absent — outside
+ * CI only: under CI, `require-services.ts` (an integration setup file) fails every file first.
  */
 
 const PROBE_TIMEOUT_MS = 3000
