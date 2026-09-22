@@ -55,7 +55,11 @@ async function removeTestRows(): Promise<void> {
   await db.delete(users).where(inArray(users.email, TEST_EMAILS))
 }
 
-async function signInAs(email: string, subject: string): Promise<Response> {
+async function signInAs(
+  email: string,
+  subject: string,
+  emailVerified: boolean | null = true,
+): Promise<Response> {
   const response = await startRoute(new Request('https://enclave.test/api/auth/oidc/start'))
   const location = response.headers.get('location')
   const setCookie = response.headers.get('set-cookie')
@@ -67,6 +71,7 @@ async function signInAs(email: string, subject: string): Promise<Response> {
     email,
     nonce: parameters.get('nonce') ?? '',
     codeChallenge: codeChallengeFrom(location),
+    emailVerified,
   })
 
   const callbackUrl = new URL('https://enclave.test/api/auth/oidc/callback')
@@ -109,6 +114,39 @@ describe.skipIf(!databaseReady)('first OIDC sign-in on an invite-only instance',
     const created = await db.select({ id: users.id }).from(users).where(eq(users.email, UNINVITED_EMAIL))
     expect(created).toHaveLength(0)
   })
+
+  it.each([
+    ['explicitly unverified', false],
+    ['silent about verification', null],
+  ] as const)(
+    'will not redeem an email invite for an identity whose provider is %s',
+    async (_label, emailVerified) => {
+      const invite = await createInvite({
+        createdBy: adminId,
+        email: INVITED_EMAIL,
+        expiresInHours: 72,
+      })
+
+      const response = await signInAs(INVITED_EMAIL, 'stub|unverified', emailVerified)
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN' } })
+
+      const created = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, INVITED_EMAIL))
+      expect(created).toHaveLength(0)
+
+      const [row] = await db
+        .select({ usedAt: invites.usedAt })
+        .from(invites)
+        .where(eq(invites.id, invite.inviteId))
+      expect(row?.usedAt).toBeNull()
+
+      // Left outstanding it would compete with the next test's invite for the same address.
+      await db.delete(invites).where(eq(invites.id, invite.inviteId))
+    },
+  )
 
   it('creates the member and burns the invite when one names the asserted address', async () => {
     const invite = await createInvite({

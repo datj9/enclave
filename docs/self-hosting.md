@@ -109,13 +109,27 @@ proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 `X-Forwarded-For` matters beyond hygiene: it is where the audit log gets the IP address of an
 anonymous share-link view from, and what the per-IP sign-in rate limit counts.
 
-**Do not expose the app process directly to the internet.** enclave trusts the first hop in
-`X-Forwarded-For` because every supported deployment terminates TLS at a proxy. Without one in
-front, that header is client-controlled — a caller can set it freely, which makes the per-IP
-sign-in rate limit trivially bypassable and puts attacker-chosen values in your audit log. Make
-sure the proxy _overwrites_ the header rather than appending to whatever the client sent;
-`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends, so also ensure the app is
-unreachable except through the proxy.
+**How the client IP is chosen.** `$proxy_add_x_forwarded_for` _appends_ the address nginx saw to
+whatever `X-Forwarded-For` the caller sent, so the header reaching the app looks like
+`<anything the caller made up>, <real client>`. Only the entries your own proxies wrote are
+trustworthy, and those are at the right-hand end. enclave therefore reads the client IP
+`TRUSTED_PROXY_HOPS` entries from the **right**:
+
+| Deployment                                         | `TRUSTED_PROXY_HOPS` |
+| -------------------------------------------------- | -------------------- |
+| One reverse proxy (nginx, Caddy, Traefik) → app    | `1` (default)        |
+| CDN (Cloudflare, CloudFront, Fastly) → proxy → app | `2`                  |
+| Load balancer → CDN → proxy → app                  | `3`                  |
+
+Set it to the number of proxies that append to the header. Too low and every request appears to
+come from your CDN, so one visitor can exhaust the sign-in limit for everybody; too high and a
+caller can choose their own IP by sending a forged header. If the header is absent, `X-Real-IP`
+is used.
+
+**Do not expose the app process directly to the internet.** Without a proxy in front, the header
+is entirely client-controlled — a caller can set it freely, which makes the per-IP sign-in rate
+limit trivially bypassable and puts attacker-chosen values in your audit log. Make sure the app is
+unreachable except through the proxy chain you described with `TRUSTED_PROXY_HOPS`.
 
 ## TLS
 
@@ -273,6 +287,41 @@ keeps working, because pushing a bundle needs no model.
 Users can store their own key per provider in settings; theirs takes precedence over the instance
 key, and they get the larger `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` when it is used.
 
+| Variable                          | Required | Default | What it does                                                                                                                                                                                |
+| --------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROVIDER_BASE_URL_BLOCK_PRIVATE` | no       | `false` | `true` also refuses user base URLs on private networks (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `fc00::/7`). Leave `false` if users point their keys at Ollama or vLLM on your LAN. |
+
+#### User-supplied base URLs
+
+The `anthropic-compatible` and `openai-compatible` providers let a user store a base URL with their
+key, and the server then makes requests to it. To stop that being used to reach things only the
+server can reach, a base URL is refused when saving if its host is — or resolves to — any of:
+
+- loopback (`127.0.0.0/8`, `::1`, `localhost`, `*.localhost`);
+- link-local (`169.254.0.0/16`, `fe80::/10`), which is where cloud metadata services live, plus
+  the metadata addresses outside that range (`100.100.100.200`, `fd00:ec2::254`) and hostnames
+  such as `metadata.google.internal`;
+- unspecified, multicast or reserved space (`0.0.0.0/8`, `::`, `224.0.0.0/4`, `240.0.0.0/4`,
+  `ff00::/8`);
+- private ranges, **only** when `PROVIDER_BASE_URL_BLOCK_PRIVATE=true`.
+
+Every address a hostname resolves to must pass. A hostname that does not resolve from the server
+is accepted (it will simply fail when used). `https` is not required. The API answers
+`422 VALIDATION_FAILED` naming the kind of address; the URL itself is never echoed.
+
+Keys saved before this check existed keep working: at generation time a refused target is logged
+as a warning (host only) and the call goes ahead, so you can ask the user to replace it.
+
+`OPENAI_BASE_URL` is yours, not a user's, and is never checked — pointing it at a model server on
+`localhost` is fine. A _user_ who wants a model server on the app host itself needs to reach it by
+a non-loopback address (its LAN or Docker network IP).
+
+**Known limitation — DNS rebinding.** The check resolves the hostname once, and the HTTP client
+resolves it again when it connects. A hostile DNS server can answer with a public address the
+first time and an internal one the second. The check stops pasted internal URLs and names that
+plainly resolve inward; if your server can reach sensitive internal services, also restrict its
+egress at the network level.
+
 ### Registration
 
 | Variable                  | Required | Default | What it does                                                                                                                                                                                                                                    |
@@ -293,12 +342,13 @@ key, and they get the larger `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` when it is used
 
 ### Rate limits and quotas
 
-| Variable                            | Required | Default | What it does                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RATE_LIMIT_GENERATIONS_PER_HOUR`   | no       | `10`    | Per-user generation attempts per hour. Exceeding it returns `429 RATE_LIMITED` with `Retry-After`.                                                                                                                                                                                                                        |
-| `QUOTA_GENERATIONS_PER_DAY`         | no       | `100`   | Per-user daily generations on the instance key.                                                                                                                                                                                                                                                                           |
-| `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` | no       | `1000`  | Per-user daily generations when the user brought their own key — their spend, so a looser cap.                                                                                                                                                                                                                            |
-| `RATE_LIMIT_AUTH_PER_IP_PER_HOUR`   | no       | `30`    | Per-IP cap on sign-in, first-run setup, forgot-password, reset-password, and change-password attempts. Forgot-password also applies this cap per normalised email. Change-password also applies this cap per user id. Needs correct `X-Forwarded-For` behind a proxy, or every request looks like it came from the proxy. |
+| Variable                            | Required | Default | What it does                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RATE_LIMIT_GENERATIONS_PER_HOUR`   | no       | `10`    | Per-user generation attempts per hour. Exceeding it returns `429 RATE_LIMITED` with `Retry-After`.                                                                                                                                                                                                                                                           |
+| `QUOTA_GENERATIONS_PER_DAY`         | no       | `100`   | Per-user daily generations on the instance key.                                                                                                                                                                                                                                                                                                              |
+| `QUOTA_GENERATIONS_PER_DAY_OWN_KEY` | no       | `1000`  | Per-user daily generations when the user brought their own key — their spend, so a looser cap.                                                                                                                                                                                                                                                               |
+| `RATE_LIMIT_AUTH_PER_IP_PER_HOUR`   | no       | `30`    | Per-IP cap on sign-in, first-run setup, forgot-password, reset-password, and change-password attempts. Sign-in and forgot-password also apply this cap per normalised email. Change-password also applies this cap per user id. Needs correct `X-Forwarded-For` and `TRUSTED_PROXY_HOPS` behind a proxy, or every request looks like it came from the proxy. |
+| `TRUSTED_PROXY_HOPS`                | no       | `1`     | Number of reverse proxies in front of the app. The client IP is taken this many entries from the right of `X-Forwarded-For`. `2` when a CDN sits in front of your proxy. See [DNS](#dns).                                                                                                                                                                    |
 
 Counters are per user and held in the process. A multi-instance deployment therefore enforces these
 per instance, not globally — divide the numbers by your replica count, or run one instance.
@@ -536,6 +586,14 @@ link-only invite with no email on it cannot authorize an OIDC signup, because th
 the callback to match it against. Issue invites with the email filled in if your users sign in this
 way. The invite is claimed in the same transaction that creates the account, so a sign-in that lost
 the race never burns it.
+
+Because the asserted email is what redeems that invite, the ID token must also carry
+`email_verified: true`. A provider that says `false`, or says nothing, gets a 403 explaining the
+address is unverified, and the invite stays unused. Most providers (Google, Microsoft Entra,
+Okta, Keycloak with email verification on) send the claim; if yours does not, enable it in the
+provider or have the user sign up another way. Returning users and open registration do not need
+the claim — they are matched on the provider's subject identifier, not the email — though an
+explicit `email_verified: false` is refused on every path.
 
 This is deliberate: an OIDC issuer you do not control would otherwise be an open door onto your
 instance.

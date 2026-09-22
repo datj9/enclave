@@ -231,6 +231,12 @@ export function stateMatches(returned: string | null, expected: string): boolean
 export interface OidcIdentity {
   readonly subject: string
   readonly email: string
+  /**
+   * True only when the ID token carries `email_verified: true`. Absent is not verified. Only the
+   * invite-by-email branch requires it; see `oidcRegistrationGrant`. Optional so callers that
+   * build an identity by hand (tests) default to the stricter reading.
+   */
+  readonly emailVerified?: boolean
 }
 
 /**
@@ -258,14 +264,15 @@ export async function exchangeAuthorizationCode(
   // Absent means "the provider does not say"; only an explicit false is a refusal.
   if (claims.email_verified === false) throw verificationFailed()
 
-  return { subject: claims.sub, email }
+  return { subject: claims.sub, email, emailVerified: claims.email_verified === true }
 }
 
 export function verificationFailed(): HttpError {
   return new HttpError('VALIDATION_FAILED', OIDC_VERIFICATION_FAILURE, { status: 400 })
 }
 
-export type OidcRejection = 'deactivated' | 'email_taken' | 'registration_closed'
+export type OidcRejection =
+  'deactivated' | 'email_taken' | 'registration_closed' | 'email_unverified'
 
 export type OidcSigninOutcome =
   | { readonly ok: true; readonly userId: string; readonly created: boolean }
@@ -299,13 +306,27 @@ async function isEmailTaken(email: string): Promise<boolean> {
  * or by an outstanding invite naming the address the provider asserted — a link-only invite
  * (`email is null`) cannot authorise it, because nothing would bind the link to this identity.
  */
-type RegistrationGrant = { readonly kind: 'open' } | { readonly kind: 'invite'; readonly inviteId: string }
+type RegistrationGrant =
+  { readonly kind: 'open' } | { readonly kind: 'invite'; readonly inviteId: string }
 
-async function oidcRegistrationGrant(email: string): Promise<RegistrationGrant | null> {
-  if (env.ALLOW_OPEN_REGISTRATION) return { kind: 'open' }
+type RegistrationDecision =
+  | { readonly ok: true; readonly grant: RegistrationGrant }
+  | { readonly ok: false; readonly reason: OidcRejection }
 
-  const invite = await findRedeemableInviteByEmail(email)
-  return invite === null ? null : { kind: 'invite', inviteId: invite.id }
+/**
+ * An invite naming an address is the one place the asserted email *is* the credential: whoever
+ * the provider says owns it gets the seat. So that branch requires the provider to say it
+ * verified the address — explicitly, `email_verified: true` — otherwise anyone who can register
+ * an unverified address at a permissive provider could claim an invite meant for someone else.
+ * Open registration and returning users key on `oidc_sub` and are left as they were.
+ */
+async function oidcRegistrationGrant(identity: OidcIdentity): Promise<RegistrationDecision> {
+  if (env.ALLOW_OPEN_REGISTRATION) return { ok: true, grant: { kind: 'open' } }
+
+  const invite = await findRedeemableInviteByEmail(identity.email)
+  if (invite === null) return { ok: false, reason: 'registration_closed' }
+  if (identity.emailVerified !== true) return { ok: false, reason: 'email_unverified' }
+  return { ok: true, grant: { kind: 'invite', inviteId: invite.id } }
 }
 
 function outcomeForExistingUser(user: IdentityRow): OidcSigninOutcome {
@@ -373,10 +394,10 @@ export async function resolveOidcIdentity(identity: OidcIdentity): Promise<OidcS
 
   if (await isEmailTaken(identity.email)) return { ok: false, reason: 'email_taken' }
 
-  const grant = await oidcRegistrationGrant(identity.email)
-  if (grant === null) return { ok: false, reason: 'registration_closed' }
+  const decision = await oidcRegistrationGrant(identity)
+  if (!decision.ok) return { ok: false, reason: decision.reason }
 
-  return createOidcUser(identity, grant)
+  return createOidcUser(identity, decision.grant)
 }
 
 const REJECTION_RESPONSES: Readonly<Record<OidcRejection, string>> = {
@@ -384,6 +405,8 @@ const REJECTION_RESPONSES: Readonly<Record<OidcRejection, string>> = {
   email_taken:
     'An account already uses this email address. Sign in with your password to link this provider.',
   registration_closed: 'This instance is invite-only',
+  email_unverified:
+    'Your identity provider has not verified this email address, so it cannot be used to accept an invite',
 }
 
 export function rejectionError(reason: OidcRejection): HttpError {

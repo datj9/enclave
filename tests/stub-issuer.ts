@@ -20,7 +20,8 @@ export interface IssuedCodeOptions {
   readonly codeChallenge: string
   /** Omit to mint an ID token with no `nonce` claim at all. */
   readonly nonce?: string
-  readonly emailVerified?: boolean
+  /** Defaults to true; `null` omits the `email_verified` claim entirely. */
+  readonly emailVerified?: boolean | null
   /** Negative values mint an already-expired ID token. */
   readonly expiresInSeconds?: number
 }
@@ -88,10 +89,8 @@ export async function startStubIssuer(clientId: string, clientSecret: string): P
   let nextCodeNumber = 0
 
   async function mintIdToken(pending: PendingAuthorization): Promise<string> {
-    const claims: Record<string, unknown> = {
-      email: pending.email,
-      email_verified: pending.emailVerified ?? true,
-    }
+    const claims: Record<string, unknown> = { email: pending.email }
+    if (pending.emailVerified !== null) claims.email_verified = pending.emailVerified ?? true
     if (pending.nonce !== undefined) claims.nonce = pending.nonce
 
     const issuedAt = Math.floor(Date.now() / 1000)

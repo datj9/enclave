@@ -36,6 +36,18 @@ export function enforceForgotPasswordEmailRateLimit(normalizedEmail: string): vo
 }
 
 /**
+ * Per-email cap on password sign-in, independent of the per-IP cap: an attacker spraying one
+ * account from many addresses still meets a ceiling. Lowercased here as well as by the caller's
+ * schema so the counter can never be split by case, whatever path reaches it.
+ *
+ * The trade-off is deliberate: anyone can burn a known address's budget and lock its password
+ * sign-in for up to an hour. That is a nuisance bounded by the window; unlimited guessing is not.
+ */
+export function enforceSigninEmailRateLimit(email: string): void {
+  enforceLimit(`auth:signin-email:${email.trim().toLowerCase()}`)
+}
+
+/**
  * Per-user cap on change-password, independent of the per-IP cap so an attacker with the same
  * IP cannot lock out every user in the same building.
  */

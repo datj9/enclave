@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as passwordModule from '@/lib/auth/password'
 import { hashPassword } from '@/lib/auth/password'
 
 interface FakeUserRow {
@@ -8,6 +9,20 @@ interface FakeUserRow {
 }
 
 const selectedRows: FakeUserRow[] = []
+
+/** Records every hash argon2 is asked to verify, so the timing-uniformity claim is testable. */
+const { verifiedHashes } = vi.hoisted(() => ({ verifiedHashes: [] as (string | null)[] }))
+
+vi.mock('@/lib/auth/password', async (importOriginal) => {
+  const actual = await importOriginal<typeof passwordModule>()
+  return {
+    ...actual,
+    verifyPassword: async (storedHash: string | null, plaintext: string) => {
+      verifiedHashes.push(storedHash)
+      return actual.verifyPassword(storedHash, plaintext)
+    },
+  }
+})
 
 /** Stands in for the whole query builder chain so the auth decision can be tested alone. */
 vi.mock('@/db', () => ({
@@ -34,6 +49,7 @@ function stubUser(row: FakeUserRow | null): void {
 
 beforeEach(() => {
   stubUser(null)
+  verifiedHashes.length = 0
 })
 
 describe('credentialsSchema', () => {
@@ -120,6 +136,41 @@ describe('authenticateWithPassword', () => {
     await expect(
       authenticateWithPassword({ email: 'ops@example.com', password: CORRECT_PASSWORD }),
     ).resolves.toEqual({ ok: false })
+  })
+
+  it('still pays for one argon2 verification when the email is unknown', async () => {
+    stubUser(null)
+
+    await authenticateWithPassword({ email: 'nobody@example.com', password: CORRECT_PASSWORD })
+
+    expect(verifiedHashes).toHaveLength(1)
+    expect(verifiedHashes[0]).toMatch(/^\$argon2id\$/)
+  })
+
+  it('verifies an OIDC-only account against the dummy hash, not a null', async () => {
+    stubUser({ id: 'user-1', passwordHash: null, isActive: true })
+
+    await authenticateWithPassword({ email: 'ops@example.com', password: CORRECT_PASSWORD })
+
+    expect(verifiedHashes).toHaveLength(1)
+    expect(verifiedHashes[0]).toMatch(/^\$argon2id\$/)
+  })
+
+  it('reuses one dummy hash across calls rather than hashing per request', async () => {
+    await authenticateWithPassword({ email: 'a@example.com', password: CORRECT_PASSWORD })
+    await authenticateWithPassword({ email: 'b@example.com', password: CORRECT_PASSWORD })
+
+    expect(verifiedHashes).toHaveLength(2)
+    expect(verifiedHashes[0]).toBe(verifiedHashes[1])
+  })
+
+  it('verifies a deactivated account against its own hash exactly once', async () => {
+    const storedHash = await hashPassword(CORRECT_PASSWORD)
+    stubUser({ id: 'user-1', passwordHash: storedHash, isActive: false })
+
+    await authenticateWithPassword({ email: 'ops@example.com', password: CORRECT_PASSWORD })
+
+    expect(verifiedHashes).toEqual([storedHash])
   })
 
   it('reveals nothing about which check failed', () => {

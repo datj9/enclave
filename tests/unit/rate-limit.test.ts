@@ -1,10 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { HttpError } from '@/lib/http'
-import { clientIpFromHeaders, consumeRateLimit, resetRateLimits } from '@/lib/rate-limit'
+import {
+  MAX_TRACKED_KEYS,
+  clientIpFromHeaders,
+  consumeRateLimit,
+  resetRateLimits,
+  trackedRateLimitKeyCount,
+} from '@/lib/rate-limit'
 import {
   enforceAuthRateLimit,
   enforceChangePasswordUserRateLimit,
   enforceForgotPasswordEmailRateLimit,
+  enforceSigninEmailRateLimit,
 } from '@/lib/auth/rate-limit-auth'
 
 const RULE = { limit: 3, windowSeconds: 60 } as const
@@ -47,13 +54,81 @@ describe('consumeRateLimit', () => {
 
     expect(consumeRateLimit('ip:2', RULE, 0)).toEqual({ allowed: true, remaining: 2 })
   })
+
+  it('never holds more than the cap, even when every window is still live', () => {
+    for (let index = 0; index < MAX_TRACKED_KEYS + 50; index += 1) {
+      consumeRateLimit(`flood:${index}`, RULE, 0)
+    }
+
+    expect(trackedRateLimitKeyCount()).toBe(MAX_TRACKED_KEYS)
+  })
+
+  it('evicts the oldest live window first when full', () => {
+    for (let attempt = 0; attempt < RULE.limit; attempt += 1) consumeRateLimit('oldest', RULE, 0)
+    for (let attempt = 0; attempt < RULE.limit; attempt += 1) consumeRateLimit('newest', RULE, 1)
+    for (let index = 0; index < MAX_TRACKED_KEYS - 2; index += 1) {
+      consumeRateLimit(`filler:${index}`, RULE, 2)
+    }
+
+    // One more key tips it over: 'oldest' goes, 'newest' keeps its exhausted window.
+    consumeRateLimit('one-more', RULE, 3)
+
+    expect(consumeRateLimit('newest', RULE, 4)).toMatchObject({ allowed: false })
+    expect(consumeRateLimit('oldest', RULE, 4)).toEqual({ allowed: true, remaining: 2 })
+  })
+
+  it('prefers dropping expired windows over live ones', () => {
+    consumeRateLimit('expired', { limit: 3, windowSeconds: 1 }, 0)
+    for (let attempt = 0; attempt < RULE.limit; attempt += 1) consumeRateLimit('live', RULE, 0)
+    for (let index = 0; index < MAX_TRACKED_KEYS - 2; index += 1) {
+      consumeRateLimit(`filler:${index}`, RULE, 0)
+    }
+
+    consumeRateLimit('one-more', RULE, 5_000)
+
+    expect(consumeRateLimit('live', RULE, 5_000)).toMatchObject({ allowed: false })
+    expect(trackedRateLimitKeyCount()).toBe(MAX_TRACKED_KEYS)
+  })
 })
 
 describe('clientIpFromHeaders', () => {
-  it('takes the first hop of x-forwarded-for', () => {
-    const headers = new Headers({ 'x-forwarded-for': '203.0.113.7, 10.0.0.1, 10.0.0.2' })
+  it('takes the rightmost entry by default — the one a single proxy appended', () => {
+    const headers = new Headers({ 'x-forwarded-for': '203.0.113.7, 10.0.0.1, 198.51.100.4' })
 
-    expect(clientIpFromHeaders(headers)).toBe('203.0.113.7')
+    expect(clientIpFromHeaders(headers)).toBe('198.51.100.4')
+  })
+
+  it('ignores a spoofed leftmost entry the caller supplied', () => {
+    // What nginx forwards when the client sent `X-Forwarded-For: 1.2.3.4` itself.
+    const headers = new Headers({ 'x-forwarded-for': '1.2.3.4, 198.51.100.4' })
+
+    expect(clientIpFromHeaders(headers, 1)).toBe('198.51.100.4')
+  })
+
+  it('counts TRUSTED_PROXY_HOPS entries from the right for a CDN in front of the proxy', () => {
+    // client-supplied, real client (added by the CDN), CDN edge (added by nginx).
+    const headers = new Headers({ 'x-forwarded-for': '1.2.3.4, 203.0.113.7, 104.16.0.1' })
+
+    expect(clientIpFromHeaders(headers, 2)).toBe('203.0.113.7')
+  })
+
+  it('takes the leftmost entry when the chain is shorter than the configured hops', () => {
+    expect(clientIpFromHeaders(new Headers({ 'x-forwarded-for': '203.0.113.7' }), 3)).toBe(
+      '203.0.113.7',
+    )
+  })
+
+  it('skips blank entries and surrounding whitespace', () => {
+    const headers = new Headers({ 'x-forwarded-for': ' 203.0.113.7 ,, 198.51.100.4 , ' })
+
+    expect(clientIpFromHeaders(headers, 1)).toBe('198.51.100.4')
+  })
+
+  it('treats a missing or invalid hop count as one hop', () => {
+    const headers = new Headers({ 'x-forwarded-for': '1.2.3.4, 198.51.100.4' })
+
+    expect(clientIpFromHeaders(headers, Number.NaN)).toBe('198.51.100.4')
+    expect(clientIpFromHeaders(headers, 0)).toBe('198.51.100.4')
   })
 
   it('falls back to x-real-ip', () => {
@@ -164,5 +239,37 @@ describe('enforceForgotPasswordEmailRateLimit', () => {
     expect((caught as HttpError).status).toBe(429)
 
     expect(() => enforceForgotPasswordEmailRateLimit('nobody@example.com')).not.toThrow()
+  })
+})
+
+describe('enforceSigninEmailRateLimit', () => {
+  it('caps sign-in per email independently of IP', () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) enforceSigninEmailRateLimit('ops@example.com')
+
+    let caught: unknown
+    try {
+      enforceSigninEmailRateLimit('ops@example.com')
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(HttpError)
+    expect((caught as HttpError).code).toBe('RATE_LIMITED')
+    expect((caught as HttpError).status).toBe(429)
+    expect(() => enforceSigninEmailRateLimit('someone-else@example.com')).not.toThrow()
+  })
+
+  it('shares one counter across differently-cased spellings of an address', () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      enforceSigninEmailRateLimit(attempt % 2 === 0 ? 'Ops@Example.com' : 'ops@example.com ')
+    }
+
+    expect(() => enforceSigninEmailRateLimit('OPS@EXAMPLE.COM')).toThrow(HttpError)
+  })
+
+  it('does not share a counter with forgot-password for the same address', () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) enforceSigninEmailRateLimit('ops@example.com')
+
+    expect(() => enforceForgotPasswordEmailRateLimit('ops@example.com')).not.toThrow()
   })
 })
