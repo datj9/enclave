@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { env } from '@/env'
@@ -35,9 +36,9 @@ export default async function TrashPage() {
       </a>
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave</p>
-        <a className="button-secondary" href="/dashboard">
+        <Link className="button-secondary" href="/dashboard">
           Back to artifacts
-        </a>
+        </Link>
       </header>
 
       <main className={styles.main} id="main" tabIndex={-1}>

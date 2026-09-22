@@ -34,3 +34,24 @@
   color: var(--color-ink-2);
   font-size: var(--text-sm);
 }
+
+/* Always mounted (it is a live region), so it takes no space until it has something to say. */
+.restored {
+  margin: 0;
+}
+
+.restored:not(:empty) {
+  margin-bottom: var(--space-md);
+}
+
+.restoredTitle {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* A standalone action inside the sentence — same target height as any other control. */
+.restored a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
+}

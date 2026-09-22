@@ -1,8 +1,10 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ArtifactListItem, ArtifactListPage } from '@/lib/artifacts/list'
+import { formatBytes } from '@/lib/format/bytes'
 import styles from './artifact-list.module.css'
 
 /**
@@ -25,13 +27,6 @@ interface ArtifactListResponse {
 
 function allLoadedText(count: number): string {
   return `All ${String(count)} artifacts loaded.`
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const kibibytes = bytes / 1024
-  if (kibibytes < 1024) return `${kibibytes.toFixed(1)} KB`
-  return `${(kibibytes / 1024).toFixed(1)} MB`
 }
 
 /** `naming.ts` builds this from `env`, which never reaches the browser — hence the origin prop. */
@@ -104,9 +99,9 @@ export function ArtifactList({
                   : '0ms',
             }}
           >
-            <a className={styles.link} href={`/a/${item.id}`}>
+            <Link className={styles.link} href={`/a/${item.id}`}>
               <span className={styles.title}>{item.title}</span>
-            </a>
+            </Link>
             <p className={styles.meta}>
               <span className={styles.visibility}>{VISIBILITY_LABEL[item.visibility]}</span>
               <span className={styles.separator} aria-hidden="true">
