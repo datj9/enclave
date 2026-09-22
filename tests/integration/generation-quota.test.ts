@@ -21,8 +21,9 @@ import { createTestStore, probeServices, removeTestOwnerData } from './services'
 /**
  * The §5.7 caps on the real `/api/v1/generate`, against real Postgres and real object storage,
  * with the model stubbed. What a unit test cannot prove and this does: that a denied call never
- * reaches the provider and leaves no `generations` row, that the counters are per user, and that
- * which key runs decides which daily cap applies.
+ * reaches the provider and leaves no `generations` row, that the counters are per user, that
+ * which key runs decides which daily cap applies, and that a concurrent burst cannot run past
+ * either cap (the check and the spend are one locked step).
  */
 
 const { database, storage } = await probeServices()
@@ -334,6 +335,52 @@ describe.skipIf(!servicesReady)('generation quotas', () => {
 
     expect(await generationRowsFor(ownerId)).toHaveLength(2)
     expect(await dailyCountFor(ownerId)).toBe(1)
+  })
+
+  it('still occupies an hourly slot with a call the provider rejected', async () => {
+    // Documented in src/lib/quota.ts: the attempt's `generations` row stays, so it counts toward
+    // the rolling hour even though its daily unit was handed back.
+    expect((await generate()).status).toBe(200)
+    mocks.failWith = toProviderError({ status: 401 })
+    expect((await generate()).status).toBe(400)
+    mocks.failWith = undefined
+
+    const denied = await generate()
+
+    expect(denied.status).toBe(429)
+    expect(denied.errorCode).toBe('RATE_LIMITED')
+    expect(await dailyCountFor(ownerId)).toBe(1)
+  })
+
+  it('holds the hourly limit when a burst of calls arrives at once', async () => {
+    const results = await Promise.all(Array.from({ length: 5 }, () => generate()))
+
+    expect(results.map((result) => result.status).sort()).toEqual([200, 200, 429, 429, 429])
+    expect(results.filter((result) => result.status === 429).map((r) => r.errorCode)).toEqual([
+      'RATE_LIMITED',
+      'RATE_LIMITED',
+      'RATE_LIMITED',
+    ])
+    expect(mocks.providerCalls).toBe(2)
+    expect(await generationRowsFor(ownerId)).toHaveLength(2)
+    expect(await dailyCountFor(ownerId)).toBe(2)
+  })
+
+  it('holds the daily quota when a burst of calls arrives at once', async () => {
+    mocks.envOverrides.RATE_LIMIT_GENERATIONS_PER_HOUR = 100
+    mocks.envOverrides.QUOTA_GENERATIONS_PER_DAY = 2
+
+    const results = await Promise.all(Array.from({ length: 5 }, () => generate()))
+
+    expect(results.map((result) => result.status).sort()).toEqual([200, 200, 429, 429, 429])
+    expect(results.filter((result) => result.status === 429).map((r) => r.errorCode)).toEqual([
+      'QUOTA_EXCEEDED',
+      'QUOTA_EXCEEDED',
+      'QUOTA_EXCEEDED',
+    ])
+    expect(mocks.providerCalls).toBe(2)
+    expect(await generationRowsFor(ownerId)).toHaveLength(2)
+    expect(await dailyCountFor(ownerId)).toBe(2)
   })
 
   it('never writes a provider key to a log line', async () => {

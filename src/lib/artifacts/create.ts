@@ -34,6 +34,8 @@ export interface CreateArtifactInput {
   readonly visibility: Visibility
   readonly files: readonly BundleFile[]
   readonly actorIp?: string | null
+  /** §5.2's link back to the generation that produced the bundle; absent for an upload. */
+  readonly generationId?: string | null
 }
 
 export interface CreatedArtifact {
@@ -72,6 +74,7 @@ async function insertPendingVersion(
         totalBytes: totalBytesOf(manifest),
         fileCount: manifest.length,
         createdBy: input.ownerId,
+        generationId: input.generationId ?? null,
       })
       .returning({ id: artifactVersions.id })
 
