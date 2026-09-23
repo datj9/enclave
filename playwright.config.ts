@@ -21,6 +21,10 @@ const isCi = process.env.CI === 'true' || process.env.CI === '1'
  *
  * A project whose dependency failed does not run (Playwright reports it as skipped/"did not run"),
  * so a broken first-run surfaces as one failure rather than twenty confusing ones.
+ *
+ * File and `-g` filters do not apply to dependency projects: `playwright test dashboard-pagination`
+ * runs all of `first-run` and `chromium` first. Add `--no-deps` to run just the named spec (most
+ * create the administrator on demand if it does not exist yet).
  */
 const FIRST_RUN_SPECS = [/[\\/]setup-and-signin\.spec\.ts$/]
 const LATE_SPECS = [

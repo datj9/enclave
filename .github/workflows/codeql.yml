@@ -17,9 +17,12 @@ on:
 permissions:
   contents: read
 
+# Only PR runs are superseded. Pushes and the schedule both run on main, and a `schedule` event's
+# payload carries no `repository`, so a default-branch comparison would read as "not main" there
+# and let a scheduled run cancel a push's analysis (or the reverse).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
