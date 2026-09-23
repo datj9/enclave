@@ -115,36 +115,44 @@ describe.skipIf(!databaseReady)('first OIDC sign-in on an invite-only instance',
     expect(created).toHaveLength(0)
   })
 
+  /*
+   * An explicit `email_verified: false` was already refused on every path, inside
+   * `exchangeAuthorizationCode`, so it answers the generic 400 verification failure. A provider
+   * that says nothing gets through the exchange and is stopped only by the invite branch: 403.
+   */
   it.each([
-    ['explicitly unverified', false],
-    ['silent about verification', null],
+    ['explicitly unverified', false, 400, 'VALIDATION_FAILED'],
+    ['silent about verification', null, 403, 'FORBIDDEN'],
   ] as const)(
     'will not redeem an email invite for an identity whose provider is %s',
-    async (_label, emailVerified) => {
+    async (_label, emailVerified, expectedStatus, expectedCode) => {
       const invite = await createInvite({
         createdBy: adminId,
         email: INVITED_EMAIL,
         expiresInHours: 72,
       })
 
-      const response = await signInAs(INVITED_EMAIL, 'stub|unverified', emailVerified)
-      expect(response.status).toBe(403)
-      expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN' } })
+      // Deleted however the assertions go: an outstanding invite for the same address would be
+      // the one the next test's sign-in claims, leaving that test's own invite unused.
+      try {
+        const response = await signInAs(INVITED_EMAIL, 'stub|unverified', emailVerified)
+        expect(response.status).toBe(expectedStatus)
+        expect(await response.json()).toMatchObject({ error: { code: expectedCode } })
 
-      const created = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, INVITED_EMAIL))
-      expect(created).toHaveLength(0)
+        const created = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, INVITED_EMAIL))
+        expect(created).toHaveLength(0)
 
-      const [row] = await db
-        .select({ usedAt: invites.usedAt })
-        .from(invites)
-        .where(eq(invites.id, invite.inviteId))
-      expect(row?.usedAt).toBeNull()
-
-      // Left outstanding it would compete with the next test's invite for the same address.
-      await db.delete(invites).where(eq(invites.id, invite.inviteId))
+        const [row] = await db
+          .select({ usedAt: invites.usedAt })
+          .from(invites)
+          .where(eq(invites.id, invite.inviteId))
+        expect(row?.usedAt).toBeNull()
+      } finally {
+        await db.delete(invites).where(eq(invites.id, invite.inviteId))
+      }
     },
   )
 
