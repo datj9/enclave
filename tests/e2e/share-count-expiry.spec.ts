@@ -163,7 +163,13 @@ test.describe('an expired link is not counted as live (#30)', () => {
     ])
     expect(revoked.status()).toBe(204)
 
-    await ownerPage.getByText('Done').click()
+    // The 204 arrives before the page has processed it, so the confirmation is still open (then
+    // in its exit transition). Wait for it to go before reaching back into the Share dialog.
+    await expect(ownerPage.getByTestId('share-revoke-dialog')).toBeHidden()
+    await ownerPage
+      .getByTestId('share-dialog')
+      .getByRole('button', { name: 'Done', exact: true })
+      .click()
 
     // The expired link is still unrevoked, so a badge that dropped its number proves the revoke
     // landed on the live one rather than on it.

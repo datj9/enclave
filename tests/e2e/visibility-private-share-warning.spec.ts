@@ -200,7 +200,13 @@ test.describe('the Only me warning counts the links it will not close (#25)', ()
       ownerPage.getByTestId('share-revoke-confirm').click(),
     ])
     expect(revoked.status()).toBe(204)
-    await ownerPage.getByText('Done').click()
+    // The 204 arrives before the page has processed it, so the confirmation is still open (then
+    // in its exit transition). Wait for it to go before reaching back into the Share dialog.
+    await expect(ownerPage.getByTestId('share-revoke-dialog')).toBeHidden()
+    await ownerPage
+      .getByTestId('share-dialog')
+      .getByRole('button', { name: 'Done', exact: true })
+      .click()
     // The badge drops its number once the Share dialog's re-read after the revoke has landed —
     // the same state the switch reads, so the next press is not racing that read.
     await expect(ownerPage.getByTestId('share-open')).toHaveText('Share')
