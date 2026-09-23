@@ -37,6 +37,18 @@ describe('cursorTimestamp', () => {
     expect((failure as HttpError).details).toEqual({ parameter: 'cursor' })
   })
 
+  it.each(['0000-01-01T00:00:00.000Z', '+275760-09-13T00:00:00.000Z'])(
+    'rejects %s, which JS parses but Postgres cannot cast',
+    (raw) => {
+      expect(() => cursorTimestamp(raw)).toThrow(HttpError)
+    },
+  )
+
+  it('never passes an out-of-range microsecond timestamp through verbatim', () => {
+    // JS rolls Feb 30 over to Mar 2 (2026 is not a leap year); Postgres would reject the literal.
+    expect(cursorTimestamp('2026-02-30T00:00:00.000001Z')).toBe('2026-03-02T00:00:00.000Z')
+  })
+
   it('survives the opaque encoding with every digit intact', () => {
     const cursor = { createdAt: '2026-09-23T10:11:12.123456Z', id: ID }
     expect(decodeListCursor(encodeListCursor(cursor))).toEqual(cursor)

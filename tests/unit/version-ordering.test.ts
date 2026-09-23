@@ -129,13 +129,34 @@ describe('markVersionReady', () => {
     expect(statementsMatching(REPOINT_ARTIFACT)).toHaveLength(0)
   })
 
-  it('refuses when the artifact row is gone', async () => {
-    harness.responders.push(when(LOCK_ARTIFACT, []))
+  it('refuses when the artifact row is gone, and never repoints', async () => {
+    harness.responders.push(when(FLIP_VERSION, [[1]]), when(LOCK_ARTIFACT, []))
 
     await expect(
       markVersionReady({ artifactId: ARTIFACT_ID, versionId: VERSION_ID }),
     ).rejects.toBeInstanceOf(HttpError)
-    expect(statementsMatching(FLIP_VERSION)).toHaveLength(0)
+    expect(statementsMatching(REPOINT_ARTIFACT)).toHaveLength(0)
+  })
+
+  it('locks the version row before the artifact row, the same order as the pending sweeper', async () => {
+    harness.responders.push(
+      when(LOCK_ARTIFACT, [[null]]),
+      when(FLIP_VERSION, [[1]]),
+      when(REPOINT_ARTIFACT, [[ARTIFACT_ID]]),
+    )
+
+    await markVersionReady({ artifactId: ARTIFACT_ID, versionId: VERSION_ID })
+
+    const order = harness.statements.map((statement) =>
+      FLIP_VERSION.test(statement.sql)
+        ? 'flip'
+        : LOCK_ARTIFACT.test(statement.sql)
+          ? 'lock'
+          : REPOINT_ARTIFACT.test(statement.sql)
+            ? 'repoint'
+            : 'other',
+    )
+    expect(order).toEqual(['flip', 'lock', 'repoint'])
   })
 })
 

@@ -63,8 +63,13 @@ export interface MarkedReady {
  * Flips a `pending` version to `ready`, then points `current_version_id` at it — but only when it
  * is newer than whatever is current. Two appends can finish uploading out of order (v3's bundle
  * is small, v2's is large); an unconditional flip would let v2 land last and silently roll the
- * artifact back. The artifact row is locked first so two flips for one artifact serialize and the
- * "is it newer" comparison reads a settled value.
+ * artifact back. The artifact row is locked before the repoint so two flips for one artifact
+ * serialize and the "is it newer" comparison reads a settled value.
+ *
+ * Lock order is version row, then artifact row — the same order as the pending sweeper, which
+ * deletes the version and then (for a first version) the artifact. Taking the artifact first
+ * would let the two deadlock over a slow first upload, and Postgres could then abort the sweeper
+ * and let this flip serve a bundle whose objects the sweeper had already deleted.
  *
  * The status update is guarded on `status = 'pending'` and its row count asserted: flipping a
  * version that is already ready (a double call) or gone (reclaimed by the sweeper mid-upload) is
@@ -72,16 +77,6 @@ export interface MarkedReady {
  */
 export async function markVersionReady(version: PendingVersion): Promise<MarkedReady> {
   return await db.transaction(async (transaction) => {
-    const [artifact] = await transaction
-      .select({ currentVersionId: artifacts.currentVersionId })
-      .from(artifacts)
-      .where(eq(artifacts.id, version.artifactId))
-      .for('update')
-
-    if (artifact === undefined) {
-      throw new HttpError('INTERNAL_ERROR', 'The artifact disappeared before its version was ready')
-    }
-
     const flipped = await transaction
       .update(artifactVersions)
       .set({ status: 'ready' })
@@ -97,6 +92,16 @@ export async function markVersionReady(version: PendingVersion): Promise<MarkedR
     const [ready] = flipped
     if (flipped.length !== 1 || ready === undefined) {
       throw new HttpError('INTERNAL_ERROR', 'The version is no longer pending and cannot be made ready')
+    }
+
+    const [artifact] = await transaction
+      .select({ currentVersionId: artifacts.currentVersionId })
+      .from(artifacts)
+      .where(eq(artifacts.id, version.artifactId))
+      .for('update')
+
+    if (artifact === undefined) {
+      throw new HttpError('INTERNAL_ERROR', 'The artifact disappeared before its version was ready')
     }
 
     // Compared in SQL against the current version's number, so a NULL pointer (first version) and

@@ -47,6 +47,9 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 /** `created_at` as written by `cursorTimestampOf`: ISO 8601, UTC, exactly six fractional digits. */
 const MICROSECOND_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/
 
+/** A four-digit year Postgres can cast: 0001 to 9999. */
+const PLAIN_YEAR = /^(?!0000)\d{4}-/
+
 /**
  * `created_at` rendered by Postgres at its full microsecond precision. A JS `Date` holds
  * milliseconds only, so a cursor built from `toISOString()` sits up to 999µs *before* the row it
@@ -69,11 +72,17 @@ function invalidCursor(): HttpError {
  * reaching the database as an uncastable literal and surfacing as a 500.
  */
 export function cursorTimestamp(raw: string): string {
-  if (MICROSECOND_TIMESTAMP.test(raw)) return raw
-
   const parsed = new Date(raw)
   if (Number.isNaN(parsed.getTime())) throw invalidCursor()
-  return parsed.toISOString()
+  const iso = parsed.toISOString()
+
+  // JS rolls an out-of-range field over (Feb 30 → Mar 1) where Postgres rejects it, so a
+  // microsecond cursor is used verbatim only when it names the instant JS parsed it as.
+  if (MICROSECOND_TIMESTAMP.test(raw) && raw.startsWith(iso.slice(0, -1))) return raw
+
+  // Postgres has no year 0 and no signed six-digit years; neither can come from a real row.
+  if (!PLAIN_YEAR.test(iso)) throw invalidCursor()
+  return iso
 }
 
 /** Keyset predicate matching the `(created_at desc, id desc)` order exactly. */
