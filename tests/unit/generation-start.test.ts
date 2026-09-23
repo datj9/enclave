@@ -121,6 +121,19 @@ describe('startGeneration · quota reservation', () => {
     expect(mocks.releaseGenerationReservation).toHaveBeenCalledWith(RESERVATION)
   })
 
+  it('refunds the daily unit when the provider throws before returning an iterator', async () => {
+    const provider: ArtifactProvider = {
+      id: 'anthropic',
+      generate: () => {
+        throw new Error('client construction failed')
+      },
+    }
+
+    await expect(start(provider)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    expect(mocks.releaseGenerationReservation).toHaveBeenCalledTimes(1)
+    expect(mocks.releaseGenerationReservation).toHaveBeenCalledWith(RESERVATION)
+  })
+
   it('keeps the unit once the provider has produced output, even if the stream fails later', async () => {
     const { provider } = providerThat(async function* () {
       yield '<file path="index.html">\n<!doctype html>'

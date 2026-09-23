@@ -225,20 +225,22 @@ export async function startGeneration(
   )
 
   let usage: ProviderUsage = { tokensIn: null, tokensOut: null }
-  const iterator = input.selection.provider
-    .generate({
-      prompt: input.prompt,
-      model: input.selection.model,
-      apiKey: input.selection.apiKey,
-      signal: input.signal,
-      onUsage: (reported) => {
-        usage = reported
-      },
-      ...(input.selection.baseUrl === undefined ? {} : { baseUrl: input.selection.baseUrl }),
-    })
-    [Symbol.asyncIterator]()
 
+  // Opening the iterator sits inside the `try` too: a provider that throws synchronously has
+  // still failed before its first delta, and must be refunded and marked failed like any other.
   try {
+    const iterator = input.selection.provider
+      .generate({
+        prompt: input.prompt,
+        model: input.selection.model,
+        apiKey: input.selection.apiKey,
+        signal: input.signal,
+        onUsage: (reported) => {
+          usage = reported
+        },
+        ...(input.selection.baseUrl === undefined ? {} : { baseUrl: input.selection.baseUrl }),
+      })
+      [Symbol.asyncIterator]()
     const first = await iterator.next()
     return buildEventStream({
       input,
