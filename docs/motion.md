@@ -110,6 +110,6 @@ streaming indicators, skeletons — keeps running.
 | Revoke confirmation | No animation on the destructive button. Instant response reads as trustworthy. |
 | Artifact iframe load | Skeleton with a functional shimmer until `load` fires, then 150 ms opacity crossfade. Never animate the iframe's size. |
 | Live generation stream | Text appends with no per-token animation. One functional indicator (pulsing dot or progress) and a per-file checkmark on `file_end`. Auto-scroll is instant, never smooth — smooth scroll fights a fast stream. |
-| Toasts | Sonner defaults. Do not retune them. |
+| Status messages | No toast library. Outcomes are announced in place: a `role="status"` region next to the control that changed (the privacy switch's "Saved", the show-once link panels), or the error slot inside the dialog that asked. Text swaps with no animation. |
 | Admin / audit tables | No row animation. Dense data with moving rows is unreadable. |
 | Copy-link button | 160 ms `scale(0.97)` press + an icon swap to a check. This is the one place delight is earned — it's the product's core action. |
