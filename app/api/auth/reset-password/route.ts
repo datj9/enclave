@@ -1,3 +1,4 @@
+import { requireSameOriginRequest } from '@/lib/api/guards'
 import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
 import { createSessionCookie } from '@/lib/auth/session'
 import {
@@ -23,6 +24,11 @@ function formFailureRedirect(token: string | undefined, error: 'invalid' | 'pass
 }
 
 export async function POST(request: Request): Promise<Response> {
+  try {
+    requireSameOriginRequest(request)
+  } catch (error) {
+    return toErrorResponse(error)
+  }
   const returnsJson = wantsJsonResponse(request)
   let submittedToken: string | undefined
 

@@ -2,9 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { env } from '@/env'
 import { requireApiPrincipal } from '@/lib/auth/bearer'
+import type * as RateLimitAuthModule from '@/lib/auth/rate-limit-auth'
+import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
 import { getSessionUser } from '@/lib/auth/session'
+import { HttpError } from '@/lib/http'
 import { POST as changePasswordRoute } from '@app/api/auth/change-password/route'
+import { POST as forgotPasswordRoute } from '@app/api/auth/forgot-password/route'
+import { POST as resetPasswordRoute } from '@app/api/auth/reset-password/route'
+import { POST as signinRoute } from '@app/api/auth/signin/route'
 import { POST as signoutRoute } from '@app/api/auth/signout/route'
+import { POST as signupRoute } from '@app/api/auth/signup/route'
+import { POST as setupRoute } from '@app/api/setup/route'
 import { POST as restoreRoute } from '@app/api/v1/artifacts/[id]/restore/route'
 
 /**
@@ -19,7 +27,13 @@ vi.mock('@/lib/auth/session', () => ({
   createSessionCookie: vi.fn(async () => 'enclave_session=fresh'),
 }))
 
+vi.mock('@/lib/auth/rate-limit-auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof RateLimitAuthModule>()),
+  enforceAuthRateLimit: vi.fn(),
+}))
+
 const getSessionUserMock = vi.mocked(getSessionUser)
+const enforceAuthRateLimitMock = vi.mocked(enforceAuthRateLimit)
 
 const APP_ORIGIN = new URL(env.APP_URL).origin
 const ARTIFACT_ID = '7f3e0000-0000-4000-8000-0000000000aa'
@@ -47,6 +61,7 @@ async function errorCodeOf(response: Response): Promise<string | undefined> {
 beforeEach(() => {
   getSessionUserMock.mockReset()
   getSessionUserMock.mockResolvedValue(SESSION_USER)
+  enforceAuthRateLimitMock.mockReset()
 })
 
 describe('requireApiPrincipal session branch', () => {
@@ -129,5 +144,47 @@ describe('POST /api/v1/artifacts/{id}/restore', () => {
     expect(response.status).toBe(403)
     expect(await errorCodeOf(response)).toBe('FORBIDDEN')
     expect(getSessionUserMock).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The unauthenticated form routes hold no session to ride, but a same-site artifact could still
+ * post an attacker's credentials and plant the attacker's session in the viewer's browser (login
+ * CSRF), or burn the viewer's rate-limit slots and send reset mail in their name.
+ */
+describe.each([
+  ['/api/auth/signin', signinRoute],
+  ['/api/auth/signup', signupRoute],
+  ['/api/setup', setupRoute],
+  ['/api/auth/reset-password', resetPasswordRoute],
+  ['/api/auth/forgot-password', forgotPasswordRoute],
+])('POST %s', (path, route) => {
+  const FORM = { 'content-type': 'application/x-www-form-urlencoded' } as const
+  const BODY = 'email=attacker%40example.com&password=correct-horse-battery&token=t'
+
+  it('refuses a forged form post before rate limiting, parsing or any credential work', async () => {
+    const response = await route(post(path, { ...FROM_ARTIFACT, ...FORM }, BODY))
+
+    expect(response.status).toBe(403)
+    expect(await errorCodeOf(response)).toBe('FORBIDDEN')
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(enforceAuthRateLimitMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["the app's own form post", { origin: APP_ORIGIN, 'sec-fetch-site': 'same-origin' }],
+    ['a client that sends no browser headers (integration suite, Playwright request)', {}],
+  ])('lets %s through to the handler', async (_label, headers) => {
+    // Stop at the first step after the guard, so the test needs no database.
+    enforceAuthRateLimitMock.mockImplementation(() => {
+      throw new HttpError('RATE_LIMITED', 'Too many attempts')
+    })
+
+    const response = await route(
+      post(path, { ...headers, 'content-type': 'application/json' }, '{}'),
+    )
+
+    expect(response.status).toBe(429)
+    expect(enforceAuthRateLimitMock).toHaveBeenCalledOnce()
   })
 })

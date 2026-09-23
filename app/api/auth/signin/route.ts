@@ -1,3 +1,4 @@
+import { requireSameOriginRequest } from '@/lib/api/guards'
 import { recordAuditEvent } from '@/lib/audit'
 import {
   GENERIC_SIGNIN_FAILURE,
@@ -13,6 +14,11 @@ import { readRequestBody, wantsJsonResponse } from '@/lib/request'
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request): Promise<Response> {
+  try {
+    requireSameOriginRequest(request)
+  } catch (error) {
+    return toErrorResponse(error)
+  }
   const returnsJson = wantsJsonResponse(request)
   const clientIp = clientIpFromHeaders(request.headers)
 
