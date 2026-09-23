@@ -53,9 +53,9 @@ export function normaliseBaseUrl(raw: string): string | null {
  * check stops pasted internal URLs and hostnames that plainly resolve inward; it is not a
  * substitute for egress filtering where that matters.
  *
- * Known limitation — redirects: the provider SDKs follow HTTP redirects, and only the stored URL
- * is checked, so a public host that answers with a redirect to an internal address is not stopped
- * here. Egress filtering covers this too.
+ * Redirects: only the stored URL is checked here, so the SDK clients built from a user's base URL
+ * use `fetchWithoutRedirects` (below) — a public host answering with a redirect to an internal
+ * address would otherwise take the request there.
  *
  * The operator's own OPENAI_BASE_URL never passes through here — the operator controls the
  * process environment already, and pointing it at localhost is legitimate.
@@ -287,4 +287,33 @@ export function warnIfUnsafeStoredBaseUrl(baseUrl: string | undefined): void {
       )
     })
     .catch(() => undefined)
+}
+
+/** The `fetch` signature both provider SDKs accept as a client option. */
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+/** Thrown in place of following a redirect; the SDK wraps it, `toProviderError` maps it to 502. */
+export class ProviderRedirectRefusedError extends Error {
+  constructor(readonly redirectStatus: number) {
+    super(`The provider answered with a redirect (HTTP ${redirectStatus}), which is not followed`)
+    this.name = 'ProviderRedirectRefusedError'
+  }
+}
+
+/**
+ * A `fetch` for SDK clients pointed at a user-supplied base URL. It never follows a redirect: the
+ * target check above sees only the stored URL, so a 30x to `http://169.254.169.254/` would
+ * otherwise walk straight past it. A model API has no reason to redirect a POST, so any 3xx is a
+ * failed request rather than something to follow. `baseFetch` is injected by tests.
+ */
+export function fetchWithoutRedirects(baseFetch?: FetchLike): FetchLike {
+  return async (input, init) => {
+    const response = await (baseFetch ?? globalThis.fetch)(input, { ...init, redirect: 'manual' })
+    // `manual` in undici hands back the real 3xx; a browser-style opaque redirect reports 0.
+    if ((response.status >= 300 && response.status < 400) || response.type === 'opaqueredirect') {
+      await response.body?.cancel().catch(() => undefined)
+      throw new ProviderRedirectRefusedError(response.status)
+    }
+    return response
+  }
 }

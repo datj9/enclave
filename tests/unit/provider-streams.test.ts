@@ -234,7 +234,9 @@ describe('anthropicProvider', () => {
   })
 
   it('maps an unrecognised provider failure to a 502 that names no internals', async () => {
-    mocks.anthropicCreate.mockRejectedValue(new Error('socket hang up at /srv/enclave/node_modules'))
+    mocks.anthropicCreate.mockRejectedValue(
+      new Error('socket hang up at /srv/enclave/node_modules'),
+    )
     const error = await thrownBy(() => collect(anthropicProvider))
 
     expect(error.status).toBe(502)
@@ -305,6 +307,9 @@ describe('openAiCompatibleProvider', () => {
       void _delta
     }
     expect(mocks.openAiOptions[1]).toMatchObject({ baseURL: 'http://localhost:11434/v1' })
+    // Only the client built from a user's base URL swaps in the redirect-refusing fetch.
+    expect(mocks.openAiOptions[0]?.fetch).toBeUndefined()
+    expect(mocks.openAiOptions[1]?.fetch).toBeTypeOf('function')
   })
 
   it('sends the format rules as a system message', async () => {
@@ -451,9 +456,7 @@ describe('the parser is provider-agnostic', () => {
 
   it('produces identical files and events from both providers', async () => {
     mocks.anthropicCreate.mockResolvedValue(anthropicStream([...FIXTURE]))
-    mocks.openAiCreate.mockResolvedValue(
-      openAiStream(FIXTURE.match(/[\s\S]{1,7}/g) ?? []),
-    )
+    mocks.openAiCreate.mockResolvedValue(openAiStream(FIXTURE.match(/[\s\S]{1,7}/g) ?? []))
 
     const fromAnthropic = await parseThrough(anthropicProvider)
     const fromOpenAi = await parseThrough(openAiCompatibleProvider)

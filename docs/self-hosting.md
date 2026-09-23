@@ -322,9 +322,10 @@ first time and an internal one the second. The check stops pasted internal URLs 
 plainly resolve inward; if your server can reach sensitive internal services, also restrict its
 egress at the network level.
 
-**Known limitation — redirects.** The provider SDKs follow HTTP redirects, and only the stored URL
-is checked. A public host that redirects to an internal address is not stopped by the check;
-egress filtering is the defence here too.
+**Redirects are not followed.** Only the stored URL is checked, so requests made with a user's
+base URL never follow an HTTP redirect: any `3xx` answer fails the generation with the usual
+"provider could not be reached" error. This stops a public host from bouncing the request to an
+internal address. `OPENAI_BASE_URL` keeps the SDK's normal behaviour.
 
 ### Registration
 
