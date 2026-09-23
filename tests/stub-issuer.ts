@@ -21,7 +21,7 @@ export interface IssuedCodeOptions {
   /** Omit to mint an ID token with no `nonce` claim at all. */
   readonly nonce?: string
   /** Defaults to true; `null` omits the `email_verified` claim entirely. */
-  readonly emailVerified?: boolean | null
+  readonly emailVerified?: boolean | string | null
   /** Negative values mint an already-expired ID token. */
   readonly expiresInSeconds?: number
 }

@@ -142,12 +142,34 @@ describe('classifyAddress', () => {
     expect(classifyAddress(address, true)).toMatchObject({ allowed: false })
   })
 
-  it.each(['203.0.113.7', '8.8.8.8', '172.32.0.1', '2606:4700::1111'])(
-    'allows the public address %s under either policy',
-    (address) => {
-      expect(classifyAddress(address, true)).toEqual({ allowed: true })
-    },
-  )
+  it.each([
+    ['::ffff:7f00:1', 'loopback'],
+    ['::ffff:0:7f00:1', 'loopback'],
+    ['::7f00:1', 'loopback'],
+    ['64:ff9b::a9fe:a9fe', 'link-local'],
+    ['2002:a9fe:a9fe::1', 'link-local'],
+  ])('refuses %s, which carries a %s IPv4 address', (address, kind) => {
+    const verdict = classifyAddress(address, false)
+
+    expect(verdict.allowed).toBe(false)
+    if (!verdict.allowed) expect(verdict.reason.toLowerCase()).toContain(kind.split('-')[0])
+  })
+
+  it('refuses a NAT64 address carrying a private IPv4 one when private ranges are blocked', () => {
+    expect(classifyAddress('64:ff9b::a00:1', false)).toEqual({ allowed: true })
+    expect(classifyAddress('64:ff9b::a00:1', true)).toMatchObject({ allowed: false })
+  })
+
+  it.each([
+    '203.0.113.7',
+    '8.8.8.8',
+    '172.32.0.1',
+    '2606:4700::1111',
+    '::ffff:8.8.8.8',
+    '2002:808:808::1',
+  ])('allows the public address %s under either policy', (address) => {
+    expect(classifyAddress(address, true)).toEqual({ allowed: true })
+  })
 })
 
 describe('checkBaseUrlTarget', () => {
@@ -182,6 +204,9 @@ describe('checkBaseUrlTarget', () => {
     await expect(
       checkBaseUrlTarget('http://[::ffff:169.254.169.254]/latest', SOFT),
     ).resolves.toMatchObject({ allowed: false })
+    await expect(checkBaseUrlTarget('http://[::127.0.0.1]/v1', SOFT)).resolves.toMatchObject({
+      allowed: false,
+    })
   })
 
   it('allows a LAN Ollama by IP under the default policy', async () => {

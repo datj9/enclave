@@ -92,6 +92,18 @@ export function resetRateLimits(): void {
 }
 
 /**
+ * `203.0.113.7:51234` and `[2001:db8::7]:51234` — some load balancers (Azure Application Gateway
+ * among them) append the source port — become the bare address. Otherwise every new connection
+ * would be a fresh rate-limit key, and the audit log's `inet` column would drop the value.
+ */
+function withoutPort(hop: string): string {
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(hop)
+  if (bracketed?.[1] !== undefined) return bracketed[1]
+  const ipv4WithPort = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(hop)
+  return ipv4WithPort?.[1] ?? hop
+}
+
+/**
  * The client address as the trusted proxy chain saw it.
  *
  * `x-forwarded-for` is appended to by each proxy (nginx `$proxy_add_x_forwarded_for`), so only
@@ -118,8 +130,8 @@ export function clientIpFromHeaders(
     const trusted =
       Number.isInteger(trustedProxyHops) && trustedProxyHops >= 1 ? trustedProxyHops : 1
     const index = Math.max(0, hops.length - trusted)
-    return hops[index] ?? 'unknown'
+    return withoutPort(hops[index] ?? 'unknown')
   }
   const realIp = headers.get('x-real-ip')?.trim() ?? ''
-  return realIp === '' ? 'unknown' : realIp
+  return realIp === '' ? 'unknown' : withoutPort(realIp)
 }

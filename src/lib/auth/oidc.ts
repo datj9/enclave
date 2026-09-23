@@ -232,9 +232,9 @@ export interface OidcIdentity {
   readonly subject: string
   readonly email: string
   /**
-   * True only when the ID token carries `email_verified: true`. Absent is not verified. Only the
-   * invite-by-email branch requires it; see `oidcRegistrationGrant`. Optional so callers that
-   * build an identity by hand (tests) default to the stricter reading.
+   * True only when the ID token carries `email_verified: true` (or the string `"true"`). Absent is
+   * not verified. Only the invite-by-email branch requires it; see `oidcRegistrationGrant`.
+   * Optional so callers that build an identity by hand (tests) default to the stricter reading.
    */
   readonly emailVerified?: boolean
 }
@@ -264,7 +264,9 @@ export async function exchangeAuthorizationCode(
   // Absent means "the provider does not say"; only an explicit false is a refusal.
   if (claims.email_verified === false) throw verificationFailed()
 
-  return { subject: claims.sub, email, emailVerified: claims.email_verified === true }
+  // Some providers send the claim as the string "true"; that is as much an assertion as the boolean.
+  const emailVerified = claims.email_verified === true || claims.email_verified === 'true'
+  return { subject: claims.sub, email, emailVerified }
 }
 
 export function verificationFailed(): HttpError {

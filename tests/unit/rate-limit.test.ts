@@ -131,6 +131,18 @@ describe('clientIpFromHeaders', () => {
     expect(clientIpFromHeaders(headers, 0)).toBe('198.51.100.4')
   })
 
+  it('drops a source port some load balancers append, so each connection is not a new key', () => {
+    expect(
+      clientIpFromHeaders(new Headers({ 'x-forwarded-for': '198.51.100.1, 203.0.113.7:51234' }), 1),
+    ).toBe('203.0.113.7')
+    expect(clientIpFromHeaders(new Headers({ 'x-forwarded-for': '[2001:db8::7]:51234' }), 1)).toBe(
+      '2001:db8::7',
+    )
+    expect(clientIpFromHeaders(new Headers({ 'x-forwarded-for': '2001:db8::7' }), 1)).toBe(
+      '2001:db8::7',
+    )
+  })
+
   it('falls back to x-real-ip', () => {
     expect(clientIpFromHeaders(new Headers({ 'x-real-ip': '198.51.100.9' }))).toBe('198.51.100.9')
   })

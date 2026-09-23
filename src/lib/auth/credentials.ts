@@ -1,9 +1,8 @@
-import { randomBytes } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/db'
 import { users } from '@/db/schema'
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, hashPassword, verifyPassword } from './password'
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, verifyPassword } from './password'
 
 export const credentialsSchema = z.object({
   // Normalise before validating: a pasted address often carries a trailing space, and the
@@ -20,20 +19,14 @@ export const GENERIC_SIGNIN_FAILURE = 'Email or password is incorrect'
 export type SigninOutcome = { readonly ok: true; readonly userId: string } | { readonly ok: false }
 
 /**
- * A real argon2id hash of a random secret nobody holds, computed once per process with the same
- * parameters as every stored hash. Verifying against it costs what verifying a real account
- * costs, and it can never match.
+ * A real argon2id hash of a random secret that was discarded when it was generated, at the same
+ * parameters as `ARGON2_OPTIONS` (a unit test holds the two together). Verifying against it costs
+ * what verifying a real account costs, and it can never match. A constant rather than computed at
+ * runtime, so the first failed sign-in after a restart does not pay for an extra hash and stand
+ * out by its timing.
  */
-let dummyHash: Promise<string> | undefined
-
-function dummyPasswordHash(): Promise<string> {
-  dummyHash ??= hashPassword(randomBytes(32).toString('base64')).catch((error: unknown) => {
-    // Do not cache a failure: the next sign-in should try again rather than skip the work.
-    dummyHash = undefined
-    throw error
-  })
-  return dummyHash
-}
+export const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=19456,t=2,p=1$AS8wz9o5lEwsd5piKk4yTQ$mNjtLF1yg+XtZJFb6xP6SkgmFOwMpdNkbZ2QyjKJI3A'
 
 /**
  * Verifies a password against a stored hash. A deactivated user fails here rather than getting
@@ -52,7 +45,7 @@ export async function authenticateWithPassword(credentials: Credentials): Promis
 
   const storedHash = user?.passwordHash ?? null
   if (user === undefined || storedHash === null || storedHash === '') {
-    await verifyPassword(await dummyPasswordHash(), credentials.password)
+    await verifyPassword(DUMMY_PASSWORD_HASH, credentials.password)
     return { ok: false }
   }
 

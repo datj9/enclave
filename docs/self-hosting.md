@@ -322,6 +322,10 @@ first time and an internal one the second. The check stops pasted internal URLs 
 plainly resolve inward; if your server can reach sensitive internal services, also restrict its
 egress at the network level.
 
+**Known limitation — redirects.** The provider SDKs follow HTTP redirects, and only the stored URL
+is checked. A public host that redirects to an internal address is not stopped by the check;
+egress filtering is the defence here too.
+
 ### Registration
 
 | Variable                  | Required | Default | What it does                                                                                                                                                                                                                                    |
@@ -588,12 +592,13 @@ way. The invite is claimed in the same transaction that creates the account, so 
 the race never burns it.
 
 Because the asserted email is what redeems that invite, the ID token must also carry
-`email_verified: true`. A provider that says `false`, or says nothing, gets a 403 explaining the
-address is unverified, and the invite stays unused. Most providers (Google, Microsoft Entra,
-Okta, Keycloak with email verification on) send the claim; if yours does not, enable it in the
-provider or have the user sign up another way. Returning users and open registration do not need
-the claim — they are matched on the provider's subject identifier, not the email — though an
-explicit `email_verified: false` is refused on every path.
+`email_verified: true` (the string `"true"`, which some providers send, is accepted too). A
+provider that says nothing gets a 403 explaining the address is unverified, and the invite stays
+unused; an explicit `false` is refused with a 400, as on every path. Google, Okta and Keycloak
+(with email verification on) send the claim; Microsoft Entra ID does not by default, so with Entra
+enable the claim in the provider or have the user sign up with a password first. Returning users
+and open registration do not need the claim — they are matched on the provider's subject
+identifier, not the email.
 
 This is deliberate: an OIDC issuer you do not control would otherwise be an open door onto your
 instance.

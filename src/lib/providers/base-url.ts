@@ -53,6 +53,10 @@ export function normaliseBaseUrl(raw: string): string | null {
  * check stops pasted internal URLs and hostnames that plainly resolve inward; it is not a
  * substitute for egress filtering where that matters.
  *
+ * Known limitation — redirects: the provider SDKs follow HTTP redirects, and only the stored URL
+ * is checked, so a public host that answers with a redirect to an internal address is not stopped
+ * here. Egress filtering covers this too.
+ *
  * The operator's own OPENAI_BASE_URL never passes through here — the operator controls the
  * process environment already, and pointing it at localhost is legitimate.
  * ---------------------------------------------------------------------------------------------
@@ -128,42 +132,78 @@ const PRIVATE = subnets([
   ['fc00::', 7, 'ipv6'],
 ])
 
-const IPV4_MAPPED_PREFIX = '::ffff:'
+/** The eight 16-bit groups of an IPv6 literal, in whatever spelling (compressed, dotted tail). */
+function ipv6Groups(address: string): number[] | null {
+  let hostname: string
+  try {
+    // The URL parser canonicalises: `::ffff:127.0.0.1` comes back as `[::ffff:7f00:1]`.
+    hostname = new URL(`http://[${address}]/`).hostname.slice(1, -1)
+  } catch {
+    return null
+  }
+  const [head = '', tail] = hostname.split('::')
+  const headGroups = head === '' ? [] : head.split(':')
+  const tailGroups = tail === undefined || tail === '' ? [] : tail.split(':')
+  const zeros = new Array<string>(8 - headGroups.length - tailGroups.length).fill('0')
+  const groups = [...headGroups, ...(tail === undefined ? [] : zeros), ...tailGroups]
+  return groups.length === 8 ? groups.map((group) => Number.parseInt(group, 16)) : null
+}
+
+function ipv4FromGroups(high: number, low: number): string {
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.')
+}
 
 /**
- * `::ffff:127.0.0.1` is 127.0.0.1 on the wire; classify it as the IPv4 address it carries rather
- * than trusting every runtime's BlockList to see through the mapping.
+ * The IPv4 address an IPv6 address carries and would reach, if any:
+ * IPv4-mapped `::ffff:0:0/96` and SIIT `::ffff:0:0:0/96` (the IPv4 host itself), IPv4-compatible
+ * `::/96`, NAT64 `64:ff9b::/96` (a NAT64 gateway forwards to it, private ranges included) and
+ * 6to4 `2002::/16`. Classifying only the IPv6 form would let `[64:ff9b::a00:1]` reach 10.0.0.1.
  */
-function canonicalAddress(address: string): {
-  readonly address: string
-  readonly type: 'ipv4' | 'ipv6'
-} {
-  const lowered = address.toLowerCase()
-  if (
-    lowered.startsWith(IPV4_MAPPED_PREFIX) &&
-    isIP(lowered.slice(IPV4_MAPPED_PREFIX.length)) === 4
-  ) {
-    return { address: lowered.slice(IPV4_MAPPED_PREFIX.length), type: 'ipv4' }
+function embeddedIpv4(address: string): string | null {
+  const g = ipv6Groups(address)
+  if (g === null) return null
+  const zeroUpTo = (end: number): boolean => g.slice(0, end).every((group) => group === 0)
+  if (zeroUpTo(5) && g[5] === 0xffff) return ipv4FromGroups(g[6] ?? 0, g[7] ?? 0)
+  if (zeroUpTo(4) && g[4] === 0xffff && g[5] === 0) return ipv4FromGroups(g[6] ?? 0, g[7] ?? 0)
+  if (zeroUpTo(6)) return ipv4FromGroups(g[6] ?? 0, g[7] ?? 0)
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((group) => group === 0)) {
+    return ipv4FromGroups(g[6] ?? 0, g[7] ?? 0)
   }
-  return { address: lowered, type: isIP(lowered) === 4 ? 'ipv4' : 'ipv6' }
+  if (g[0] === 0x2002) return ipv4FromGroups(g[1] ?? 0, g[2] ?? 0)
+  return null
+}
+
+function classifyOne(
+  address: string,
+  type: 'ipv4' | 'ipv6',
+  blockPrivate: boolean,
+): BaseUrlTargetVerdict {
+  if (LOOPBACK.check(address, type)) {
+    return { allowed: false, reason: LOOPBACK_REASON }
+  }
+  if (LINK_LOCAL_AND_METADATA.check(address, type)) {
+    return { allowed: false, reason: LINK_LOCAL_REASON }
+  }
+  if (UNSPECIFIED_AND_RESERVED.check(address, type)) {
+    return { allowed: false, reason: UNSPECIFIED_REASON }
+  }
+  if (blockPrivate && PRIVATE.check(address, type)) {
+    return { allowed: false, reason: PRIVATE_REASON }
+  }
+  return { allowed: true }
 }
 
 /** Exported for tests: the verdict for one literal address. */
 export function classifyAddress(address: string, blockPrivate: boolean): BaseUrlTargetVerdict {
-  const canonical = canonicalAddress(address)
-  if (LOOPBACK.check(canonical.address, canonical.type)) {
-    return { allowed: false, reason: LOOPBACK_REASON }
-  }
-  if (LINK_LOCAL_AND_METADATA.check(canonical.address, canonical.type)) {
-    return { allowed: false, reason: LINK_LOCAL_REASON }
-  }
-  if (UNSPECIFIED_AND_RESERVED.check(canonical.address, canonical.type)) {
-    return { allowed: false, reason: UNSPECIFIED_REASON }
-  }
-  if (blockPrivate && PRIVATE.check(canonical.address, canonical.type)) {
-    return { allowed: false, reason: PRIVATE_REASON }
-  }
-  return { allowed: true }
+  const lowered = address.toLowerCase()
+  if (isIP(lowered) === 4) return classifyOne(lowered, 'ipv4', blockPrivate)
+
+  const verdict = classifyOne(lowered, 'ipv6', blockPrivate)
+  if (!verdict.allowed) return verdict
+  // An address that carries an IPv4 one is judged by that too, rather than trusting every
+  // runtime's BlockList to see through the mapping (Node's covers `::ffff:` only).
+  const embedded = embeddedIpv4(lowered)
+  return embedded === null ? verdict : classifyOne(embedded, 'ipv4', blockPrivate)
 }
 
 async function resolveWithDns(hostname: string): Promise<readonly ResolvedAddress[]> {

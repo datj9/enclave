@@ -140,6 +140,21 @@ describe('exchangeAuthorizationCode', () => {
     ).resolves.toEqual({ subject: DAVE_SUBJECT, email: DAVE_EMAIL, emailVerified: false })
   })
 
+  it('reads the string "true" some providers send as verified', async () => {
+    const { authorizationUrl, transaction } = await startFlow()
+    const code = issuer.issueCode({
+      subject: DAVE_SUBJECT,
+      email: DAVE_EMAIL,
+      nonce: transaction.nonce,
+      codeChallenge: codeChallengeFrom(authorizationUrl),
+      emailVerified: 'true',
+    })
+
+    await expect(
+      exchangeAuthorizationCode(callbackUrl(code, transaction.state), transaction),
+    ).resolves.toEqual({ subject: DAVE_SUBJECT, email: DAVE_EMAIL, emailVerified: true })
+  })
+
   it('lowercases the asserted email so it matches the citext column', async () => {
     const { authorizationUrl, transaction } = await startFlow()
     const code = issuer.issueCode({

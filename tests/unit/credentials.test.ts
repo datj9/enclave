@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as passwordModule from '@/lib/auth/password'
-import { hashPassword } from '@/lib/auth/password'
+import { ARGON2_OPTIONS, hashPassword } from '@/lib/auth/password'
 
 interface FakeUserRow {
   readonly id: string
@@ -37,7 +37,7 @@ vi.mock('@/db', () => ({
   },
 }))
 
-const { authenticateWithPassword, credentialsSchema, GENERIC_SIGNIN_FAILURE } =
+const { authenticateWithPassword, credentialsSchema, DUMMY_PASSWORD_HASH, GENERIC_SIGNIN_FAILURE } =
   await import('@/lib/auth/credentials')
 
 const CORRECT_PASSWORD = 'correct-horse-battery'
@@ -162,6 +162,13 @@ describe('authenticateWithPassword', () => {
 
     expect(verifiedHashes).toHaveLength(2)
     expect(verifiedHashes[0]).toBe(verifiedHashes[1])
+  })
+
+  it('keeps the dummy hash at the same argon2 parameters as real hashes', () => {
+    const { memoryCost, timeCost, parallelism } = ARGON2_OPTIONS
+    expect(DUMMY_PASSWORD_HASH).toMatch(
+      new RegExp(`^\\$argon2id\\$v=19\\$m=${memoryCost},t=${timeCost},p=${parallelism}\\$`),
+    )
   })
 
   it('verifies a deactivated account against its own hash exactly once', async () => {
