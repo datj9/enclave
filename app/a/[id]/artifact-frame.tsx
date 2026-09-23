@@ -13,7 +13,20 @@ import styles from './artifact-frame.module.css'
 /** §7: a missing wildcard certificate never fires `load`, so a stall is the only signal. */
 const TLS_HELP_AFTER_MS = 8000
 
-export function ArtifactFrame({ enterUrl }: { enterUrl: string }) {
+/** Used where the page has no title to give — the share-link viewer names nothing to a stranger. */
+const FALLBACK_FRAME_TITLE = 'Artifact'
+
+export function ArtifactFrame({
+  enterUrl,
+  title = FALLBACK_FRAME_TITLE,
+}: {
+  readonly enterUrl: string
+  /**
+   * The iframe's accessible name. A screen reader lists frames by title, so "Artifact" on every
+   * page tells the listener nothing; the artifact's own title says which document this is.
+   */
+  readonly title?: string | undefined
+}) {
   const [hasLoaded, setHasLoaded] = useState(false)
   const [isStalled, setIsStalled] = useState(false)
   const frameRef = useRef<HTMLIFrameElement>(null)
@@ -31,7 +44,9 @@ export function ArtifactFrame({ enterUrl }: { enterUrl: string }) {
         className={styles.frame}
         data-loaded={hasLoaded}
         src={enterUrl}
-        title="Artifact"
+        title={title}
+        // A stable hook for tests: the title is now the artifact's, and differs per page.
+        data-testid="artifact-frame"
         // Exactly grill-result §4.3. `allow-same-origin` gives the artifact localStorage and
         // IndexedDB, and is safe ONLY because every artifact has its own unguessable origin,
         // distinct from the app's. If the origin model ever collapses to one shared artifact
@@ -56,8 +71,8 @@ function SetupHelp({ url }: { url: string }) {
     <div className={styles.help} role="status">
       <h2 className={styles.helpHeading}>This artifact origin is not reachable</h2>
       <p className={styles.helpBody}>
-        Artifacts are served from their own hostname so one cannot read another. That needs
-        wildcard DNS and a wildcard TLS certificate for the origin below.
+        Artifacts are served from their own hostname so one cannot read another. That needs wildcard
+        DNS and a wildcard TLS certificate for the origin below.
       </p>
       <p className={styles.helpOrigin}>{new URL(url).host}</p>
       <p className={styles.helpBody}>

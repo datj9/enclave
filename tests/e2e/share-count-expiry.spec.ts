@@ -151,13 +151,15 @@ test.describe('an expired link is not counted as live (#30)', () => {
 
   test('revoking the live link empties the badge and the delete confirmation', async () => {
     await ownerPage.getByTestId('share-open').click()
+    // Revoke asks first; the DELETE goes out only from the confirmation.
+    await ownerPage.getByTestId('share-revoke').first().click()
 
     const [revoked] = await Promise.all([
       ownerPage.waitForResponse(
         (response) =>
           response.url().includes('/api/v1/shares/') && response.request().method() === 'DELETE',
       ),
-      ownerPage.getByTestId('share-revoke').first().click(),
+      ownerPage.getByTestId('share-revoke-confirm').click(),
     ])
     expect(revoked.status()).toBe(204)
 
@@ -167,7 +169,8 @@ test.describe('an expired link is not counted as live (#30)', () => {
     // landed on the live one rather than on it.
     await expect(ownerPage.getByTestId('share-open')).toHaveText('Share')
 
-    // No reload: the count the server rendered is now stale, and the dialog has to re-read it.
+    // No reload: the count the server rendered is now stale. The Share dialog's own re-read after
+    // the revoke is what the Delete confirmation shows.
     await ownerPage.getByTestId('delete-open').click()
 
     await expect(ownerPage.getByTestId('delete-dialog')).toContainText(

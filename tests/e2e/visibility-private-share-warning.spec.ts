@@ -190,17 +190,23 @@ test.describe('the Only me warning counts the links it will not close (#25)', ()
     await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
 
     await ownerPage.getByTestId('share-open').click()
+    // Revoke asks first; the DELETE goes out only from the confirmation.
+    await ownerPage.getByTestId('share-revoke').click()
     const [revoked] = await Promise.all([
       ownerPage.waitForResponse(
         (response) =>
           response.url().includes('/api/v1/shares/') && response.request().method() === 'DELETE',
       ),
-      ownerPage.getByTestId('share-revoke').click(),
+      ownerPage.getByTestId('share-revoke-confirm').click(),
     ])
     expect(revoked.status()).toBe(204)
     await ownerPage.getByText('Done').click()
+    // The badge drops its number once the Share dialog's re-read after the revoke has landed —
+    // the same state the switch reads, so the next press is not racing that read.
+    await expect(ownerPage.getByTestId('share-open')).toHaveText('Share')
 
-    // No reload: the count the server rendered is now stale, and the switch has to re-read it.
+    // No reload: the count the server rendered is now stale. The switch shares the Share dialog's
+    // state, so the revoke above is already what it counts.
     const [patch] = await Promise.all([
       ownerPage.waitForResponse(
         (response) =>

@@ -200,9 +200,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
     const response = await memberPage.goto(`${APP_ORIGIN}/a/${sharedArtifact}`)
 
     expect(response?.status()).toBe(200)
-    await expect(memberPage.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-      'shared numbers',
-    )
+    await expect(
+      memberPage.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+    ).toHaveText('shared numbers')
   })
 
   test('the second member sees no privacy switch — reading is not owning', async () => {
@@ -254,9 +254,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
 
   test('viewing the org artifact is audited and viewing your own private one is not', async () => {
     await ownerPage.goto(`${APP_ORIGIN}/a/${privateArtifact}`)
-    await expect(ownerPage.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-      'shared numbers',
-    )
+    await expect(
+      ownerPage.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+    ).toHaveText('shared numbers')
 
     const sharedViews = (await auditRowsFor(sharedArtifact)).filter(
       (row) => row.action === 'artifact.view',

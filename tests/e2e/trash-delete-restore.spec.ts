@@ -309,7 +309,7 @@ test.describe('delete shuts every door, restore reopens all but the links (US-10
     const response = await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
     expect(response?.status()).toBe(200)
     await expect(
-      ownerPage.frameLocator('iframe[title="Artifact"]').locator(`#${MARKER_ID}`),
+      ownerPage.frameLocator('iframe[data-testid="artifact-frame"]').locator(`#${MARKER_ID}`),
     ).toHaveText('version two')
   })
 
