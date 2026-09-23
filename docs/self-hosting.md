@@ -367,8 +367,12 @@ process supervisor (systemd, pm2) so it restarts.
 
 ```bash
 docker compose up -d --build
-docker compose run --rm app pnpm db:migrate
+docker compose run --rm tools            # applies migrations
 ```
+
+The `app` image carries only the standalone server. Migrations and the scheduled jobs run from the
+`tools` service (the Dockerfile's `migrate` target: full dependencies plus sources), which is behind
+a compose profile so `up` never starts it; `docker compose run` builds and runs it on demand.
 
 The image is a multi-stage build producing a Next.js standalone bundle, running as a non-root user,
 with a `/healthz` healthcheck and a startup preflight that exits non-zero on a bad environment
@@ -408,7 +412,7 @@ Migrations are SQL files under `drizzle/`, applied in order:
 
 ```bash
 pnpm db:migrate                          # from a checkout
-docker compose run --rm app pnpm db:migrate   # from the image
+docker compose run --rm tools             # from the image (default command: pnpm db:migrate)
 ```
 
 Run them before starting a new version. They are additive in v1; there is no rollback script — take
@@ -438,7 +442,7 @@ Run them with `tsx`, which resolves the path aliases their imports use:
 From the image, the same commands work through compose:
 
 ```bash
-docker compose run --rm app pnpm exec tsx scripts/purge-trash.ts
+docker compose run --rm tools pnpm exec tsx scripts/purge-trash.ts
 ```
 
 Each job is idempotent and safe to run concurrently with the app. Non-zero exits mean "some work was
@@ -453,7 +457,7 @@ opting in, run this once:
 ```bash
 pnpm exec tsx scripts/classify-backfill.ts --dry-run     # preview, no provider calls
 pnpm exec tsx scripts/classify-backfill.ts --limit 50    # then a sized first pass
-# or: docker compose run --rm app pnpm exec tsx scripts/classify-backfill.ts
+# or: docker compose run --rm tools pnpm exec tsx scripts/classify-backfill.ts
 ```
 
 | Flag | Effect |
