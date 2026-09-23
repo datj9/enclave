@@ -28,8 +28,9 @@ services:
 
   # Operator toolbox: migrations and the scheduled jobs under scripts/. The server image above
   # carries neither drizzle-kit nor the sources, so these run from the Dockerfile's `migrate`
-  # target instead. Never started by `up`; run it on demand:
-  #   docker compose run --rm tools                                        # apply migrations
+  # target instead. Never started or rebuilt by `up`, and `run` reuses a stale image unless told
+  # to rebuild, so pass --build after pulling a new version:
+  #   docker compose run --rm --build tools                                # apply migrations
   #   docker compose run --rm tools pnpm exec tsx scripts/purge-trash.ts   # any job
   tools:
     build:

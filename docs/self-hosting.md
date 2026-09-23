@@ -367,22 +367,25 @@ process supervisor (systemd, pm2) so it restarts.
 
 ```bash
 docker compose up -d --build
-docker compose run --rm tools            # applies migrations
+docker compose run --rm --build tools    # applies migrations
 ```
 
 The `app` image carries only the standalone server. Migrations and the scheduled jobs run from the
 `tools` service (the Dockerfile's `migrate` target: full dependencies plus sources), which is behind
-a compose profile so `up` never starts it; `docker compose run` builds and runs it on demand.
+a compose profile so `up` never starts it. For the same reason `up --build` never rebuilds it, and
+`docker compose run` reuses an existing `enclave-tools:local` image as is: after pulling a new
+version, pass `--build` (as above) or run `docker compose --profile tools build`, or the old
+image applies the old migrations.
 
 The image is a multi-stage build producing a Next.js standalone bundle, running as a non-root user,
 with a `/healthz` healthcheck and a startup preflight that exits non-zero on a bad environment
 before binding the port.
 
 **No image is published to a registry yet.** Build it yourself, as the compose file does, or push it
-to your own registry and replace the `build:` block with `image:`. There is a
-`.github/workflows/release.yml` that builds `linux/amd64` and `linux/arm64` and pushes to GHCR when
-the maintainer tags a release; until such a tag exists, building from source is the only option and
-`docker-compose.yml` reflects that.
+to your own registry and replace the `build:` block with `image:` (likewise for `tools`, built with
+`--target migrate`). There is a `.github/workflows/release.yml` that builds `linux/amd64` and
+`linux/arm64` and pushes to GHCR when the maintainer tags a release; until such a tag exists,
+building from source is the only option and `docker-compose.yml` reflects that.
 
 **Two endpoints, when the browser cannot reach the one the server uses.** The app dials storage at
 `S3_ENDPOINT`, but a presigned URL is followed by the _browser_ and signs its own host, so it cannot
@@ -412,7 +415,7 @@ Migrations are SQL files under `drizzle/`, applied in order:
 
 ```bash
 pnpm db:migrate                          # from a checkout
-docker compose run --rm tools             # from the image (default command: pnpm db:migrate)
+docker compose run --rm --build tools     # from the image (default command: pnpm db:migrate)
 ```
 
 Run them before starting a new version. They are additive in v1; there is no rollback script — take
