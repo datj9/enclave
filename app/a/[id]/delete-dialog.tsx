@@ -71,6 +71,10 @@ export function DeleteDialog({
       error={errorMessage}
       testId="delete-dialog"
       confirmTestId="delete-confirm"
+      // A failure from an earlier attempt belongs to that attempt, not to the next opening.
+      onOpenChange={(isOpen) => {
+        if (isOpen) setErrorMessage(null)
+      }}
       onConfirm={() => void handleDelete()}
     />
   )
