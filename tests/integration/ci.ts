@@ -31,3 +31,37 @@ export function missingServicesMessage(availability: {
     '(and run `pnpm db:migrate`) before `pnpm test`.'
   )
 }
+
+export interface Availability {
+  readonly database: boolean
+  readonly storage: boolean
+}
+
+/**
+ * Under CI, a spec's own probe must not be able to skip it. The global setup has already proven
+ * both services, so a probe that fails afterwards is a blip (a 3s timeout on a busy runner): retry
+ * it, and if it still fails, throw rather than let the file report "skipped" inside a green run.
+ * Outside CI this is a single probe, returned as-is so the caller can skip.
+ */
+export async function probeUntilReady(
+  probe: () => Promise<Availability>,
+  options: {
+    readonly ci?: boolean
+    readonly attempts?: number
+    readonly delayMs?: number
+  } = {},
+): Promise<Availability> {
+  const { ci = isCi(), attempts = 5, delayMs = 1000 } = options
+  let availability = await probe()
+  if (!ci) return availability
+
+  for (let attempt = 1; attempt < attempts; attempt++) {
+    if (missingServicesMessage(availability) === null) return availability
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    availability = await probe()
+  }
+
+  const message = missingServicesMessage(availability)
+  if (message !== null) throw new Error(message)
+  return availability
+}

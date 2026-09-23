@@ -8,6 +8,7 @@ import { users } from '@/db/schema/users'
 import { env } from '@/env'
 import { createS3ObjectStore, s3ConfigFromEnv } from '@/lib/storage/s3'
 import type { ObjectStore } from '@/lib/storage/object-store'
+import { probeUntilReady } from './ci'
 
 /**
  * Shared setup for the integration suite. These tests hit the real Postgres on `DATABASE_URL` and
@@ -16,7 +17,7 @@ import type { ObjectStore } from '@/lib/storage/object-store'
  *
  * `probeServices` lets each spec skip itself instead of failing when either is absent — outside
  * CI only: under CI, `require-services.ts` (the integration project's global setup) fails the run
- * first.
+ * first, and a later failed probe is retried and then thrown instead of returned (`probeUntilReady`).
  */
 
 const PROBE_TIMEOUT_MS = 3000
@@ -26,7 +27,11 @@ export interface ServiceAvailability {
   readonly storage: boolean
 }
 
-export async function probeServices(): Promise<ServiceAvailability> {
+export function probeServices(): Promise<ServiceAvailability> {
+  return probeUntilReady(probeOnce)
+}
+
+async function probeOnce(): Promise<ServiceAvailability> {
   const database = await pingDatabase().then(
     () => true,
     () => false,

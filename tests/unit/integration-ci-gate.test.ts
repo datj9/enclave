@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { isCi, missingServicesMessage } from '../integration/ci'
+import { describe, expect, it, vi } from 'vitest'
+import { isCi, missingServicesMessage, probeUntilReady } from '../integration/ci'
 
 describe('isCi', () => {
   it.each([
@@ -39,5 +39,40 @@ describe('missingServicesMessage', () => {
     expect(missingServicesMessage({ database: false, storage: false })).toContain(
       'Postgres on DATABASE_URL and S3-compatible storage on S3_ENDPOINT are unreachable',
     )
+  })
+})
+
+describe('probeUntilReady', () => {
+  const up = { database: true, storage: true }
+  const dbDown = { database: false, storage: true }
+
+  it('outside CI, probes once and returns a failure for the caller to skip on', async () => {
+    const probe = vi.fn().mockResolvedValue(dbDown)
+    await expect(probeUntilReady(probe, { ci: false, delayMs: 0 })).resolves.toEqual(dbDown)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('under CI, retries a failed probe and returns once it recovers', async () => {
+    const probe = vi
+      .fn()
+      .mockResolvedValueOnce(dbDown)
+      .mockResolvedValueOnce(dbDown)
+      .mockResolvedValue(up)
+    await expect(probeUntilReady(probe, { ci: true, delayMs: 0 })).resolves.toEqual(up)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('under CI, throws instead of returning a failure once the attempts run out', async () => {
+    const probe = vi.fn().mockResolvedValue(dbDown)
+    await expect(probeUntilReady(probe, { ci: true, attempts: 3, delayMs: 0 })).rejects.toThrow(
+      'Postgres on DATABASE_URL is unreachable',
+    )
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('under CI, a first-try success probes once', async () => {
+    const probe = vi.fn().mockResolvedValue(up)
+    await expect(probeUntilReady(probe, { ci: true, delayMs: 0 })).resolves.toEqual(up)
+    expect(probe).toHaveBeenCalledTimes(1)
   })
 })
