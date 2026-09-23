@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import {
   memo,
   useEffect,
@@ -85,9 +84,10 @@ function ResultPanel({ artifactId }: { readonly artifactId: string }) {
       <h2 className={styles.resultHeading} id="result-heading">
         Artifact ready
       </h2>
-      <Link className="button-primary" href={`/a/${artifactId}`}>
+      {/* A full load, not next/link: see the /a/{id} note in app/dashboard/artifact-list.tsx. */}
+      <a className="button-primary" href={`/a/${artifactId}`}>
         Open artifact
-      </Link>
+      </a>
       {/* Text only — `status` is atomic, so a button relabelling inside it re-announces the panel. */}
       <p className={styles.resultUrl} role="status">
         {pageUrl}

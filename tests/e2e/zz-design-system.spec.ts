@@ -186,6 +186,19 @@ const SIGNED_IN_PAGES = [
   '/admin/settings',
 ] as const
 
+/**
+ * Yields every page for the combined loops: the signed-in ones first, then the public ones with
+ * the session cookie cleared. A signed-in visit to /signin or /forgot-password redirects to
+ * /dashboard, so measuring them while signed in would silently measure the dashboard instead.
+ * Signing in first also completes /setup, so /signin renders rather than redirecting there.
+ */
+async function* signedInThenPublic(page: Page): AsyncGenerator<string> {
+  await signIn(page.request)
+  yield* SIGNED_IN_PAGES
+  await page.context().clearCookies()
+  yield* PUBLIC_PAGES
+}
+
 test.describe('design system: control scale', () => {
   /*
    * `hasTouch` is what flips `pointer: coarse`, and the coarse promotion in styles/globals.css is
@@ -223,9 +236,7 @@ test.describe('design system: control scale', () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
     test('desktop controls still clear the WCAG 2.5.8 floor', async ({ page }) => {
-      await signIn(page.request)
-
-      for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
+      for await (const path of signedInThenPublic(page)) {
         await page.goto(path)
         const measurement = await measure(page)
 
@@ -280,9 +291,7 @@ test.describe('design system: responsive layout', () => {
 
 test.describe('design system: typography', () => {
   test('no page uses more than five type sizes', async ({ page }) => {
-    await signIn(page.request)
-
-    for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
+    for await (const path of signedInThenPublic(page)) {
       await page.goto(path)
       const { fontSizes } = await measure(page)
 

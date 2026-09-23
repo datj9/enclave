@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ArtifactListItem, ArtifactListPage } from '@/lib/artifacts/list'
@@ -99,9 +98,14 @@ export function ArtifactList({
                   : '0ms',
             }}
           >
-            <Link className={styles.link} href={`/a/${item.id}`}>
+            {/*
+              A plain <a>, not next/link: /a/{id} embeds a single-use handoff token in the iframe
+              URL, and the client router cache replays the rendered page on Back/Forward, so the
+              iframe would re-present a burnt token and land on the re-entry page.
+            */}
+            <a className={styles.link} href={`/a/${item.id}`}>
               <span className={styles.title}>{item.title}</span>
-            </Link>
+            </a>
             <p className={styles.meta}>
               <span className={styles.visibility}>{VISIBILITY_LABEL[item.visibility]}</span>
               <span className={styles.separator} aria-hidden="true">

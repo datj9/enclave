@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
@@ -64,9 +63,10 @@ export function TrashList({ items }: { readonly items: readonly TrashedArtifact[
         {restored !== null && (
           <>
             Restored <span className={styles.restoredTitle}>{restored.title}</span>.{' '}
-            <Link href={`/a/${restored.id}`} data-testid="trash-restored-link">
+            {/* A full load, not next/link: see the /a/{id} note in app/dashboard/artifact-list.tsx. */}
+            <a href={`/a/${restored.id}`} data-testid="trash-restored-link">
               Open it
-            </Link>
+            </a>
           </>
         )}
       </p>
