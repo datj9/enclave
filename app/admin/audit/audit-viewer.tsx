@@ -60,12 +60,14 @@ export function AuditViewer({
   const [entries, setEntries] = useState<readonly AuditEntry[]>(initialPage.items)
   const [filters, setFilters] = useState<FormData | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  // `filter` or `more`: which request is in flight picks the busy label.
+  const [busyAction, setBusyAction] = useState<'filter' | 'more' | null>(null)
+  const isBusy = busyAction !== null
   const [hasPaged, setHasPaged] = useState(false)
   const pagerNoteRef = useRef<HTMLParagraphElement | null>(null)
 
   async function load(form: FormData, cursor: string | null): Promise<void> {
-    setIsBusy(true)
+    setBusyAction(cursor === null ? 'filter' : 'more')
     setErrorMessage(null)
     try {
       const response = await fetch(`/api/v1/audit?${queryFrom(form, cursor)}`)
@@ -77,11 +79,13 @@ export function AuditViewer({
       const body = (await response.json()) as AuditResponse
       setPage(body.data)
       // Appending on a cursor page, replacing on a fresh filter.
-      setEntries((previous) => (cursor === null ? body.data.items : [...previous, ...body.data.items]))
+      setEntries((previous) =>
+        cursor === null ? body.data.items : [...previous, ...body.data.items],
+      )
     } catch {
       setErrorMessage(GENERIC_FAILURE)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -160,7 +164,7 @@ export function AuditViewer({
         </div>
 
         <button className="button-primary" type="submit" aria-disabled={isBusy}>
-          Apply filters
+          {busyAction === 'filter' ? 'Applying…' : 'Apply filters'}
         </button>
       </form>
 
@@ -185,7 +189,7 @@ export function AuditViewer({
               data-testid="audit-load-more"
               onClick={handleMore}
             >
-              Load more
+              {busyAction === 'more' ? 'Loading…' : 'Load more'}
             </button>
           ) : (
             <p

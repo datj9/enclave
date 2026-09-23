@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 
 import { env } from '@/env'
@@ -30,9 +31,9 @@ export default async function AdminLayout({ children }: { readonly children: Rea
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave · admin</p>
         <AdminNav />
-        <a className="button-secondary" href="/dashboard">
+        <Link className="button-secondary" href="/dashboard">
           Back to artifacts
-        </a>
+        </Link>
       </header>
 
       {warning === null ? (

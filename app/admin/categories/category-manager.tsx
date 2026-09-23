@@ -37,7 +37,10 @@ export function CategoryManager({
 }) {
   const [categories, setCategories] = useState(initialCategories)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  // Which mutation is in flight (`create`, `rename:<id>`, `toggle:<id>`) — the busy label goes on
+  // that one button, and every other button still refuses while it runs.
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const isBusy = busyKey !== null
 
   async function refresh(): Promise<void> {
     const response = await fetch('/api/v1/categories?includeInactive=true')
@@ -50,9 +53,9 @@ export function CategoryManager({
     setCategories(body.data.items)
   }
 
-  async function runMutation(mutation: () => Promise<Response>): Promise<void> {
+  async function runMutation(key: string, mutation: () => Promise<Response>): Promise<void> {
     if (isBusy) return
-    setIsBusy(true)
+    setBusyKey(key)
     setErrorMessage(null)
     try {
       const response = await mutation()
@@ -61,8 +64,10 @@ export function CategoryManager({
         return
       }
       await refresh()
+    } catch {
+      setErrorMessage('That did not work. Check the fields and try again.')
     } finally {
-      setIsBusy(false)
+      setBusyKey(null)
     }
   }
 
@@ -71,7 +76,7 @@ export function CategoryManager({
     const form = new FormData(event.currentTarget)
     const name = String(form.get('name') ?? '').trim()
     const description = String(form.get('description') ?? '').trim()
-    await runMutation(async () =>
+    await runMutation('create', async () =>
       fetch('/api/v1/categories', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -105,7 +110,7 @@ export function CategoryManager({
         </div>
 
         <button className="button-primary" type="submit" aria-disabled={isBusy}>
-          Create category
+          {busyKey === 'create' ? 'Creating…' : 'Create category'}
         </button>
       </form>
 
@@ -120,9 +125,9 @@ export function CategoryManager({
       ) : (
         <CategoryTable
           categories={categories}
-          isBusy={isBusy}
+          busyKey={busyKey}
           onRename={(categoryId, name) =>
-            void runMutation(() =>
+            void runMutation(`rename:${categoryId}`, () =>
               fetch(`/api/v1/categories/${categoryId}`, {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json' },
@@ -131,7 +136,7 @@ export function CategoryManager({
             )
           }
           onToggleActive={(categoryId, isActive) =>
-            void runMutation(() =>
+            void runMutation(`toggle:${categoryId}`, () =>
               fetch(`/api/v1/categories/${categoryId}`, {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json' },
@@ -147,12 +152,12 @@ export function CategoryManager({
 
 function CategoryTable({
   categories,
-  isBusy,
+  busyKey,
   onRename,
   onToggleActive,
 }: {
   readonly categories: readonly CategoryView[]
-  readonly isBusy: boolean
+  readonly busyKey: string | null
   readonly onRename: (categoryId: string, name: string) => void
   readonly onToggleActive: (categoryId: string, isActive: boolean) => void
 }) {
@@ -174,7 +179,8 @@ function CategoryTable({
               <td>
                 <RenameControl
                   category={category}
-                  isBusy={isBusy}
+                  isBusy={busyKey !== null}
+                  isRenaming={busyKey === `rename:${category.id}`}
                   onRename={(name) => onRename(category.id, name)}
                 />
               </td>
@@ -191,10 +197,10 @@ function CategoryTable({
                 <button
                   className="button-secondary button-sm"
                   type="button"
-                  aria-disabled={isBusy}
+                  aria-disabled={busyKey !== null}
                   onClick={() => onToggleActive(category.id, category.isActive)}
                 >
-                  {category.isActive ? 'Deactivate' : 'Activate'}
+                  {toggleLabel(category.isActive, busyKey === `toggle:${category.id}`)}
                 </button>
               </td>
             </tr>
@@ -205,13 +211,20 @@ function CategoryTable({
   )
 }
 
+function toggleLabel(isActive: boolean, isSaving: boolean): string {
+  if (isSaving) return isActive ? 'Deactivating…' : 'Activating…'
+  return isActive ? 'Deactivate' : 'Activate'
+}
+
 function RenameControl({
   category,
   isBusy,
+  isRenaming,
   onRename,
 }: {
   readonly category: CategoryView
   readonly isBusy: boolean
+  readonly isRenaming: boolean
   readonly onRename: (name: string) => void
 }) {
   return (
@@ -235,7 +248,7 @@ function RenameControl({
         aria-label={`Rename ${category.name}`}
       />
       <button className="button-secondary button-sm" type="submit" aria-disabled={isBusy}>
-        Rename
+        {isRenaming ? 'Renaming…' : 'Rename'}
       </button>
     </form>
   )
