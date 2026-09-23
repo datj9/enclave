@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import Link from 'next/link'
 
 import { SettingsNav } from './settings-nav'
 import styles from './settings.module.css'
@@ -14,9 +15,9 @@ export default function SettingsLayout({ children }: { readonly children: ReactN
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave · settings</p>
         <SettingsNav />
-        <a className="button-secondary" href="/dashboard">
+        <Link className="button-secondary" href="/dashboard">
           Back to artifacts
-        </a>
+        </Link>
       </header>
 
       <main className={styles.main}>{children}</main>

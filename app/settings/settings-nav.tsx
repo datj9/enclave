@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+
 import styles from './settings.module.css'
 
 /**
@@ -20,14 +22,14 @@ export function SettingsNav() {
   return (
     <nav className={styles.nav} aria-label="Settings sections">
       {SECTIONS.map((section) => (
-        <a
+        <Link
           className={styles.navLink}
           key={section.href}
           href={section.href}
           {...(pathname === section.href ? { 'aria-current': 'page' as const } : {})}
         >
           {section.label}
-        </a>
+        </Link>
       ))}
     </nav>
   )
