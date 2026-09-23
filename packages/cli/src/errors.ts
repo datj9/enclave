@@ -69,6 +69,11 @@ function isScopeRefusal(error: ApiError): boolean {
   return error.status === 403 && error.message.toLowerCase().includes('scope')
 }
 
+/** `requireApiPrincipal` answers a bearer token sent over plain http in production with 403. */
+function isTransportRefusal(error: ApiError): boolean {
+  return error.status === 403 && error.message.toLowerCase().includes('https')
+}
+
 function notFound(failure: FailureContext): CliError {
   return new CliError(
     'NOT_FOUND',
@@ -116,7 +121,12 @@ function fromApiError(error: ApiError, failure: FailureContext): CliError {
     })
   }
 
-  if (error.status === 403 && failure.isForbiddenNotFound === true) return notFound(failure)
+  // Only the ownership 403 is folded into "not found". The plaintext-transport 403 is refused
+  // before any artifact is looked up, so it confirms nothing, and hiding it would send the user
+  // chasing a typo in an id that is fine.
+  if (error.status === 403 && failure.isForbiddenNotFound === true && !isTransportRefusal(error)) {
+    return notFound(failure)
+  }
 
   return new CliError(error.code, error.message, { details: error.details })
 }
@@ -146,9 +156,10 @@ function toCliError(error: unknown, failure: FailureContext): CliError {
 }
 
 /**
- * The one place a failure becomes output and an exit code. Under `--json` stderr carries exactly
- * `{"error":{"code","message"[,"details"]}}` on one line and nothing else, so a caller can parse
- * it; otherwise a `✗` line, any details, then the hints. stdout is never written.
+ * The one place a failure becomes output and an exit code. Under `--json` the failure is exactly
+ * one line, `{"error":{"code","message"[,"details"]}}`, and it is the last line on stderr —
+ * warnings written earlier in the run (the `--expires` disclosure, an ENCLAVE_TOKEN override)
+ * may precede it. Otherwise a `✗` line, any details, then the hints. stdout is never written.
  */
 export function reportFailure(error: unknown, ctx: CliContext, failure: FailureContext): ExitCode {
   const reported = toCliError(error, failure)

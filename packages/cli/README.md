@@ -189,7 +189,9 @@ Every command that returns an object takes `--json`, which puts the raw API obje
 | `1`       | Ran, and the answer was no — not found, refused, unreachable, token rejected |
 | `2`       | Malformed invocation; the command never ran                                  |
 
-Under `--json`, every failure writes exactly one line to stderr and nothing to stdout:
+Under `--json`, every failure writes nothing to stdout, and ends stderr with exactly one line of
+JSON. Warnings printed earlier in the run (the `--expires` disclosure, an `ENCLAVE_TOKEN` override
+notice) can precede it, so parse the last line:
 
 ```json
 {"error":{"code":"NOT_FOUND","message":"not found: 3f2a91c4"}}

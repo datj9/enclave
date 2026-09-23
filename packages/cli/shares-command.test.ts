@@ -970,6 +970,21 @@ describe('share commands', () => {
       })
     })
 
+    // Refused before any artifact is looked up, so it confirms nothing — and "not found" would send
+    // the user hunting for a typo in an id that is fine.
+    it('passes the plaintext-transport 403 through instead of calling it not found', async () => {
+      mocks.get.mockRejectedValue(
+        new ApiError(403, 'FORBIDDEN', 'API tokens require an HTTPS request'),
+      )
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
+
+      expect(code).toBe(1)
+      expect(JSON.parse(errorText()) as unknown).toEqual({
+        error: { code: 'FORBIDDEN', message: 'API tokens require an HTTPS request' },
+      })
+    })
+
     it('reports a refused --expires as an INVALID_ARGUMENT envelope under --json', async () => {
       const code = await runShareCreate(
         { host: HOST, id: ARTIFACT_ID, expires: 'tomorrow', isJson: true },
