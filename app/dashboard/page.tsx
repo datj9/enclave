@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { redirect } from 'next/navigation'
 import { env } from '@/env'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
 import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
-import { getSessionUser } from '@/lib/auth/session'
+import { requireSessionUser } from '@app/_components/session-gate'
 import { SubmitButton } from '@app/_components/submit-button'
 import { ArtifactList } from './artifact-list'
 import styles from './page.module.css'
@@ -14,8 +13,9 @@ export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Dashboard · enclave' }
 
 export default async function DashboardPage() {
-  const sessionUser = await getSessionUser()
-  if (sessionUser === null) redirect('/signin')
+  // layout.tsx has already redirected a signed-out visitor; repeating the check here costs
+  // nothing (the lookup is memoised per request) and keeps the page safe on its own.
+  const sessionUser = await requireSessionUser()
 
   const page = await listOwnedArtifacts(sessionUser.id, {
     limit: DEFAULT_LIST_LIMIT,

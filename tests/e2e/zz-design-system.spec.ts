@@ -148,6 +148,11 @@ function describeTooSmall(controls: readonly Measured[], floor: number): string[
     .map((c) => `${c.height}px <${c.tag}> "${c.label}"`)
 }
 
+/**
+ * Signs in on the *page's* request context. `page.request` shares the browser context's cookie
+ * jar; the standalone `request` fixture does not, so signing in through it left `page` anonymous
+ * and every signed-in path silently measured /signin after the server redirect.
+ */
 async function signIn(request: APIRequestContext): Promise<void> {
   if ((await request.get('/setup')).status() === 200) {
     await request.post('/api/setup', {
@@ -199,8 +204,8 @@ test.describe('design system: control scale', () => {
       })
     }
 
-    test('signed-in surfaces meet the 44px touch target at 320px', async ({ page, request }) => {
-      await signIn(request)
+    test('signed-in surfaces meet the 44px touch target at 320px', async ({ page }) => {
+      await signIn(page.request)
 
       for (const path of SIGNED_IN_PAGES) {
         await page.goto(path)
@@ -217,8 +222,8 @@ test.describe('design system: control scale', () => {
   test.describe('fine pointer', () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
-    test('desktop controls still clear the WCAG 2.5.8 floor', async ({ page, request }) => {
-      await signIn(request)
+    test('desktop controls still clear the WCAG 2.5.8 floor', async ({ page }) => {
+      await signIn(page.request)
 
       for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
         await page.goto(path)
@@ -257,8 +262,8 @@ test.describe('design system: responsive layout', () => {
     })
   }
 
-  test('signed-in surfaces do not scroll sideways at 320px', async ({ page, request }) => {
-    await signIn(request)
+  test('signed-in surfaces do not scroll sideways at 320px', async ({ page }) => {
+    await signIn(page.request)
     await page.setViewportSize(NARROW_VIEWPORT)
 
     for (const path of SIGNED_IN_PAGES) {
@@ -274,8 +279,8 @@ test.describe('design system: responsive layout', () => {
 })
 
 test.describe('design system: typography', () => {
-  test('no page uses more than five type sizes', async ({ page, request }) => {
-    await signIn(request)
+  test('no page uses more than five type sizes', async ({ page }) => {
+    await signIn(page.request)
 
     for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
       await page.goto(path)
