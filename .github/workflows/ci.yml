@@ -204,3 +204,94 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
+
+  # The image is otherwise only built by release.yml, at a tag, which is too late to learn the
+  # Dockerfile broke. amd64 only (no QEMU): this proves the build and the runner's startup path,
+  # not the second architecture.
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: build runner
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runner
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: enclave-runner:ci
+          cache-from: type=gha,scope=runner
+          cache-to: type=gha,mode=max,scope=runner
+
+      # Not every revision of the Dockerfile has a `migrate` stage; build it when it exists.
+      - id: stages
+        name: detect migrate stage
+        run: |
+          if grep -qiE '^FROM[[:space:]].*[[:space:]]AS[[:space:]]+migrate[[:space:]]*$' Dockerfile; then
+            echo "migrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Dockerfile has no migrate stage; not building it"
+          fi
+
+      - name: build migrate
+        if: steps.stages.outputs.migrate == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: migrate
+          platforms: linux/amd64
+          push: false
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=migrate
+          cache-to: type=gha,mode=max,scope=migrate
+
+      # The container's own first command, with the env the e2e job uses and no database: a valid
+      # env must pass, and a missing secret must fail (proof the check really ran).
+      - name: smoke-test the env preflight
+        run: |
+          docker run --rm --env-file .env.example enclave-runner:ci node scripts/check-env.ts
+          if docker run --rm --env-file .env.example -e SESSION_SECRET= enclave-runner:ci \
+            node scripts/check-env.ts; then
+            echo "check-env.ts accepted an empty SESSION_SECRET" >&2
+            exit 1
+          fi
+
+      # Loads @node-rs/argon2 the way server.js does: by the specifier the server chunks `require`
+      # (Turbopack rewrites it to a hashed alias under .next/node_modules), resolved from the chunks
+      # directory. A hash/verify round trip proves the linux native binding is in the image.
+      - name: smoke-test the argon2 native binding
+        run: |
+          docker run --rm -i enclave-runner:ci node - <<'JS'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { createRequire } = require('node:module')
+          const chunks = path.join(process.cwd(), '.next/server/chunks')
+          const specifiers = new Set()
+          for (const file of fs.readdirSync(chunks)) {
+            if (!file.endsWith('.js')) continue
+            const source = fs.readFileSync(path.join(chunks, file), 'utf8')
+            for (const m of source.matchAll(/require\("(@node-rs\/argon2[^"]*)"\)/g)) specifiers.add(m[1])
+          }
+          if (specifiers.size === 0) throw new Error('no server chunk requires @node-rs/argon2')
+          const load = createRequire(path.join(chunks, 'resolver.js'))
+          ;(async () => {
+            for (const specifier of specifiers) {
+              const argon2 = load(specifier)
+              const ok = await argon2.verify(await argon2.hash('smoke'), 'smoke')
+              if (!ok) throw new Error(`${specifier}: hash/verify round trip failed`)
+              console.log(`argon2 native binding ok via ${specifier}`)
+            }
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
+          JS
