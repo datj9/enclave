@@ -63,10 +63,15 @@ export function KeyManager({ initialKey }: { readonly initialKey: StoredProvider
   }
 
   async function refreshStoredKey(): Promise<void> {
-    const response = await fetch('/api/v1/settings/keys')
-    if (!response.ok) return
-    const body = (await response.json()) as { readonly data: StoredProviderKeyView | null }
-    setStoredKey(body.data)
+    try {
+      const response = await fetch('/api/v1/settings/keys')
+      if (!response.ok) return
+      const body = (await response.json()) as { readonly data: StoredProviderKeyView | null }
+      setStoredKey(body.data)
+    } catch {
+      // The write already landed; a failed re-read must not be reported as a failed save/remove.
+      return
+    }
     // The daily cap on the page above changes with the key, and it is rendered on the server.
     router.refresh()
   }

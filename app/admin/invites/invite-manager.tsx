@@ -74,9 +74,13 @@ export function InviteManager({
   const revokeRow = useRef<HTMLElement | null>(null)
 
   async function refresh(): Promise<void> {
-    const response = await fetch('/api/v1/invites')
-    if (!response.ok) return
-    setInvites(((await response.json()) as ListResponse).data.items)
+    try {
+      const response = await fetch('/api/v1/invites')
+      if (!response.ok) return
+      setInvites(((await response.json()) as ListResponse).data.items)
+    } catch {
+      // The write already landed; a failed re-read must not be reported as a failed create/revoke.
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
