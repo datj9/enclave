@@ -43,9 +43,16 @@ function isTrustedOrigin(origin: string, request: Request): boolean {
   }
   if (parsed.origin === appOrigin()) return true
   // A deployment reached on a host other than APP_URL (a LAN name, the e2e harness on
-  // 127.0.0.1) is still same-origin with itself.
+  // 127.0.0.1) is still same-origin with itself. Parsed with the Origin's scheme so a proxy that
+  // writes the default port into Host (`app.example.com:443`) still matches the browser's Origin,
+  // which never carries one.
   const host = requestHost(request)
-  return host !== null && parsed.host === host
+  if (host === null || /[/\\@?#]/.test(host)) return false
+  try {
+    return new URL(`${parsed.protocol}//${host}`).origin === parsed.origin
+  } catch {
+    return false
+  }
 }
 
 /**

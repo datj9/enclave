@@ -168,6 +168,28 @@ describe('requireSameOriginRequest', () => {
     expect(() => requireSameOriginRequest(request)).not.toThrow()
   })
 
+  it('matches a request host that spells out the default port', () => {
+    const request = new Request('http://127.0.0.1:3000/api/v1/settings/keys', {
+      method: 'POST',
+      headers: { host: 'enclave.lan:443', origin: 'https://enclave.lan' },
+    })
+
+    expect(() => requireSameOriginRequest(request)).not.toThrow()
+  })
+
+  it.each([
+    ['a different port', { host: 'enclave.lan:8443', origin: 'https://enclave.lan' }],
+    ['the default port of the other scheme', { host: 'enclave.lan:80', origin: 'https://enclave.lan' }],
+    ['userinfo smuggled into the host', { host: 'evil.example@enclave.lan', origin: 'https://enclave.lan' }],
+  ])('does not match a request host with %s', (_label, headers) => {
+    const request = new Request('http://127.0.0.1:3000/api/v1/settings/keys', {
+      method: 'POST',
+      headers,
+    })
+
+    expect(() => requireSameOriginRequest(request)).toThrow(HttpError)
+  })
+
   it.each([
     [
       'an artifact origin, which is same-site with the app',

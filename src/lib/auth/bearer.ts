@@ -188,9 +188,7 @@ export async function revokeApiToken(
   const revoked = await db
     .update(apiTokens)
     .set({ revokedAt: sql`now()` })
-    .where(
-      and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)),
-    )
+    .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)))
     .returning({ id: apiTokens.id })
 
   if (revoked.length === 0) return await isOwnedToken(userId, tokenId)
@@ -239,10 +237,7 @@ export async function resolveApiToken(plaintext: string): Promise<ApiTokenPrinci
 
   if (row === undefined) return null
 
-  await db
-    .update(apiTokens)
-    .set({ lastUsedAt: sql`now()` })
-    .where(eq(apiTokens.id, row.id))
+  await db.update(apiTokens).set({ lastUsedAt: sql`now()` }).where(eq(apiTokens.id, row.id))
 
   return { kind: 'apiToken', userId: row.userId, tokenId: row.id, scopes: row.scopes }
 }
