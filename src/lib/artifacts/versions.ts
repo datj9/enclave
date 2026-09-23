@@ -2,7 +2,6 @@ import { eq, sql } from 'drizzle-orm'
 
 import { db } from '@/db'
 import { artifactVersions, artifacts } from '@/db/schema/artifacts'
-import { PENDING_SWEEP_AFTER_MINUTES } from '@/jobs/sweep-pending'
 import { recordAuditEvent } from '@/lib/audit'
 import { ENTRY_PATH, validateBundle, type BundleFile } from '@/lib/bundle/validate'
 import { classifyArtifactVersion } from '@/lib/categories/classify'
@@ -18,6 +17,7 @@ import {
 } from './bundle-write'
 import { CLIENT_MESSAGE_BY_CODE } from './create'
 import { artifactViewUrl } from './naming'
+import { PENDING_SWEEP_AFTER_MINUTES } from './pending'
 
 const CONFLICT_MESSAGE = 'The artifact has a newer version than expected'
 const IN_FLIGHT_MESSAGE = 'Another version of this artifact is still uploading'
