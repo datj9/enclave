@@ -130,6 +130,11 @@
   text-decoration: underline;
 }
 
+/* Held while the request is in flight: pressing it does nothing, so it should not look pressable. */
+.cancel[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
 /* Dialog controls follow the same promotion contract as the global .button-sm step. */
 @media (pointer: coarse) {
   .confirm {
