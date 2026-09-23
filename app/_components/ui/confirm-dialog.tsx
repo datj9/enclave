@@ -3,6 +3,7 @@
 import { Dialog } from '@base-ui/react/dialog'
 import { useRef, type ReactNode, type RefObject } from 'react'
 
+import { guardOpenChange } from '@/lib/ui/confirm-open-change'
 import styles from './dialog.module.css'
 
 /**
@@ -42,8 +43,9 @@ export interface ConfirmDialogProps {
    */
   readonly tone?: ConfirmTone | undefined
   /**
-   * The caller's request is in flight. The confirm button goes `aria-disabled` — it keeps focus,
-   * unlike `disabled` — and `onConfirm` is not called again until it clears.
+   * The caller's request is in flight. Both buttons go `aria-disabled` — they keep focus, unlike
+   * `disabled` — `onConfirm` is not called again, and Esc, a backdrop press and the cancel button
+   * do not close the dialog until it clears. The caller can still close it by setting `open`.
    */
   readonly busy?: boolean | undefined
   /** A failure to show inside the dialog, announced as an alert. `null`/omitted shows nothing. */
@@ -53,7 +55,10 @@ export interface ConfirmDialogProps {
 
   /** Controlled open state. Omit to let base-ui track it (needs `trigger`). */
   readonly open?: boolean | undefined
-  /** Every open/close request — trigger press, Esc, backdrop click, the cancel button. */
+  /**
+   * Every open/close request — trigger press, Esc, backdrop click, the cancel button. Close
+   * requests made while `busy` are dropped rather than forwarded.
+   */
   readonly onOpenChange?: ((open: boolean) => void) | undefined
   /** Renders a `Dialog.Trigger` button that opens the dialog. */
   readonly trigger?: ConfirmDialogTrigger | undefined
@@ -100,7 +105,7 @@ export function ConfirmDialog({
     <Dialog.Root
       // Spread rather than `open={open}` so an omitted prop leaves the dialog uncontrolled.
       {...(open === undefined ? {} : { open })}
-      onOpenChange={(isOpen) => onOpenChange?.(isOpen)}
+      onOpenChange={(isOpen, details) => guardOpenChange(isOpen, details, busy, onOpenChange)}
     >
       {trigger !== undefined && (
         <Dialog.Trigger className={trigger.className} data-testid={trigger.testId}>
@@ -139,7 +144,7 @@ export function ConfirmDialog({
             >
               {confirmLabel}
             </button>
-            <Dialog.Close ref={cancelRef} className={styles.cancel}>
+            <Dialog.Close ref={cancelRef} className={styles.cancel} aria-disabled={busy}>
               {cancelLabel}
             </Dialog.Close>
           </div>
