@@ -15,6 +15,7 @@ import {
   runRestore,
   runShow,
 } from './src/commands/artifacts.ts'
+import { testContext, type TestContext } from './test-context.ts'
 
 interface RecordedCall {
   readonly method: string
@@ -96,21 +97,16 @@ const PRICING = {
   viewUrl: 'https://9c81ba07.artifacts.example.com',
 } as const
 
-type StdoutWrite = typeof process.stdout.write
-
-let written: string[] = []
-let writtenToStderr: string[] = []
+let ctx: TestContext
 let configHome: string
-let originalConfigHome: string | undefined
-let originalToken: string | undefined
 
 function output(): string {
-  return written.join('')
+  return ctx.stdout.text()
 }
 
 /** Failures land on stderr so `--json` can promise stdout is nothing but the API object. */
 function errorOutput(): string {
-  return writtenToStderr.join('')
+  return ctx.stderr.text()
 }
 
 function callAt(index: number): RecordedCall {
@@ -140,38 +136,11 @@ function respondWith(routes: Readonly<Record<string, unknown>>): void {
 
 beforeEach(() => {
   harness.reset()
-  written = []
-  writtenToStderr = []
-
-  originalConfigHome = process.env['XDG_CONFIG_HOME']
-  originalToken = process.env['ENCLAVE_TOKEN']
   configHome = mkdtempSync(join(tmpdir(), 'enclave-artifacts-'))
-  process.env['XDG_CONFIG_HOME'] = configHome
-  process.env['ENCLAVE_TOKEN'] = 'test-token'
-
-  // The overload set on stdout.write cannot be expressed by a single implementation signature.
-  const capture = ((chunk: string | Uint8Array): boolean => {
-    written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
-    return true
-  }) as StdoutWrite
-  vi.spyOn(process.stdout, 'write').mockImplementation(capture)
-
-  const captureStderr = ((chunk: string | Uint8Array): boolean => {
-    writtenToStderr.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
-    return true
-  }) as StdoutWrite
-  vi.spyOn(process.stderr, 'write').mockImplementation(captureStderr)
+  ctx = testContext({ XDG_CONFIG_HOME: configHome, ENCLAVE_TOKEN: 'test-token' })
 })
 
 afterEach(() => {
-  vi.restoreAllMocks()
-
-  if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
-  else process.env['XDG_CONFIG_HOME'] = originalConfigHome
-
-  if (originalToken === undefined) delete process.env['ENCLAVE_TOKEN']
-  else process.env['ENCLAVE_TOKEN'] = originalToken
-
   rmSync(configHome, { recursive: true, force: true })
 })
 
@@ -182,7 +151,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       'GET /api/v1/artifacts?cursor=cursor-1': { items: [PRICING], nextCursor: null },
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
 
     expect(harness.calls).toHaveLength(2)
     expect(callAt(0)).toEqual({ method: 'GET', path: '/api/v1/artifacts', body: undefined })
@@ -200,7 +169,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       'GET /api/v1/artifacts?cursor=cursor-1': { items: [PRICING], nextCursor: null },
     })
 
-    expect(await runList({ host: HOST, cursor: 'cursor-1', isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, cursor: 'cursor-1', isJson: false }, ctx)).toBe(0)
 
     expect(harness.calls).toHaveLength(1)
     expect(callAt(0).path).toBe('/api/v1/artifacts?cursor=cursor-1')
@@ -213,7 +182,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       'GET /api/v1/artifacts?limit=1': { items: [KANBAN], nextCursor: 'cursor-1' },
     })
 
-    expect(await runList({ host: HOST, limit: 1, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, limit: 1, isJson: false }, ctx)).toBe(0)
 
     expect(harness.calls).toHaveLength(1)
     expect(callAt(0).path).toBe('/api/v1/artifacts?limit=1')
@@ -223,14 +192,14 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
   it('reports an empty account without inventing a page', async () => {
     respondWith({ 'GET /api/v1/artifacts': { items: [], nextCursor: null } })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).toContain('no artifacts')
   })
 
   it('stops instead of looping forever when nextCursor never advances', async () => {
     harness.setResponder(() => ({ items: [], nextCursor: 'stuck-cursor' }))
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(1)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(1)
     expect(errorOutput()).toContain('cursor it had already given')
   })
 
@@ -242,7 +211,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       },
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).not.toContain('\x1b')
     expect(output()).toContain('evil')
   })
@@ -255,7 +224,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       },
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).not.toContain('\u202e')
     expect(output()).toContain('invoice')
   })
@@ -268,7 +237,7 @@ describe('AC 1 — list paginates and consumes nextCursor', () => {
       },
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).not.toContain('\u200b')
     expect(output()).not.toContain('\ufeff')
   })
@@ -286,7 +255,7 @@ describe('list labels its columns and fits an 80-column terminal', () => {
   it('prints a header above the rows', async () => {
     respondWith({ 'GET /api/v1/artifacts': { items: [KANBAN, PRICING], nextCursor: null } })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     // TITLE starts where the 8-character short id and its two-space gap end.
     expect(firstLine()).toMatch(/^ID {8}TITLE/)
     expect(firstLine()).toContain('VISIBILITY')
@@ -295,7 +264,7 @@ describe('list labels its columns and fits an 80-column terminal', () => {
   it('drops the artifact-origin URL, which show prints and --json still carries', async () => {
     respondWith({ 'GET /api/v1/artifacts': { items: [KANBAN], nextCursor: null } })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).not.toContain(VIEW_URL)
     expect(output()).toContain('3f2a91c4')
     expect(output()).toContain('private')
@@ -313,7 +282,7 @@ describe('list labels its columns and fits an 80-column terminal', () => {
       },
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).toContain('...')
     expect(output()).not.toContain(longTitle)
     // 8 + 2 + 40 + 2 + the 10-character VISIBILITY header is the widest a line can be.
@@ -328,7 +297,7 @@ describe('list labels its columns and fits an 80-column terminal', () => {
       'GET /api/v1/artifacts': { items: [{ ...KANBAN, title: longTitle }], nextCursor: null },
     })
 
-    expect(await runList({ host: HOST, isJson: true })).toBe(0)
+    expect(await runList({ host: HOST, isJson: true }, ctx)).toBe(0)
     expect(JSON.parse(output()) as { items: Record<string, unknown>[] }).toMatchObject({
       items: [{ title: longTitle, viewUrl: VIEW_URL }],
     })
@@ -337,7 +306,7 @@ describe('list labels its columns and fits an 80-column terminal', () => {
 
 describe('exit codes distinguish a bad argument from a failed lookup', () => {
   it('exits 2 for a prefix too short to resolve, like every other unusable value', async () => {
-    expect(await runShow({ host: HOST, id: 'abc', isJson: false })).toBe(2)
+    expect(await runShow({ host: HOST, id: 'abc', isJson: false }, ctx)).toBe(2)
     expect(errorOutput()).toContain('at least 8')
     expect(harness.calls).toHaveLength(0)
   })
@@ -345,7 +314,7 @@ describe('exit codes distinguish a bad argument from a failed lookup', () => {
   it('still exits 1 when a well-formed prefix matches nothing', async () => {
     respondWith({ 'GET /api/v1/artifacts': { items: [], nextCursor: null } })
 
-    expect(await runShow({ host: HOST, id: 'deadbeef', isJson: false })).toBe(1)
+    expect(await runShow({ host: HOST, id: 'deadbeef', isJson: false }, ctx)).toBe(1)
   })
 })
 
@@ -353,7 +322,7 @@ describe('AC 2 — show', () => {
   it('prints id, title, visibility, created and viewUrl', async () => {
     respondWith({ [`GET /api/v1/artifacts/${FULL_ID}`]: KANBAN })
 
-    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(0)
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false }, ctx)).toBe(0)
 
     expect(harness.calls).toHaveLength(1)
     expect(callAt(0)).toEqual({
@@ -371,7 +340,7 @@ describe('AC 2 — show', () => {
   it('gives url the /a/<id> page and labels the artifact origin as provenance', async () => {
     respondWith({ [`GET /api/v1/artifacts/${FULL_ID}`]: KANBAN })
 
-    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(0)
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false }, ctx)).toBe(0)
     expect(output()).toContain(`url         https://${HOST}/a/${FULL_ID}`)
     expect(output()).toContain(`served from ${VIEW_URL}`)
   })
@@ -387,7 +356,7 @@ describe('a rejected token names the command that fixes it', () => {
       throw new ApiError(401, 'UNAUTHORIZED', 'The API token is not valid')
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(1)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(1)
     expect(errorOutput()).toContain('enclave login --host enclave.example.com')
     expect(output()).toBe('')
   })
@@ -397,7 +366,7 @@ describe('a rejected token names the command that fixes it', () => {
       throw new ApiError(403, 'FORBIDDEN', 'Token lacks scope artifacts:write')
     })
 
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' })).toBe(1)
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' }, ctx)).toBe(1)
     expect(errorOutput()).toContain('artifacts:write')
     expect(errorOutput()).toContain('mint a token with that scope')
     expect(errorOutput()).not.toContain('log in again')
@@ -406,7 +375,7 @@ describe('a rejected token names the command that fixes it', () => {
   it('still reports a 404 as not found, naming what was asked for', async () => {
     notFoundForEverything()
 
-    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(1)
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false }, ctx)).toBe(1)
     expect(errorOutput()).toContain(`not found: ${FULL_ID}`)
   })
 })
@@ -418,7 +387,7 @@ describe('AC 3 — privacy org', () => {
       [`PATCH /api/v1/artifacts/${FULL_ID}`]: { ...KANBAN, visibility: 'org' },
     })
 
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' })).toBe(0)
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' }, ctx)).toBe(0)
 
     const patch = callAt(1)
     expect(patch.method).toBe('PATCH')
@@ -434,7 +403,7 @@ describe('AC 3 — privacy org', () => {
       [`PATCH /api/v1/artifacts/${PRICING.id}`]: { ...PRICING, visibility: 'private' },
     })
 
-    expect(await runPrivacy({ host: HOST, id: PRICING.id, visibility: 'private' })).toBe(0)
+    expect(await runPrivacy({ host: HOST, id: PRICING.id, visibility: 'private' }, ctx)).toBe(0)
 
     expect(callAt(1).body).toEqual({ visibility: 'private' })
     expect(output()).toContain('org → private')
@@ -448,7 +417,7 @@ describe('AC 4 — public is a visibility, a share link is not', () => {
       [`PATCH /api/v1/artifacts/${FULL_ID}`]: { ...KANBAN, visibility: 'public' },
     })
 
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'public' })).toBe(0)
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'public' }, ctx)).toBe(0)
 
     expect(callAt(1).body).toEqual({ visibility: 'public' })
     expect(output()).toContain('private → public')
@@ -456,7 +425,7 @@ describe('AC 4 — public is a visibility, a share link is not', () => {
   })
 
   it('any unknown visibility exits 2 before any HTTP call, and names the share command', async () => {
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'unlisted' })).toBe(2)
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'unlisted' }, ctx)).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
     expect(errorOutput()).toContain("not 'unlisted'")
@@ -470,7 +439,7 @@ describe('AC 5 — rename sends the title only', () => {
       [`PATCH /api/v1/artifacts/${FULL_ID}`]: { ...KANBAN, title: 'Sprint board' },
     })
 
-    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board' })).toBe(0)
+    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board' }, ctx)).toBe(0)
 
     expect(harness.calls).toHaveLength(1)
     const patch = callAt(0)
@@ -481,7 +450,7 @@ describe('AC 5 — rename sends the title only', () => {
   })
 
   it('refuses a blank title with exit 2 and no HTTP call', async () => {
-    expect(await runRename({ host: HOST, id: FULL_ID, title: '   ' })).toBe(2)
+    expect(await runRename({ host: HOST, id: FULL_ID, title: '   ' }, ctx)).toBe(2)
 
     expect(harness.calls).toHaveLength(0)
     expect(errorOutput()).toContain('a title is required')
@@ -506,11 +475,11 @@ describe('AC 6 — rm hides the artifact, restore brings it back', () => {
       throw new ApiError(404, 'NOT_FOUND', 'No such artifact')
     })
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).toContain('Kanban board')
 
-    written = []
-    expect(await runRemove({ host: HOST, id: FULL_ID })).toBe(0)
+    ctx.stdout.clear()
+    expect(await runRemove({ host: HOST, id: FULL_ID }, ctx)).toBe(0)
     expect(callAt(1)).toEqual({
       method: 'DELETE',
       path: `/api/v1/artifacts/${FULL_ID}`,
@@ -518,20 +487,20 @@ describe('AC 6 — rm hides the artifact, restore brings it back', () => {
     })
     expect(output()).toContain('to trash')
 
-    written = []
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    ctx.stdout.clear()
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).not.toContain('Kanban board')
     expect(output()).toContain('no artifacts')
 
-    written = []
-    expect(await runRestore({ host: HOST, id: FULL_ID })).toBe(0)
+    ctx.stdout.clear()
+    expect(await runRestore({ host: HOST, id: FULL_ID }, ctx)).toBe(0)
     const restore = callAt(3)
     expect(restore.method).toBe('POST')
     expect(restore.path).toBe(`/api/v1/artifacts/${FULL_ID}/restore`)
     expect(restore.body).toBeUndefined()
 
-    written = []
-    expect(await runList({ host: HOST, isJson: false })).toBe(0)
+    ctx.stdout.clear()
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(0)
     expect(output()).toContain('Kanban board')
   })
 })
@@ -540,7 +509,7 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
   it('show says not found', async () => {
     notFoundForEverything()
 
-    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false })).toBe(1)
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false }, ctx)).toBe(1)
     expect(errorOutput()).toContain('not found')
     expect(output()).not.toContain('forbidden')
   })
@@ -548,7 +517,7 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
   it('rm says not found', async () => {
     notFoundForEverything()
 
-    expect(await runRemove({ host: HOST, id: FULL_ID })).toBe(1)
+    expect(await runRemove({ host: HOST, id: FULL_ID }, ctx)).toBe(1)
     expect(errorOutput()).toContain('not found')
     expect(output()).not.toContain('forbidden')
   })
@@ -556,9 +525,9 @@ describe('AC 7 — a 404 reads as not found, never forbidden', () => {
   it('rename and privacy say not found', async () => {
     notFoundForEverything()
 
-    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board' })).toBe(1)
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' })).toBe(1)
-    expect(await runRestore({ host: HOST, id: FULL_ID })).toBe(1)
+    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board' }, ctx)).toBe(1)
+    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org' }, ctx)).toBe(1)
+    expect(await runRestore({ host: HOST, id: FULL_ID }, ctx)).toBe(1)
     expect(output()).not.toContain('forbidden')
     expect(errorOutput().match(/not found/g)).toHaveLength(3)
   })
@@ -573,7 +542,7 @@ describe('AC 8 — an ambiguous prefix', () => {
       },
     })
 
-    expect(await runShow({ host: HOST, id: '3f2a91c4', isJson: false })).toBe(1)
+    expect(await runShow({ host: HOST, id: '3f2a91c4', isJson: false }, ctx)).toBe(1)
 
     expect(harness.calls).toHaveLength(1)
     expect(callAt(0).path).toBe('/api/v1/artifacts')
@@ -590,7 +559,7 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
       'GET /api/v1/artifacts?cursor=cursor-1': { items: [PRICING], nextCursor: null },
     })
 
-    expect(await runList({ host: HOST, isJson: true })).toBe(0)
+    expect(await runList({ host: HOST, isJson: true }, ctx)).toBe(0)
 
     expect(JSON.parse(output())).toEqual({ items: [KANBAN, PRICING], nextCursor: null })
   })
@@ -598,7 +567,7 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
   it('show --json emits the ArtifactView', async () => {
     respondWith({ [`GET /api/v1/artifacts/${FULL_ID}`]: KANBAN })
 
-    expect(await runShow({ host: HOST, id: FULL_ID, isJson: true })).toBe(0)
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: true }, ctx)).toBe(0)
 
     expect(JSON.parse(output())).toEqual(KANBAN)
   })
@@ -607,9 +576,9 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
     const renamed = { ...KANBAN, title: 'Sprint board' }
     respondWith({ [`PATCH /api/v1/artifacts/${FULL_ID}`]: renamed })
 
-    expect(await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board', isJson: true })).toBe(
-      0,
-    )
+    expect(
+      await runRename({ host: HOST, id: FULL_ID, title: 'Sprint board', isJson: true }, ctx),
+    ).toBe(0)
 
     expect(JSON.parse(output())).toEqual(renamed)
   })
@@ -621,7 +590,9 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
       [`PATCH /api/v1/artifacts/${FULL_ID}`]: shared,
     })
 
-    expect(await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org', isJson: true })).toBe(0)
+    expect(
+      await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'org', isJson: true }, ctx),
+    ).toBe(0)
 
     expect(JSON.parse(output())).toEqual(shared)
   })
@@ -629,7 +600,7 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
   it('rm --json emits the deletion, the one call with no response body', async () => {
     harness.setResponder(() => undefined)
 
-    expect(await runRemove({ host: HOST, id: FULL_ID, isJson: true })).toBe(0)
+    expect(await runRemove({ host: HOST, id: FULL_ID, isJson: true }, ctx)).toBe(0)
 
     expect(JSON.parse(output())).toEqual({ id: FULL_ID, deleted: true })
   })
@@ -637,7 +608,7 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
   it('restore --json emits the restored ArtifactView', async () => {
     respondWith({ [`POST /api/v1/artifacts/${FULL_ID}/restore`]: KANBAN })
 
-    expect(await runRestore({ host: HOST, id: FULL_ID, isJson: true })).toBe(0)
+    expect(await runRestore({ host: HOST, id: FULL_ID, isJson: true }, ctx)).toBe(0)
 
     expect(JSON.parse(output())).toEqual(KANBAN)
   })
@@ -645,9 +616,9 @@ describe('AC 9 — --json emits the raw API object and nothing else', () => {
 
 describe('credentials', () => {
   it('exits 1 without an HTTP call when no token is stored for the host', async () => {
-    delete process.env['ENCLAVE_TOKEN']
+    delete ctx.env['ENCLAVE_TOKEN']
 
-    expect(await runList({ host: HOST, isJson: false })).toBe(1)
+    expect(await runList({ host: HOST, isJson: false }, ctx)).toBe(1)
 
     expect(harness.calls).toHaveLength(0)
     expect(errorOutput()).toContain('not logged in to enclave.example.com')
@@ -665,40 +636,108 @@ describe('--json keeps stdout machine-readable on failure', () => {
   it('show prints nothing to stdout when the artifact is missing', async () => {
     respondWith({})
 
-    const code = await runShow({
-      host: 'enclave.example.com',
-      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      isJson: true,
-    })
+    const code = await runShow(
+      {
+        host: 'enclave.example.com',
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(code).toBe(1)
-    expect(written.join('')).toBe('')
-    expect(writtenToStderr.join('')).toContain('not found')
+    expect(ctx.stdout.text()).toBe('')
+    expect(ctx.stderr.text()).toContain('not found')
   })
 
   it('rm prints nothing to stdout when the artifact is missing', async () => {
     respondWith({})
 
-    const code = await runRemove({
-      host: 'enclave.example.com',
-      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      isJson: true,
-    })
+    const code = await runRemove(
+      {
+        host: 'enclave.example.com',
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(code).toBe(1)
-    expect(written.join('')).toBe('')
+    expect(ctx.stdout.text()).toBe('')
   })
 
   it('anything stdout does emit under --json parses as JSON', async () => {
     respondWith({})
 
-    await runShow({
-      host: 'enclave.example.com',
-      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      isJson: true,
+    await runShow(
+      {
+        host: 'enclave.example.com',
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        isJson: true,
+      },
+      ctx,
+    )
+
+    const stdout = ctx.stdout.text().trim()
+    if (stdout !== '') expect(() => JSON.parse(stdout) as unknown).not.toThrow()
+  })
+})
+
+/**
+ * Every failure under `--json` is one line of `{"error":{"code","message"}}` on stderr — the same
+ * envelope `push` has always used — so a script branches on `code` instead of scraping prose.
+ */
+describe('--json failures share one envelope on stderr', () => {
+  function reportedError(): { code: string; message: string; details?: unknown } {
+    expect(output()).toBe('')
+    const lines = errorOutput().trim().split('\n')
+    expect(lines).toHaveLength(1)
+    return (JSON.parse(lines[0] ?? '') as { error: { code: string; message: string } }).error
+  }
+
+  it('reports a missing artifact as NOT_FOUND, echoing the id', async () => {
+    respondWith({})
+
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: true }, ctx)).toBe(1)
+    expect(reportedError()).toEqual({ code: 'NOT_FOUND', message: `not found: ${FULL_ID}` })
+  })
+
+  it('reports a refused argument as INVALID_ARGUMENT with exit 2', async () => {
+    expect(
+      await runPrivacy({ host: HOST, id: FULL_ID, visibility: 'unlisted', isJson: true }, ctx),
+    ).toBe(2)
+    expect(reportedError()).toMatchObject({ code: 'INVALID_ARGUMENT' })
+  })
+
+  it('reports a too-short id as INVALID_ID with exit 2', async () => {
+    expect(await runShow({ host: HOST, id: '3f2a', isJson: true }, ctx)).toBe(2)
+    expect(reportedError()).toMatchObject({ code: 'INVALID_ID' })
+  })
+
+  it('reports a missing credential as NOT_AUTHENTICATED', async () => {
+    delete ctx.env['ENCLAVE_TOKEN']
+
+    expect(await runList({ host: HOST, isJson: true }, ctx)).toBe(1)
+    expect(reportedError()).toMatchObject({ code: 'NOT_AUTHENTICATED' })
+  })
+
+  it('reports an unreachable host with its code and details', async () => {
+    harness.setResponder(() => {
+      throw new ApiError(0, 'NETWORK_ERROR', `Could not reach ${HOST}`, { host: HOST })
     })
 
-    const stdout = written.join('').trim()
-    if (stdout !== '') expect(() => JSON.parse(stdout) as unknown).not.toThrow()
+    expect(await runList({ host: HOST, isJson: true }, ctx)).toBe(1)
+    expect(reportedError()).toEqual({
+      code: 'NETWORK_ERROR',
+      message: `Could not reach ${HOST}`,
+      details: { host: HOST },
+    })
+  })
+
+  it('keeps the human form without --json', async () => {
+    respondWith({})
+
+    expect(await runShow({ host: HOST, id: FULL_ID, isJson: false }, ctx)).toBe(1)
+    expect(errorOutput()).toBe(`✗ not found: ${FULL_ID}\n`)
   })
 })

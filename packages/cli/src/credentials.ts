@@ -4,23 +4,35 @@ import { dirname, join } from 'node:path'
 
 import { normaliseHost } from '../../push-core/src/index.ts'
 
+import { printDiagnostic, processContext, type CliContext, type Environment } from './output.ts'
+
 export interface HostCredential {
   readonly token: string
 }
 
 export class CredentialError extends Error {}
 
-export function credentialsPath(): string {
-  const base = process.env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config')
+/** `env` defaults to the live process environment; commands pass the one their context carries. */
+export function credentialsPath(env: Environment = process.env): string {
+  const base = env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config')
   return join(base, 'enclave', 'credentials.json')
 }
 
-function assertShape(path: string, parsed: unknown): asserts parsed is Record<string, HostCredential> {
+function assertShape(
+  path: string,
+  parsed: unknown,
+): asserts parsed is Record<string, HostCredential> {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new CredentialError(`${path} does not contain a credentials object — remove it and log in again`)
+    throw new CredentialError(
+      `${path} does not contain a credentials object — remove it and log in again`,
+    )
   }
   for (const [host, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value !== 'object' || value === null || typeof (value as { token?: unknown }).token !== 'string') {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      typeof (value as { token?: unknown }).token !== 'string'
+    ) {
       throw new CredentialError(
         `${path} has a malformed entry for '${host}' — remove it and log in again`,
       )
@@ -28,8 +40,8 @@ function assertShape(path: string, parsed: unknown): asserts parsed is Record<st
   }
 }
 
-export function readCredentials(): Record<string, HostCredential> {
-  const path = credentialsPath()
+export function readCredentials(env: Environment = process.env): Record<string, HostCredential> {
+  const path = credentialsPath(env)
   if (!existsSync(path)) return {}
 
   let stat
@@ -87,18 +99,22 @@ function storedKeyFor(store: Record<string, HostCredential>, host: string): stri
   return null
 }
 
-export function tokenFor(host: string): string | null {
+export function tokenFor(
+  host: string,
+  ctx: Pick<CliContext, 'env' | 'stderr'> = processContext(),
+): string | null {
   // Trimmed, so this agrees with `login`'s own "was a token entered?" test. Untrimmed, a trailing
   // space in a .env file sends `Bearer    ` and silently bypasses a good stored credential.
-  const fromEnvironment = process.env['ENCLAVE_TOKEN']?.trim()
+  const fromEnvironment = ctx.env['ENCLAVE_TOKEN']?.trim()
   if (fromEnvironment !== undefined && fromEnvironment !== '') {
     // Warn when the env token silently shadows a different stored credential.
     try {
-      const store = readCredentials()
+      const store = readCredentials(ctx.env)
       const key = storedKeyFor(store, host)
       if (key !== null && store[key]?.token !== fromEnvironment) {
-        process.stderr.write(
-          `enclave: ENCLAVE_TOKEN is overriding the stored credential for ${host}\n`,
+        printDiagnostic(
+          ctx,
+          `enclave: ENCLAVE_TOKEN is overriding the stored credential for ${host}`,
         )
       }
     } catch (error) {
@@ -107,23 +123,23 @@ export function tokenFor(host: string): string | null {
     }
     return fromEnvironment
   }
-  const store = readCredentials()
+  const store = readCredentials(ctx.env)
   const key = storedKeyFor(store, host)
   return key === null ? null : (store[key]?.token ?? null)
 }
 
-export function saveToken(host: string, token: string): void {
-  const path = credentialsPath()
+export function saveToken(host: string, token: string, env: Environment = process.env): void {
+  const path = credentialsPath(env)
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  const next = { ...readCredentials(), [host]: { token } }
+  const next = { ...readCredentials(env), [host]: { token } }
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
 }
 
 /** Deletes the canonical key AND every legacy key that canonicalises to the same origin, so
  *  logout fully revokes rather than leaving a second live credential behind. */
-export function forgetToken(host: string): boolean {
-  const current = readCredentials()
+export function forgetToken(host: string, env: Environment = process.env): boolean {
+  const current = readCredentials(env)
   const matchingKeys = Object.keys(current).filter((key) => {
     if (key === host) return true
     try {
@@ -136,6 +152,6 @@ export function forgetToken(host: string): boolean {
 
   const next = { ...current }
   for (const key of matchingKeys) delete next[key]
-  writeFileSync(credentialsPath(), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
+  writeFileSync(credentialsPath(env), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
   return true
 }

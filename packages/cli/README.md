@@ -189,6 +189,24 @@ Every command that returns an object takes `--json`, which puts the raw API obje
 | `1`       | Ran, and the answer was no — not found, refused, unreachable, token rejected |
 | `2`       | Malformed invocation; the command never ran                                  |
 
+Under `--json`, every failure writes nothing to stdout, and ends stderr with exactly one line of
+JSON. Warnings printed earlier in the run (the `--expires` disclosure, an `ENCLAVE_TOKEN` override
+notice) can precede it, so parse the last line:
+
+```json
+{"error":{"code":"NOT_FOUND","message":"not found: 3f2a91c4"}}
+```
+
+Branch on `code`; `message` is for people and may be reworded. Some errors add a `details` object
+(`push` refusals list the offending files; an unreachable host names it). Codes include
+`NOT_FOUND`, `NOT_AUTHENTICATED`, `INVALID_ARGUMENT`, `INVALID_ID`, `USAGE_ERROR`,
+`NETWORK_ERROR`, `NETWORK_TIMEOUT`, and whatever code the server returned — `push` keeps the codes
+it has always used (`VERSION_CONFLICT`, `NO_HOST`, `INVALID_ARTIFACT`, …).
+
+`logout` exits `0` even when no credential was stored for the host: the state you asked for — no
+token for that host — already holds, so cleanup scripts can call it unconditionally. It notes
+`no credential for <host>` on stderr.
+
 ## Not included
 
 `enclave token create` does not exist, deliberately. The server refuses to let an API token mint

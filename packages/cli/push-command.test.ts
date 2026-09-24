@@ -5,18 +5,25 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PushCoreModule from '../push-core/src/index.ts'
+import type * as ApiClientModule from './src/api-client.ts'
 
 import { collectBundle, push, PushError } from '../push-core/src/index.ts'
 import type { DeadLink, PushResult, UploadPlan } from '../push-core/src/index.ts'
 import { apiClient } from './src/api-client.ts'
 import { runPush } from './src/commands/push.ts'
+import type { CliContext } from './src/output.ts'
 import type { ProjectState } from './src/state.ts'
 import { USER_AGENT } from './src/version.ts'
 
-vi.mock('./src/api-client.ts', () => ({ apiClient: vi.fn() }))
+// Only the factory is replaced: `ApiError` stays the real class, so `instanceof` still narrows.
+vi.mock('./src/api-client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClientModule>()),
+  apiClient: vi.fn(),
+}))
 
-const { collectBundle: realCollectBundle } =
-  await vi.importActual<typeof PushCoreModule>('../push-core/src/index.ts')
+const { collectBundle: realCollectBundle } = await vi.importActual<typeof PushCoreModule>(
+  '../push-core/src/index.ts',
+)
 
 vi.mock('../push-core/src/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof PushCoreModule>()
@@ -40,9 +47,7 @@ describe('push command', () => {
   let configHome: string
   let stdout: string
   let stderr: string
-  let originalConfigHome: string | undefined
-  let originalEnvironmentToken: string | undefined
-  let originalHost: string | undefined
+  let ctx: CliContext & { readonly env: Record<string, string | undefined> }
 
   function writeStateFile(state: ProjectState): void {
     writeFileSync(join(projectDirectory, '.enclave.json'), `${JSON.stringify(state, null, 2)}\n`)
@@ -54,10 +59,6 @@ describe('push command', () => {
   }
 
   beforeEach(() => {
-    originalConfigHome = process.env['XDG_CONFIG_HOME']
-    originalEnvironmentToken = process.env['ENCLAVE_TOKEN']
-    originalHost = process.env['ENCLAVE_HOST']
-
     workspace = mkdtempSync(join(tmpdir(), 'enclave-push-'))
     configHome = mkdtempSync(join(tmpdir(), 'enclave-push-config-'))
     projectDirectory = join(workspace, 'dist')
@@ -65,20 +66,24 @@ describe('push command', () => {
     writeFileSync(join(projectDirectory, 'index.html'), '<!doctype html><title>hi</title>')
     writeFileSync(join(projectDirectory, 'app.js.map'), '{}')
 
-    process.env['XDG_CONFIG_HOME'] = configHome
-    process.env['ENCLAVE_TOKEN'] = 'a-test-token'
-    delete process.env['ENCLAVE_HOST']
-
     stdout = ''
     stderr = ''
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
-      stdout += String(chunk)
-      return true
-    })
-    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown): boolean => {
-      stderr += String(chunk)
-      return true
-    })
+    // No ENCLAVE_HOST: the host precedence tests set exactly the sources they are about.
+    ctx = {
+      stdout: {
+        write: (chunk: string): boolean => {
+          stdout += chunk
+          return true
+        },
+      },
+      stderr: {
+        write: (chunk: string): boolean => {
+          stderr += chunk
+          return true
+        },
+      },
+      env: { XDG_CONFIG_HOME: configHome, ENCLAVE_TOKEN: 'a-test-token' },
+    }
     vi.mocked(push).mockResolvedValue(SUCCESS_RESULT)
     vi.mocked(collectBundle).mockImplementation(realCollectBundle)
   })
@@ -88,15 +93,6 @@ describe('push command', () => {
     vi.mocked(push).mockReset()
     vi.mocked(collectBundle).mockReset()
 
-    if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
-    else process.env['XDG_CONFIG_HOME'] = originalConfigHome
-
-    if (originalEnvironmentToken === undefined) delete process.env['ENCLAVE_TOKEN']
-    else process.env['ENCLAVE_TOKEN'] = originalEnvironmentToken
-
-    if (originalHost === undefined) delete process.env['ENCLAVE_HOST']
-    else process.env['ENCLAVE_HOST'] = originalHost
-
     rmSync(workspace, { recursive: true, force: true })
     rmSync(configHome, { recursive: true, force: true })
   })
@@ -105,14 +101,17 @@ describe('push command', () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
     vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 3 })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(push).toHaveBeenCalledWith(
@@ -128,14 +127,17 @@ describe('push command', () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
     vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 3 })
 
-    await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     const written = JSON.parse(
       readFileSync(join(projectDirectory, '.enclave.json'), 'utf8'),
@@ -146,14 +148,17 @@ describe('push command', () => {
   it('--force drops the expected-version guard', async () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
 
-    await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: true,
-      isDryRun: false,
-      isJson: false,
-    })
+    await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: true,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     const [options] = vi.mocked(push).mock.calls[0] ?? []
     expect(options?.artifactId).toBe(SUCCESS_RESULT.artifactId)
@@ -169,14 +174,17 @@ describe('push command', () => {
       }),
     )
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('✗ server is at v5, you last pushed v2')
@@ -185,18 +193,101 @@ describe('push command', () => {
     expect(stdout).toBe('')
   })
 
+  describe('a version still uploading', () => {
+    // The server's in-flight variant: the numbers it carries agree, so "server is at v2, you last
+    // pushed v2" would read as a contradiction. `inFlightVersionNo` is what actually blocked it.
+    const inFlight = new PushError(
+      'VERSION_CONFLICT',
+      'Another version of this artifact is still uploading',
+      { expectedVersionNo: 2, currentVersionNo: 2, inFlightVersionNo: 3 },
+    )
+
+    beforeEach(() => {
+      writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
+      vi.mocked(push).mockRejectedValue(inFlight)
+    })
+
+    it('names the in-flight version and how to proceed', async () => {
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
+
+      expect(exitCode).toBe(1)
+      expect(stderr).toBe('✗ v3 is still uploading; retry shortly or use --force\n')
+      expect(stdout).toBe('')
+    })
+
+    it('hands --json the server error untouched, details included', async () => {
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: true,
+        },
+        ctx,
+      )
+
+      expect(exitCode).toBe(1)
+      expect(JSON.parse(stderr) as unknown).toEqual({
+        error: {
+          code: 'VERSION_CONFLICT',
+          message: 'Another version of this artifact is still uploading',
+          details: { expectedVersionNo: 2, currentVersionNo: 2, inFlightVersionNo: 3 },
+        },
+      })
+    })
+
+    it('falls back to the version-number wording when an older server omits the field', async () => {
+      vi.mocked(push).mockRejectedValue(
+        new PushError('VERSION_CONFLICT', 'Version conflict', {
+          expectedVersionNo: 2,
+          currentVersionNo: 5,
+          inFlightVersionNo: 'not-a-number',
+        }),
+      )
+
+      await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
+
+      expect(stderr).toContain('✗ server is at v5, you last pushed v2')
+    })
+  })
+
   it('offers --new when the artifact the state file tracks is gone', async () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
     vi.mocked(push).mockRejectedValue(new PushError('NOT_FOUND', 'Artifact not found', {}))
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('use --new to publish this directory as a new artifact')
@@ -218,15 +309,18 @@ describe('push command', () => {
     it('appends to the named artifact when the directory has no state file', async () => {
       vi.mocked(push).mockResolvedValue({ ...SUCCESS_RESULT, versionNo: 4 })
 
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: SUCCESS_RESULT.artifactId,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: SUCCESS_RESULT.artifactId,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(0)
       const [options] = vi.mocked(push).mock.calls[0] ?? []
@@ -239,15 +333,18 @@ describe('push command', () => {
     it('keeps the version guard when it agrees with the state file', async () => {
       writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
 
-      await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: SUCCESS_RESULT.artifactId,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: SUCCESS_RESULT.artifactId,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(push).toHaveBeenCalledWith(expect.objectContaining({ expectedVersionNo: 2 }))
     })
@@ -255,15 +352,18 @@ describe('push command', () => {
     it('refuses when it disagrees with the state file', async () => {
       writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 2 })
 
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: OTHER_ID,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: OTHER_ID,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(1)
       expect(stderr).toContain('7d5e3b21')
@@ -272,32 +372,38 @@ describe('push command', () => {
     })
 
     it('rejects the pair --artifact --new as contradictory', async () => {
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: SUCCESS_RESULT.artifactId,
-        isNew: true,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: SUCCESS_RESULT.artifactId,
+          isNew: true,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(2)
       expect(push).not.toHaveBeenCalled()
     })
 
-    it('resolves a prefix against the caller\'s own artifacts', async () => {
+    it("resolves a prefix against the caller's own artifacts", async () => {
       stubListing([{ id: SUCCESS_RESULT.artifactId, title: 'Kanban' }])
 
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: '3f2a91c4',
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: '3f2a91c4',
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(0)
       expect(push).toHaveBeenCalledWith(
@@ -306,15 +412,18 @@ describe('push command', () => {
     })
 
     it('exits 2 on a prefix too short to be unambiguous', async () => {
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: '3f2a',
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: '3f2a',
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(2)
       expect(push).not.toHaveBeenCalled()
@@ -324,15 +433,18 @@ describe('push command', () => {
       const get = vi.fn()
       vi.mocked(apiClient).mockReturnValue({ get, post: vi.fn(), patch: vi.fn(), remove: vi.fn() })
 
-      await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        artifactRef: SUCCESS_RESULT.artifactId,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          artifactRef: SUCCESS_RESULT.artifactId,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(get).not.toHaveBeenCalled()
     })
@@ -341,44 +453,53 @@ describe('push command', () => {
   it('--new ignores an existing state file', async () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: true,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: true,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(push).toHaveBeenCalledTimes(1)
   })
 
   it('identifies itself with a User-Agent naming the CLI and its version', async () => {
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(vi.mocked(push).mock.calls[0]?.[0]).toMatchObject({ userAgent: USER_AGENT })
   })
 
   it('exits 1 when no token is available', async () => {
-    delete process.env['ENCLAVE_TOKEN']
+    delete ctx.env['ENCLAVE_TOKEN']
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('enclave login')
@@ -386,27 +507,33 @@ describe('push command', () => {
   })
 
   it('exits 2 when no host can be resolved', async () => {
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(2)
     expect(push).not.toHaveBeenCalled()
   })
 
   it('--dry-run makes no network call', async () => {
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(push).not.toHaveBeenCalled()
@@ -418,14 +545,17 @@ describe('push command', () => {
   it('keeps a path longer than the old fixed column off its own reason', async () => {
     writeFileSync(join(projectDirectory, 'application-bundle.js.map'), '{}')
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(stdout).not.toContain('.mapunsupported')
@@ -437,14 +567,17 @@ describe('push command', () => {
   it('warns about a link to a file the bundle does not contain, without failing the push', async () => {
     writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
@@ -454,14 +587,17 @@ describe('push command', () => {
   it('--json dry run puts dead links in the result and keeps the warning off stderr', async () => {
     writeFileSync(join(projectDirectory, 'index.html'), '<a href="gone.html">gone</a>')
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     const payload = JSON.parse(stdout) as {
@@ -476,14 +612,17 @@ describe('push command', () => {
       throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(push).not.toHaveBeenCalled()
@@ -498,14 +637,17 @@ describe('push command', () => {
       throw new Error(`EACCES: permission denied, open '${join(projectDirectory, 'a.css')}'`)
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(push).not.toHaveBeenCalled()
@@ -516,14 +658,17 @@ describe('push command', () => {
   })
 
   it('hands push the bundle it already read rather than making it read the tree again', async () => {
-    await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(vi.mocked(collectBundle)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(push).mock.calls[0]?.[0]?.bundle?.files.map((file) => file.path)).toEqual([
@@ -539,14 +684,17 @@ describe('push command', () => {
       return SUCCESS_RESULT
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(stderrWhenPushCalled).toContain('warning: 1 link points at a file not in this bundle:')
@@ -556,14 +704,17 @@ describe('push command', () => {
   it('warns about a root-absolute link the bundle cannot satisfy', async () => {
     writeFileSync(join(projectDirectory, 'index.html'), '<a href="/REPORT.html">report</a>')
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(stderr).toContain('warning: 1 link points at a file not in this bundle:')
@@ -577,14 +728,17 @@ describe('push command', () => {
     )
 
     expect(
-      await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: true,
-        isJson: false,
-      }),
+      await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: true,
+          isJson: false,
+        },
+        ctx,
+      ),
     ).toBe(0)
     expect(stderr).toContain('warning: 2 links point at files not in this bundle:')
   })
@@ -594,14 +748,17 @@ describe('push command', () => {
     mkdirSync(emptyDirectory)
     writeFileSync(join(emptyDirectory, 'app.js'), 'console.log(1)')
 
-    const exitCode = await runPush({
-      directory: emptyDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: emptyDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('index.html')
@@ -612,14 +769,17 @@ describe('push command', () => {
     const emptyDirectory = join(workspace, 'empty')
     mkdirSync(emptyDirectory)
 
-    const exitCode = await runPush({
-      directory: emptyDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: emptyDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -633,14 +793,17 @@ describe('push command', () => {
       writeFileSync(join(projectDirectory, `page-${String(index)}.html`), '<!doctype html>')
     }
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: true,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: true,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -650,14 +813,17 @@ describe('push command', () => {
   })
 
   it('writes the state file inside the pushed directory after a successful push', async () => {
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     const written = JSON.parse(
@@ -673,14 +839,17 @@ describe('push command', () => {
   })
 
   it('--json prints only the result object', async () => {
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(stdout).not.toContain('✓')
@@ -698,14 +867,17 @@ describe('push command', () => {
       lastPushedVersionNo: 1,
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('other.example.com')
@@ -720,13 +892,16 @@ describe('push command', () => {
       lastPushedVersionNo: 1,
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     const reported = JSON.parse(stderr) as { error: { code: string; message: string } }
@@ -745,14 +920,17 @@ describe('push command', () => {
       lastPushedVersionNo: 1,
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -764,15 +942,18 @@ describe('push command', () => {
   it('treats a scheme change against a bare legacy state host as a mismatch, not a match', async () => {
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: 'http://enclave.example.com',
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-      isInsecureAllowed: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: 'http://enclave.example.com',
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+        isInsecureAllowed: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('http://enclave.example.com')
@@ -786,14 +967,17 @@ describe('push command', () => {
     writeFileSync(join(siblingDirectory, 'index.html'), '<!doctype html>')
     writeStateFile({ host: HOST, artifactId: SUCCESS_RESULT.artifactId, lastPushedVersionNo: 1 })
 
-    const exitCode = await runPush({
-      directory: siblingDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: siblingDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(push).toHaveBeenCalledTimes(1)
@@ -806,14 +990,17 @@ describe('push command', () => {
   it('reports INVALID_STATE for malformed JSON instead of throwing a stack trace', async () => {
     writeFileSync(join(projectDirectory, '.enclave.json'), '{ not json')
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -828,14 +1015,17 @@ describe('push command', () => {
       `${JSON.stringify({ host: HOST, lastPushedVersionNo: 1 })}\n`,
     )
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: true,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: true,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -851,14 +1041,17 @@ describe('push command', () => {
       lastPushedVersionNo: 1,
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: false,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: false,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(1)
     expect(stderr).toContain('mv ')
@@ -875,14 +1068,17 @@ describe('push command', () => {
       lastPushedVersionNo: 1,
     })
 
-    const exitCode = await runPush({
-      directory: projectDirectory,
-      host: HOST,
-      isNew: true,
-      isForced: false,
-      isDryRun: false,
-      isJson: false,
-    })
+    const exitCode = await runPush(
+      {
+        directory: projectDirectory,
+        host: HOST,
+        isNew: true,
+        isForced: false,
+        isDryRun: false,
+        isJson: false,
+      },
+      ctx,
+    )
 
     expect(exitCode).toBe(0)
     expect(push).toHaveBeenCalled()
@@ -890,14 +1086,17 @@ describe('push command', () => {
 
   describe('an unusable directory is refused before anything else happens', () => {
     it('names the missing directory rather than blaming the server', async () => {
-      const exitCode = await runPush({
-        directory: join(workspace, 'does-not-exist'),
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: true,
-      })
+      const exitCode = await runPush(
+        {
+          directory: join(workspace, 'does-not-exist'),
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(2)
       expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -907,14 +1106,17 @@ describe('push command', () => {
     })
 
     it('keeps the JSON envelope on the dry-run path', async () => {
-      const exitCode = await runPush({
-        directory: join(workspace, 'does-not-exist'),
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: true,
-        isJson: true,
-      })
+      const exitCode = await runPush(
+        {
+          directory: join(workspace, 'does-not-exist'),
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: true,
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(2)
       expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -926,14 +1128,17 @@ describe('push command', () => {
       const file = join(workspace, 'bundle.html')
       writeFileSync(file, '<!doctype html>')
 
-      const exitCode = await runPush({
-        directory: file,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: true,
-        isJson: true,
-      })
+      const exitCode = await runPush(
+        {
+          directory: file,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: true,
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(2)
       expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -944,15 +1149,18 @@ describe('push command', () => {
 
   describe('the success block hands over an address that works', () => {
     async function pushSuccessfully(visibility?: 'private' | 'org' | 'public'): Promise<number> {
-      return runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-        ...(visibility === undefined ? {} : { visibility }),
-      })
+      return runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+          ...(visibility === undefined ? {} : { visibility }),
+        },
+        ctx,
+      )
     }
 
     it('prints the /a/<id> page, not the artifact origin that 404s without a grant', async () => {
@@ -985,14 +1193,17 @@ describe('push command', () => {
     })
 
     it('leaves viewUrl in the --json result, which is a pinned contract', async () => {
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: true,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(0)
       expect((JSON.parse(stdout) as PushResult).viewUrl).toBe(SUCCESS_RESULT.viewUrl)
@@ -1008,14 +1219,17 @@ describe('push command', () => {
     }
 
     async function pushOnce(isJson: boolean): Promise<number> {
-      return runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson,
-      })
+      return runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson,
+        },
+        ctx,
+      )
     }
 
     it('writes the file count, size and host to stderr, never to stdout', async () => {
@@ -1030,7 +1244,9 @@ describe('push command', () => {
       expect(await pushOnce(true)).toBe(0)
 
       expect(vi.mocked(push).mock.calls[0]?.[0]?.onUploadStart).toBeUndefined()
-      expect(JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] }).toEqual({
+      expect(
+        JSON.parse(stdout) as PushResult & { readonly deadLinks: readonly DeadLink[] },
+      ).toEqual({
         ...SUCCESS_RESULT,
         deadLinks: [],
       })
@@ -1043,28 +1259,34 @@ describe('push command', () => {
     })
 
     it('names the command that fixes it, as the no-token path already does', async () => {
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(1)
       expect(stderr).toContain(`enclave login --host https://${HOST}`)
     })
 
     it('adds nothing to the --json envelope, which still has to parse', async () => {
-      const exitCode = await runPush({
-        directory: projectDirectory,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: false,
-        isJson: true,
-      })
+      const exitCode = await runPush(
+        {
+          directory: projectDirectory,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: false,
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(1)
       expect(JSON.parse(stderr) as { error: { code: string } }).toMatchObject({
@@ -1079,14 +1301,17 @@ describe('push command', () => {
       mkdirSync(oversized)
       writeFileSync(join(oversized, 'index.html'), 'x'.repeat(3 * 1024 * 1024))
 
-      const exitCode = await runPush({
-        directory: oversized,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: true,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: oversized,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: true,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(1)
       expect(stderr).not.toContain('[object Object]')
@@ -1099,14 +1324,17 @@ describe('push command', () => {
       mkdirSync(noIndex)
       writeFileSync(join(noIndex, 'about.html'), '<!doctype html>')
 
-      const exitCode = await runPush({
-        directory: noIndex,
-        host: HOST,
-        isNew: false,
-        isForced: false,
-        isDryRun: true,
-        isJson: false,
-      })
+      const exitCode = await runPush(
+        {
+          directory: noIndex,
+          host: HOST,
+          isNew: false,
+          isForced: false,
+          isDryRun: true,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(exitCode).toBe(1)
       expect(stderr).not.toMatch(/skipped=\s*$/m)

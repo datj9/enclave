@@ -8,6 +8,7 @@ import type * as ApiClientModule from './src/api-client.ts'
 
 import { ApiError } from './src/api-client.ts'
 import { runShareCreate, runShareList, runShareRevoke } from './src/commands/shares.ts'
+import { testContext, type TestContext } from './test-context.ts'
 
 const mocks = vi.hoisted(() => ({
   apiClient: vi.fn(),
@@ -38,24 +39,14 @@ interface RequestBody {
 
 describe('share commands', () => {
   let configHome = ''
-  let originalConfigHome: string | undefined
-  let originalToken: string | undefined
-  let stdout: string[] = []
-  let stderr: string[] = []
-
-  function capture(stream: NodeJS.WriteStream, sink: string[]): void {
-    vi.spyOn(stream, 'write').mockImplementation((chunk: unknown): boolean => {
-      sink.push(String(chunk))
-      return true
-    })
-  }
+  let ctx: TestContext
 
   function outputText(): string {
-    return stdout.join('')
+    return ctx.stdout.text()
   }
 
   function errorText(): string {
-    return stderr.join('')
+    return ctx.stderr.text()
   }
 
   function postCall(): { path: string; body: RequestBody } {
@@ -65,19 +56,11 @@ describe('share commands', () => {
   }
 
   beforeEach(() => {
-    originalConfigHome = process.env['XDG_CONFIG_HOME']
-    originalToken = process.env['ENCLAVE_TOKEN']
     configHome = mkdtempSync(join(tmpdir(), 'enclave-shares-'))
-    process.env['XDG_CONFIG_HOME'] = configHome
-    process.env['ENCLAVE_TOKEN'] = TOKEN
+    ctx = testContext({ XDG_CONFIG_HOME: configHome, ENCLAVE_TOKEN: TOKEN })
 
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
-
-    stdout = []
-    stderr = []
-    capture(process.stdout, stdout)
-    capture(process.stderr, stderr)
 
     mocks.apiClient.mockReturnValue({
       get: mocks.get,
@@ -104,23 +87,21 @@ describe('share commands', () => {
     mocks.patch.mockReset()
     mocks.remove.mockReset()
 
-    if (originalConfigHome === undefined) delete process.env['XDG_CONFIG_HOME']
-    else process.env['XDG_CONFIG_HOME'] = originalConfigHome
-    if (originalToken === undefined) delete process.env['ENCLAVE_TOKEN']
-    else process.env['ENCLAVE_TOKEN'] = originalToken
-
     rmSync(configHome, { recursive: true, force: true })
   })
 
   // AC 1 — `share create` prints a URL that resolves for a signed-out client.
   describe('share create prints the url once (AC 1)', () => {
     it('posts to the artifact shares route with the pinned version', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, false)
@@ -129,19 +110,25 @@ describe('share commands', () => {
     })
 
     it('passes the insecure-host opt-in through to the api client', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        isJson: false,
-        isInsecureAllowed: true,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          isJson: false,
+          isInsecureAllowed: true,
+        },
+        ctx,
+      )
 
       expect(mocks.apiClient).toHaveBeenCalledWith(HOST, TOKEN, true)
     })
 
     it('prints the url exactly once and says it is shown only once', async () => {
-      await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false })
+      await runShareCreate(
+        { host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false },
+        ctx,
+      )
 
       expect(outputText().split(SHARE_URL)).toHaveLength(2)
       expect(outputText()).toContain('shown once')
@@ -149,7 +136,10 @@ describe('share commands', () => {
     })
 
     it('emits only valid json under --json, still carrying the url once', async () => {
-      await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: true })
+      await runShareCreate(
+        { host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: true },
+        ctx,
+      )
 
       const parsed: unknown = JSON.parse(outputText())
       expect(parsed).toEqual({
@@ -162,7 +152,7 @@ describe('share commands', () => {
     })
 
     it('omits versionId so the server can default to the current ready version', async () => {
-      const code = await runShareCreate({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareCreate({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(0)
       expect(postCall().body).toEqual({})
@@ -173,13 +163,16 @@ describe('share commands', () => {
   // AC 2 — `--expires 7d` is converted to an absolute ISO timestamp before sending.
   describe('relative expiry becomes an absolute timestamp (AC 2)', () => {
     it('converts 7d against the current clock', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '7d',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '7d',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body).toEqual({
@@ -189,25 +182,31 @@ describe('share commands', () => {
     })
 
     it('converts an hour suffix', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '12h',
-        isJson: false,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '12h',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(postCall().body.expiresAt).toBe('2026-08-02T12:00:00.000Z')
     })
 
     it('refuses a duration that overflows the Date range instead of sending an invalid instant', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '999999999999w',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '999999999999w',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(errorText()).toContain('is out of range')
@@ -217,7 +216,7 @@ describe('share commands', () => {
     /** `show`/`rm`/`rename` exit 2 for the same argument: an id too short to resolve is an
      *  unusable value, not a lookup that came back empty. */
     it('exits 2 without a lookup when the id is too short to resolve', async () => {
-      const code = await runShareCreate({ host: HOST, id: '800cb5', isJson: false })
+      const code = await runShareCreate({ host: HOST, id: '800cb5', isJson: false }, ctx)
 
       expect(code).toBe(2)
       expect(errorText()).toContain('at least 8')
@@ -226,25 +225,31 @@ describe('share commands', () => {
     })
 
     it('sends a Zulu instant through unchanged', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-09-01T08:30:00.000Z',
-        isJson: false,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-09-01T08:30:00.000Z',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(postCall().body.expiresAt).toBe('2026-09-01T08:30:00.000Z')
     })
 
     it('rejects engine-lenient calendar overflow such as 2027-02-30', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2027-02-30',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2027-02-30',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(errorText()).toContain('a duration like 7d, 12h or 2w')
@@ -252,26 +257,32 @@ describe('share commands', () => {
     })
 
     it('rejects legacy Date strings that are not documented', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: 'Dec 25 2027',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: 'Dec 25 2027',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.post).not.toHaveBeenCalled()
     })
 
     it('reports the absolute expiry it sent', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '7d',
-        isJson: true,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '7d',
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(JSON.parse(outputText())).toMatchObject({ expiresAt: '2026-08-09T00:00:00.000Z' })
     })
@@ -296,51 +307,63 @@ describe('share commands', () => {
     })
 
     it('resolves a bare date to the end of that day in the local zone, not UTC midnight', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body.expiresAt).toBe('2026-08-10T16:59:59.999Z')
     })
 
     it('resolves a zone-less date-time to that wall-clock time in the local zone', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10T14:30',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10T14:30',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body.expiresAt).toBe('2026-08-10T07:30:00.000Z')
     })
 
     it('still resolves a zoned instant exactly as given, regardless of the local zone', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10T09:00:00+07:00',
-        isJson: false,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10T09:00:00+07:00',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(postCall().body.expiresAt).toBe('2026-08-10T02:00:00.000Z')
     })
 
     it('prints both frames to stderr before the POST', async () => {
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10',
-        isJson: false,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(errorText()).toContain(
         'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
@@ -362,13 +385,16 @@ describe('share commands', () => {
         })
       })
 
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10',
-        isJson: true,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10',
+          isJson: true,
+        },
+        ctx,
+      )
 
       expect(disclosureAtRequest).toContain(
         'expires 2026-08-10T16:59:59.999Z (10 Aug 2026, 23:59:59 local, Asia/Jakarta)',
@@ -379,57 +405,72 @@ describe('share commands', () => {
     it('writes the disclosure even when the POST itself is later rejected', async () => {
       mocks.post.mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'Token lacks scope shares:write'))
 
-      await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10',
-        isJson: false,
-      })
+      await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(errorText()).toContain('expires 2026-08-10T16:59:59.999Z')
     })
 
     it('does not print the disclosure when --expires is omitted', async () => {
-      await runShareCreate({ host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false })
+      await runShareCreate(
+        { host: HOST, id: ARTIFACT_ID, versionId: VERSION_ID, isJson: false },
+        ctx,
+      )
 
       expect(errorText()).not.toContain('expires ')
     })
 
     it('accepts a six-digit fractional second on a zoned instant (matches the API)', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10T09:00:00.123456Z',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10T09:00:00.123456Z',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.123Z')
     })
 
     it('accepts lowercase z as an explicit zone (RFC 3339 §5.6)', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10T09:00:00z',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10T09:00:00z',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body.expiresAt).toBe('2026-08-10T09:00:00.000Z')
     })
 
     it('rejects a calendar-overflow date-only value after local round-trip', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2027-02-30',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2027-02-30',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(errorText()).toContain('a duration like 7d, 12h or 2w')
@@ -456,13 +497,16 @@ describe('share commands', () => {
     })
 
     it('resolves a bare date to local end-of-day and prints the local calendar date', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2026-08-10',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2026-08-10',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(postCall().body.expiresAt).toBe('2026-08-11T06:59:59.999Z')
@@ -475,13 +519,16 @@ describe('share commands', () => {
   // AC 3 — an already-past `--expires` is refused client-side with exit 2, before any HTTP call.
   describe('a past expiry is refused client-side (AC 3)', () => {
     it('exits 2 and makes no request for a past timestamp', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '2020-01-01T00:00:00.000Z',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '2020-01-01T00:00:00.000Z',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(errorText()).toContain('not in the future')
@@ -490,26 +537,32 @@ describe('share commands', () => {
     })
 
     it('exits 2 for a zero-length duration', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: '0d',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: '0d',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.post).not.toHaveBeenCalled()
     })
 
     it('exits 2 for an unparseable expiry', async () => {
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        expires: 'next tuesday',
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          expires: 'next tuesday',
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(errorText()).toContain('ISO-8601')
@@ -537,14 +590,14 @@ describe('share commands', () => {
     ]
 
     it('gets the artifact shares route', async () => {
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(0)
       expect(mocks.get).toHaveBeenCalledWith(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
     })
 
     it('exits 2 without a lookup when the id is too short to resolve', async () => {
-      const code = await runShareList({ host: HOST, id: '800cb5', isJson: false })
+      const code = await runShareList({ host: HOST, id: '800cb5', isJson: false }, ctx)
 
       expect(code).toBe(2)
       expect(errorText()).toContain('at least 8')
@@ -554,7 +607,7 @@ describe('share commands', () => {
     it('shows id, pinned version, expiry and state', async () => {
       mocks.get.mockResolvedValue({ items })
 
-      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(outputText()).toContain('c0ffee11')
       expect(outputText()).toContain('8b1d0e77')
@@ -567,8 +620,8 @@ describe('share commands', () => {
     it('never prints a token, in either format', async () => {
       mocks.get.mockResolvedValue({ items })
 
-      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
-      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
 
       expect(outputText()).not.toContain('must-never-be-printed')
       expect(outputText()).not.toContain('token')
@@ -587,7 +640,7 @@ describe('share commands', () => {
         ],
       })
 
-      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
 
       expect(JSON.parse(outputText())).toEqual([
         {
@@ -600,7 +653,7 @@ describe('share commands', () => {
     })
 
     it('says so when there are none', async () => {
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(0)
       expect(outputText()).toBe('no share links\n')
@@ -623,7 +676,7 @@ describe('share commands', () => {
         databaseNow: '2026-08-01T23:59:00.000Z',
       })
 
-      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+      await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
 
       expect(JSON.parse(outputText())).toEqual([
         {
@@ -648,7 +701,7 @@ describe('share commands', () => {
         databaseNow: 'not-a-timestamp',
       })
 
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
 
       expect(code).toBe(0)
       expect(JSON.parse(outputText())).toEqual([
@@ -665,7 +718,7 @@ describe('share commands', () => {
   // AC 5 — `share revoke` makes the URL 404 on the next request.
   describe('share revoke (AC 5)', () => {
     it('deletes the share resource', async () => {
-      const code = await runShareRevoke({ host: HOST, shareId: SHARE_ID })
+      const code = await runShareRevoke({ host: HOST, shareId: SHARE_ID }, ctx)
 
       expect(code).toBe(0)
       expect(mocks.remove).toHaveBeenCalledWith(`/api/v1/shares/${SHARE_ID}`)
@@ -674,7 +727,7 @@ describe('share commands', () => {
     })
 
     it('refuses a malformed share id before any request', async () => {
-      const code = await runShareRevoke({ host: HOST, shareId: 'not-a-uuid' })
+      const code = await runShareRevoke({ host: HOST, shareId: 'not-a-uuid' }, ctx)
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
@@ -683,7 +736,7 @@ describe('share commands', () => {
     })
 
     it('refuses a bare share-id prefix with an actionable escape hatch', async () => {
-      const code = await runShareRevoke({ host: HOST, shareId: 'c0ffee11' })
+      const code = await runShareRevoke({ host: HOST, shareId: 'c0ffee11' }, ctx)
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
@@ -693,11 +746,14 @@ describe('share commands', () => {
     })
 
     it('deletes a full uuid even when --artifact is set, without listing shares', async () => {
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: SHARE_ID,
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: SHARE_ID,
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(mocks.remove).toHaveBeenCalledWith(`/api/v1/shares/${SHARE_ID}`)
@@ -717,11 +773,14 @@ describe('share commands', () => {
         ],
       })
 
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'c0ffee11',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'c0ffee11',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(mocks.get).toHaveBeenCalledWith(`/api/v1/artifacts/${ARTIFACT_ID}/shares`)
@@ -741,11 +800,14 @@ describe('share commands', () => {
         ],
       })
 
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'C0FFEE11',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'C0FFEE11',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(0)
       expect(mocks.remove).not.toHaveBeenCalled()
@@ -755,11 +817,14 @@ describe('share commands', () => {
     it('exits 2 when no share on the artifact starts with the prefix', async () => {
       mocks.get.mockResolvedValue({ items: [] })
 
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'c0ffee11',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'c0ffee11',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
@@ -786,11 +851,14 @@ describe('share commands', () => {
         ],
       })
 
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'c0ffee11',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'c0ffee11',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.remove).not.toHaveBeenCalled()
@@ -800,11 +868,14 @@ describe('share commands', () => {
     })
 
     it('exits 2 without a request when the prefix is too short', async () => {
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'c0ffee',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'c0ffee',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.get).not.toHaveBeenCalled()
@@ -813,11 +884,14 @@ describe('share commands', () => {
     })
 
     it('rejects a non-hex share-id prefix before any request', async () => {
-      const code = await runShareRevoke({
-        host: HOST,
-        shareId: 'not-a-uuid',
-        artifactRef: ARTIFACT_ID,
-      })
+      const code = await runShareRevoke(
+        {
+          host: HOST,
+          shareId: 'not-a-uuid',
+          artifactRef: ARTIFACT_ID,
+        },
+        ctx,
+      )
 
       expect(code).toBe(2)
       expect(mocks.get).not.toHaveBeenCalled()
@@ -833,12 +907,15 @@ describe('share commands', () => {
     it('names the scope on the 403 the server actually sends', async () => {
       mocks.post.mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'Token lacks scope shares:write'))
 
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(1)
       expect(errorText()).toContain('shares:write')
@@ -849,7 +926,7 @@ describe('share commands', () => {
         new ApiError(401, 'UNAUTHENTICATED', 'The API token is not valid'),
       )
 
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(1)
       expect(errorText()).toContain('shares:write')
@@ -860,17 +937,71 @@ describe('share commands', () => {
         new ApiError(403, 'FORBIDDEN', 'Only the owner can change this artifact'),
       )
 
-      const code = await runShareRevoke({ host: HOST, shareId: SHARE_ID })
+      const code = await runShareRevoke({ host: HOST, shareId: SHARE_ID }, ctx)
 
       expect(code).toBe(1)
-      expect(errorText()).toContain('another account')
+      expect(errorText()).toContain('not found')
       expect(errorText()).not.toContain('shares:write')
     })
 
-    it('exits 1 when no token is stored for the host', async () => {
-      delete process.env['ENCLAVE_TOKEN']
+    // "belongs to another account" confirmed the artifact exists to someone who does not own it.
+    it('reports an ownership 403 in the same words as a 404, naming nothing about the owner', async () => {
+      mocks.get.mockRejectedValue(
+        new ApiError(403, 'FORBIDDEN', 'Only the owner can change this artifact'),
+      )
 
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
+
+      expect(code).toBe(1)
+      expect(errorText()).toBe(`✗ not found: ${ARTIFACT_ID}\n`)
+    })
+
+    it('does not leak the ownership 403 through the --json code either', async () => {
+      mocks.post.mockRejectedValue(
+        new ApiError(403, 'FORBIDDEN', 'Only the owner can change this artifact'),
+      )
+
+      const code = await runShareCreate({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
+
+      expect(code).toBe(1)
+      expect(outputText()).toBe('')
+      expect(JSON.parse(errorText()) as unknown).toEqual({
+        error: { code: 'NOT_FOUND', message: `not found: ${ARTIFACT_ID}` },
+      })
+    })
+
+    // Refused before any artifact is looked up, so it confirms nothing — and "not found" would send
+    // the user hunting for a typo in an id that is fine.
+    it('passes the plaintext-transport 403 through instead of calling it not found', async () => {
+      mocks.get.mockRejectedValue(
+        new ApiError(403, 'FORBIDDEN', 'API tokens require an HTTPS request'),
+      )
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: true }, ctx)
+
+      expect(code).toBe(1)
+      expect(JSON.parse(errorText()) as unknown).toEqual({
+        error: { code: 'FORBIDDEN', message: 'API tokens require an HTTPS request' },
+      })
+    })
+
+    it('reports a refused --expires as an INVALID_ARGUMENT envelope under --json', async () => {
+      const code = await runShareCreate(
+        { host: HOST, id: ARTIFACT_ID, expires: 'tomorrow', isJson: true },
+        ctx,
+      )
+
+      expect(code).toBe(2)
+      expect(outputText()).toBe('')
+      expect(JSON.parse(errorText()) as unknown).toMatchObject({
+        error: { code: 'INVALID_ARGUMENT' },
+      })
+    })
+
+    it('exits 1 when no token is stored for the host', async () => {
+      delete ctx.env['ENCLAVE_TOKEN']
+
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(1)
       expect(errorText()).toContain('enclave login')
@@ -880,9 +1011,9 @@ describe('share commands', () => {
     it('exits 1 on an empty stored token rather than sending a bare bearer header', async () => {
       // `artifacts.ts` already rejected this locally; sending it puts an empty credential on the
       // wire and answers with the server's scope error, which the user cannot act on.
-      process.env['ENCLAVE_TOKEN'] = ''
+      ctx.env['ENCLAVE_TOKEN'] = ''
 
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(1)
       expect(errorText()).toContain('enclave login')
@@ -895,12 +1026,15 @@ describe('share commands', () => {
     it('prints "not found" and never "forbidden"', async () => {
       mocks.post.mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'No such artifact'))
 
-      const code = await runShareCreate({
-        host: HOST,
-        id: ARTIFACT_ID,
-        versionId: VERSION_ID,
-        isJson: false,
-      })
+      const code = await runShareCreate(
+        {
+          host: HOST,
+          id: ARTIFACT_ID,
+          versionId: VERSION_ID,
+          isJson: false,
+        },
+        ctx,
+      )
 
       expect(code).toBe(1)
       expect(errorText()).toContain('not found')
@@ -910,7 +1044,7 @@ describe('share commands', () => {
     it('is a 404 on list as well', async () => {
       mocks.get.mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'No such artifact'))
 
-      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false })
+      const code = await runShareList({ host: HOST, id: ARTIFACT_ID, isJson: false }, ctx)
 
       expect(code).toBe(1)
       expect(errorText()).toContain('not found')

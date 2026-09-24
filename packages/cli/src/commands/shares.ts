@@ -1,13 +1,9 @@
-import { ApiError, apiClient, type ApiClient } from '../api-client.ts'
-import { tokenFor } from '../credentials.ts'
-import {
-  IdResolutionError,
-  InvalidIdError,
-  MIN_PREFIX_LENGTH,
-  resolveArtifactId,
-  shortId,
-} from '../ids.ts'
-import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '../exit-codes.ts'
+import type { ApiClient } from '../api-client.ts'
+import { requireClient } from '../auth.ts'
+import { CliError, invalidArgument, reportFailure, type FailureContext } from '../errors.ts'
+import { EXIT_OK, EXIT_USAGE, type ExitCode } from '../exit-codes.ts'
+import { MIN_PREFIX_LENGTH, resolveArtifactId, shortId } from '../ids.ts'
+import { printDiagnostic, printJson, printLine, type CliContext } from '../output.ts'
 
 /**
  * `enclave share create|list|revoke` (S20). A share URL is a bearer capability: it is printed to
@@ -59,9 +55,6 @@ interface ShareLinkList {
   readonly databaseNow?: string
 }
 
-/** Everything refused before a request is made, so nothing invalid ever reaches the network. */
-class InvalidInputError extends Error {}
-
 export interface ShareCreateOptions {
   readonly host: string
   readonly id: string
@@ -86,58 +79,25 @@ export interface ShareRevokeOptions {
   readonly artifactRef?: string
 }
 
-function fail(message: string): void {
-  process.stderr.write(`${message}\n`)
-}
-
 /**
  * A missing scope is a 403 (`requireApiPrincipal`), not the 401 the ticket predicted, so both
  * statuses name the scope — the user cannot act on "forbidden" without being told which one.
- * A 404 stays "not found": saying more would confirm an artifact exists to someone who cannot read it.
+ * An ownership 403 reads as "not found", exactly like the 404 the `artifacts` commands print:
+ * "belongs to another account" would confirm the artifact exists to someone who does not own it.
  */
-function describeApiError(error: ApiError): string {
-  if (error.status === 401) {
-    return `not authenticated — this command needs an API token with scope ${REQUIRED_SCOPE}`
+function failureFor(host: string, isJson: boolean, given?: string): FailureContext {
+  return {
+    host,
+    isJson,
+    requiredScope: REQUIRED_SCOPE,
+    isForbiddenNotFound: true,
+    ...(given === undefined ? {} : { given }),
   }
-  if (error.status === 403 && error.message.toLowerCase().includes('scope')) {
-    return `your token is missing scope ${REQUIRED_SCOPE} — mint a new token that has it`
-  }
-  if (error.status === 403) return 'that artifact belongs to another account'
-  if (error.status === 404) return 'not found'
-  return error.message
 }
 
-function reportFailure(error: unknown): number {
-  if (error instanceof ApiError) {
-    fail(describeApiError(error))
-    return EXIT_FAILED
-  }
-  // Before its parent: an id too short to look up is an unusable argument, which every other
-  // command answers with EXIT_USAGE.
-  if (error instanceof InvalidIdError) {
-    fail(error.message)
-    return EXIT_USAGE
-  }
-  if (error instanceof IdResolutionError) {
-    fail(error.message)
-    return EXIT_FAILED
-  }
-  throw error
-}
-
-function clientFor(host: string, isInsecureAllowed = false): ApiClient | null {
-  const token = tokenFor(host)
-  // An empty stored token is not a credential. Sending `Authorization: Bearer ` puts it on the
-  // wire and surfaces the server's scope error instead of the local one the user can act on.
-  if (token === null || token === '') {
-    fail(`not logged in to ${host} — run: enclave login --host ${host}`)
-    return null
-  }
-  return apiClient(host, token, isInsecureAllowed)
-}
-
+/** Everything refused before a request is made, so nothing invalid ever reaches the network. */
 function requireUuid(given: string, label: string): string {
-  if (!UUID_PATTERN.test(given)) throw new InvalidInputError(`'${given}' is not a valid ${label}`)
+  if (!UUID_PATTERN.test(given)) throw invalidArgument(`'${given}' is not a valid ${label}`)
   return given
 }
 
@@ -175,7 +135,7 @@ function parseExpiry(given: string, now: Date): Date {
     const hours = amount * (HOURS_PER_UNIT[unit] ?? 1)
     const deltaMs = hours * MILLISECONDS_PER_HOUR
     if (!Number.isFinite(deltaMs) || Math.abs(now.getTime() + deltaMs) > MAX_DATE_MILLISECONDS) {
-      throw new InvalidInputError(`--expires ${given} is out of range`)
+      throw invalidArgument(`--expires ${given} is out of range`)
     }
     when = new Date(now.getTime() + deltaMs)
   } else {
@@ -183,7 +143,7 @@ function parseExpiry(given: string, now: Date): Date {
   }
 
   if (when.getTime() <= now.getTime()) {
-    throw new InvalidInputError(
+    throw invalidArgument(
       `--expires ${given} resolves to ${when.toISOString()}, which is not in the future`,
     )
   }
@@ -206,18 +166,18 @@ function parseAbsoluteExpiry(trimmed: string, original: string): Date {
     const when = new Date(`${trimmed}T23:59:59.999`)
     // Reject calendar overflow (2027-02-30 → March) by requiring a round-trip.
     if (when.getFullYear() !== year || when.getMonth() !== month - 1 || when.getDate() !== day) {
-      throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+      throw invalidArgument(`'${original}' must be ${EXPIRY_SHAPES}`)
     }
     return when
   }
 
   if (!ISO_ZONELESS_DATETIME_PATTERN.test(trimmed) && !ISO_ZONED_DATETIME_PATTERN.test(trimmed)) {
-    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+    throw invalidArgument(`'${original}' must be ${EXPIRY_SHAPES}`)
   }
 
   const when = new Date(trimmed)
   if (Number.isNaN(when.getTime())) {
-    throw new InvalidInputError(`'${original}' must be ${EXPIRY_SHAPES}`)
+    throw invalidArgument(`'${original}' must be ${EXPIRY_SHAPES}`)
   }
   return when
 }
@@ -233,6 +193,7 @@ function createRequestBody(
 }
 
 function printCreated(
+  ctx: CliContext,
   created: CreatedShareLink,
   versionId: string | undefined,
   expiresAt: Date | null,
@@ -243,61 +204,50 @@ function printCreated(
 
   if (isJson) {
     // The warning goes to stderr so stdout stays parseable.
-    fail('the share url is shown once and cannot be read again')
-    process.stdout.write(
-      `${JSON.stringify({
-        shareId: created.shareId,
-        url: created.url,
-        expiresAt: expires,
-        ...(resolvedVersionId === undefined ? {} : { versionId: resolvedVersionId }),
-      })}\n`,
-    )
+    printDiagnostic(ctx, 'the share url is shown once and cannot be read again')
+    printJson(ctx, {
+      shareId: created.shareId,
+      url: created.url,
+      expiresAt: expires,
+      ...(resolvedVersionId === undefined ? {} : { versionId: resolvedVersionId }),
+    })
     return
   }
 
-  process.stdout.write('Share link created.\n')
-  process.stdout.write('This URL is shown once and can never be read again — copy it now.\n\n')
-  process.stdout.write(`  ${created.url}\n\n`)
-  process.stdout.write(`  share id  ${created.shareId}\n`)
-  if (resolvedVersionId !== undefined) {
-    process.stdout.write(`  version   ${resolvedVersionId}\n`)
-  }
-  process.stdout.write(`  expires   ${expires ?? NEVER}\n`)
+  printLine(ctx, 'Share link created.')
+  printLine(ctx, 'This URL is shown once and can never be read again — copy it now.\n')
+  printLine(ctx, `  ${created.url}\n`)
+  printLine(ctx, `  share id  ${created.shareId}`)
+  if (resolvedVersionId !== undefined) printLine(ctx, `  version   ${resolvedVersionId}`)
+  printLine(ctx, `  expires   ${expires ?? NEVER}`)
 }
 
-export async function runShareCreate(options: ShareCreateOptions): Promise<number> {
-  let versionId: string | undefined
-  let expiresAt: Date | null
-
+export async function runShareCreate(
+  options: ShareCreateOptions,
+  ctx: CliContext,
+): Promise<ExitCode> {
   try {
-    versionId =
+    const versionId =
       options.versionId === undefined ? undefined : requireUuid(options.versionId, 'version id')
-    expiresAt = options.expires === undefined ? null : parseExpiry(options.expires, new Date())
-  } catch (error) {
-    if (!(error instanceof InvalidInputError)) throw error
-    fail(error.message)
-    return EXIT_USAGE
-  }
+    const expiresAt =
+      options.expires === undefined ? null : parseExpiry(options.expires, new Date())
 
-  // Both frames, so the operator can check the resolved instant against either clock they read —
-  // stderr so `--json` stdout stays parseable.
-  if (expiresAt !== null) {
-    process.stderr.write(`expires ${expiresAt.toISOString()} (${localClockLabel(expiresAt)})\n`)
-  }
+    // Both frames, so the operator can check the resolved instant against either clock they read —
+    // stderr so `--json` stdout stays parseable.
+    if (expiresAt !== null) {
+      printDiagnostic(ctx, `expires ${expiresAt.toISOString()} (${localClockLabel(expiresAt)})`)
+    }
 
-  const client = clientFor(options.host, options.isInsecureAllowed)
-  if (client === null) return EXIT_FAILED
-
-  try {
+    const client = requireClient(options.host, ctx, options.isInsecureAllowed)
     const artifactId = await resolveArtifactId(client, options.id)
     const response = await client.post<CreatedShareLink>(
       `/api/v1/artifacts/${artifactId}/shares`,
       createRequestBody(versionId, expiresAt),
     )
-    printCreated(response, versionId, expiresAt, options.isJson)
+    printCreated(ctx, response, versionId, expiresAt, options.isJson)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error)
+    return reportFailure(error, ctx, failureFor(options.host, options.isJson, options.id))
   }
 }
 
@@ -316,6 +266,7 @@ function stateOf(link: ShareLinkSummary, now: Date): 'revoked' | 'expired' | 'ac
  * an older server that has not yet started sending `databaseNow`.
  */
 function printLinks(
+  ctx: CliContext,
   items: readonly ShareLinkSummary[],
   databaseNow: string | undefined,
   isJson: boolean,
@@ -330,125 +281,126 @@ function printLinks(
   }))
 
   if (isJson) {
-    process.stdout.write(`${JSON.stringify(rows)}\n`)
+    printJson(ctx, rows)
     return
   }
 
   if (rows.length === 0) {
-    process.stdout.write('no share links\n')
+    printLine(ctx, 'no share links')
     return
   }
 
-  process.stdout.write(
-    `SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE\n`,
+  printLine(
+    ctx,
+    `SHARE ID                              VERSION                               ${'EXPIRES'.padEnd(EXPIRES_COLUMN_WIDTH)}  STATE`,
   )
   for (const row of rows) {
     const expires = (row.expiresAt ?? NEVER).padEnd(EXPIRES_COLUMN_WIDTH)
-    process.stdout.write(`${row.shareId}  ${row.versionId}  ${expires}  ${row.state}\n`)
+    printLine(ctx, `${row.shareId}  ${row.versionId}  ${expires}  ${row.state}`)
   }
 }
 
-export async function runShareList(options: ShareListOptions): Promise<number> {
-  const client = clientFor(options.host, options.isInsecureAllowed)
-  if (client === null) return EXIT_FAILED
-
+export async function runShareList(options: ShareListOptions, ctx: CliContext): Promise<ExitCode> {
   try {
+    const client = requireClient(options.host, ctx, options.isInsecureAllowed)
     const artifactId = await resolveArtifactId(client, options.id)
     const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
-    printLinks(response.items, response.databaseNow, options.isJson)
+    printLinks(ctx, response.items, response.databaseNow, options.isJson)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error)
+    return reportFailure(error, ctx, failureFor(options.host, options.isJson, options.id))
   }
 }
 
-export async function runShareRevoke(options: ShareRevokeOptions): Promise<number> {
-  if (UUID_PATTERN.test(options.shareId)) {
-    return deleteShare(options.host, options.shareId, options.isInsecureAllowed)
-  }
+/**
+ * The artifact whose share list a prefix resolves against, or null for a full uuid that needs no
+ * lookup. Share ids are not listable on their own, so a prefix without `--artifact` has nothing to
+ * match — every refusal here is a malformed argument, made before any request.
+ */
+function prefixLookupArtifact(options: ShareRevokeOptions): string | null {
+  if (UUID_PATTERN.test(options.shareId)) return null
 
   if (options.artifactRef === undefined) {
     if (SHARE_PREFIX_PATTERN.test(options.shareId)) {
-      fail(
+      throw invalidArgument(
         'share ids are not resolvable by prefix — pass the full uuid, or:\n' +
           `enclave share revoke --artifact <artifact-id> ${options.shareId}`,
       )
-      return EXIT_USAGE
     }
-    fail(
+    throw invalidArgument(
       `'${options.shareId}' is not a valid share id — pass the full uuid that enclave share list <artifact-id> prints`,
     )
-    return EXIT_USAGE
   }
 
   if (options.shareId.length < MIN_PREFIX_LENGTH) {
-    fail(
+    throw invalidArgument(
       `'${options.shareId}' is too short — give at least ${String(MIN_PREFIX_LENGTH)} characters of the share id`,
     )
-    return EXIT_USAGE
   }
 
   if (!SHARE_PREFIX_PATTERN.test(options.shareId)) {
-    fail(
+    throw invalidArgument(
       `'${options.shareId}' is not a share-id prefix — share ids are hexadecimal, so give at least ${String(MIN_PREFIX_LENGTH)} hex characters`,
     )
-    return EXIT_USAGE
   }
-
-  const client = clientFor(options.host, options.isInsecureAllowed)
-  if (client === null) return EXIT_FAILED
-
-  try {
-    const artifactId = await resolveArtifactId(client, options.artifactRef)
-    const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
-    const lowered = options.shareId.toLowerCase()
-    const matches = response.items.filter((link) => link.shareId.toLowerCase().startsWith(lowered))
-
-    if (matches.length === 0) {
-      fail(`no share link on ${shortId(artifactId)} starts with '${options.shareId}'`)
-      return EXIT_USAGE
-    }
-
-    if (matches.length > 1) {
-      fail(
-        `'${options.shareId}' matches ${String(matches.length)} share links on ${shortId(artifactId)}:`,
-      )
-      for (const match of matches) {
-        fail(`  ${match.shareId}`)
-      }
-      return EXIT_USAGE
-    }
-
-    const [match] = matches
-    // `matches.length` is exactly 1 here; the guard is only for noUncheckedIndexedAccess.
-    if (match === undefined) return EXIT_FAILED
-
-    if (match.revokedAt !== null) {
-      process.stdout.write(`already revoked ${shortId(match.shareId)}\n`)
-      return EXIT_OK
-    }
-
-    await client.remove(`/api/v1/shares/${match.shareId}`)
-    process.stdout.write(`✓ revoked ${shortId(match.shareId)}\n`)
-    return EXIT_OK
-  } catch (error) {
-    return reportFailure(error)
-  }
+  return options.artifactRef
 }
 
-async function deleteShare(
-  host: string,
-  shareId: string,
-  isInsecureAllowed?: boolean,
-): Promise<number> {
-  const client = clientFor(host, isInsecureAllowed)
-  if (client === null) return EXIT_FAILED
+/** The single share link `prefix` names on the artifact, or null when it is already revoked. */
+async function resolveSharePrefix(
+  ctx: CliContext,
+  client: ApiClient,
+  artifactRef: string,
+  prefix: string,
+): Promise<string | null> {
+  const artifactId = await resolveArtifactId(client, artifactRef)
+  const response = await client.get<ShareLinkList>(`/api/v1/artifacts/${artifactId}/shares`)
+  const lowered = prefix.toLowerCase()
+  const matches = response.items.filter((link) => link.shareId.toLowerCase().startsWith(lowered))
+  const [match] = matches
 
+  if (match === undefined) {
+    throw new CliError(
+      'SHARE_NOT_RESOLVED',
+      `no share link on ${shortId(artifactId)} starts with '${prefix}'`,
+      { exitCode: EXIT_USAGE },
+    )
+  }
+
+  if (matches.length > 1) {
+    const listed = matches.map((link) => `  ${link.shareId}`).join('\n')
+    throw new CliError(
+      'SHARE_NOT_RESOLVED',
+      `'${prefix}' matches ${String(matches.length)} share links on ${shortId(artifactId)}:\n${listed}`,
+      { exitCode: EXIT_USAGE },
+    )
+  }
+
+  if (match.revokedAt !== null) {
+    printLine(ctx, `already revoked ${shortId(match.shareId)}`)
+    return null
+  }
+  return match.shareId
+}
+
+export async function runShareRevoke(
+  options: ShareRevokeOptions,
+  ctx: CliContext,
+): Promise<ExitCode> {
   try {
+    const artifactRef = prefixLookupArtifact(options)
+    const client = requireClient(options.host, ctx, options.isInsecureAllowed)
+    const shareId =
+      artifactRef === null
+        ? options.shareId
+        : await resolveSharePrefix(ctx, client, artifactRef, options.shareId)
+    if (shareId === null) return EXIT_OK
+
     await client.remove(`/api/v1/shares/${shareId}`)
-    process.stdout.write(`✓ revoked ${shortId(shareId)}\n`)
+    printLine(ctx, `✓ revoked ${shortId(shareId)}`)
     return EXIT_OK
   } catch (error) {
-    return reportFailure(error)
+    // `share revoke` takes no --json: it has no object to return.
+    return reportFailure(error, ctx, failureFor(options.host, false))
   }
 }
