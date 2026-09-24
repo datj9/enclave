@@ -1,7 +1,6 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { AdminUserSummary } from '@/lib/admin/users'
 import {
@@ -9,16 +8,29 @@ import {
   formatInstantStable,
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
-import { css } from '@/lib/ui/class-name'
-import dialogStyles from '../../a/[id]/delete-dialog.module.css'
+import { cx } from '@/lib/ui/class-name'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from '../admin.module.css'
 import deleteStyles from './delete-user-dialog.module.css'
+import {
+  accessActionFor,
+  needsConfirmation,
+  roleActionFor,
+  userActionConfirmation,
+  userActionRequest,
+  type ConfirmedUserAction,
+  type UserAction,
+} from './user-actions'
 
 /**
  * Dense table, no row animation (docs/motion.md): rows that move while an operator reads them are
  * unreadable. State changes swap text and buttons in place.
  *
  * Artifact columns are counts only. There is no route behind this table that could return a title.
+ *
+ * Every action except Reactivate confirms first (user-actions.ts), through one ConfirmDialog for
+ * the whole table. A refusal keeps that dialog open with the server's reason inside it, where the
+ * operator is looking — not behind the popup, above a table they cannot see.
  */
 
 interface ListResponse {
@@ -44,6 +56,17 @@ async function failureMessage(response: Response): Promise<string> {
   }
 }
 
+interface PendingAction {
+  readonly person: AdminUserSummary
+  readonly action: ConfirmedUserAction
+}
+
+/** Which row's request is in flight, and for what — the busy label goes on that one button. */
+interface BusyAction {
+  readonly personId: string
+  readonly action: UserAction
+}
+
 export function UserTable({
   initialUsers,
   currentUserId,
@@ -53,56 +76,89 @@ export function UserTable({
 }) {
   const [people, setPeople] = useState(initialUsers)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  const [busy, setBusy] = useState<BusyAction | null>(null)
+  // Kept after close so the dialog does not change its wording during its exit transition.
+  const [pending, setPending] = useState<PendingAction | null>(null)
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  /**
+   * Where focus goes when the confirmation closes. `null` returns it to the button that opened it,
+   * which every action but Delete leaves in place. A deleted row takes that button with it, so
+   * focus goes to a neighbouring row instead (deleteFocusTarget).
+   */
+  const confirmFinalFocus = useRef<HTMLElement | null>(null)
+  const tableRef = useRef<HTMLTableElement | null>(null)
   const isMountedForLocalTime = useIsMountedForLocalTime()
+  const isBusy = busy !== null
 
   function formatMoment(iso: string | null): string {
     return isMountedForLocalTime ? formatInstantLocal(iso) : formatInstantStable(iso)
   }
 
   async function refresh(): Promise<void> {
-    const response = await fetch('/api/v1/users')
-    if (!response.ok) return
-    setPeople(((await response.json()) as ListResponse).data.items)
-  }
-
-  async function send(path: string, init: RequestInit): Promise<void> {
-    // `aria-disabled` keeps focus but still fires; all three row actions funnel through here.
-    if (isBusy) return
-    setIsBusy(true)
-    setErrorMessage(null)
     try {
-      const response = await fetch(path, init)
-      if (!response.ok) {
-        setErrorMessage(await failureMessage(response))
-        return
-      }
-      await refresh()
-    } finally {
-      setIsBusy(false)
+      const response = await fetch('/api/v1/users')
+      if (!response.ok) return
+      setPeople(((await response.json()) as ListResponse).data.items)
+    } catch {
+      // The write already landed; the table catches up on the next action or reload.
     }
   }
 
-  function setAccess(person: AdminUserSummary, isActive: boolean): void {
-    void send(`/api/v1/users/${person.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ isActive }),
-    })
+  /** Resolves to the failure text, or `null` when the action succeeded. Never rejects. */
+  async function run(person: AdminUserSummary, action: UserAction): Promise<string | null> {
+    const { path, init } = userActionRequest(action, person)
+    setBusy({ personId: person.id, action })
+    try {
+      const response = await fetch(path, init)
+      if (!response.ok) return await failureMessage(response)
+      await refresh()
+      return null
+    } catch {
+      return GENERIC_FAILURE
+    } finally {
+      setBusy(null)
+    }
   }
 
-  function setRole(person: AdminUserSummary, role: AdminUserSummary['role']): void {
-    void send(`/api/v1/users/${person.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ isActive: person.isActive, role }),
-    })
+  function requestAction(person: AdminUserSummary, action: UserAction): void {
+    // `aria-disabled` keeps focus but still fires; every row action funnels through here.
+    if (isBusy) return
+    if (needsConfirmation(action)) {
+      setConfirmError(null)
+      confirmFinalFocus.current = null
+      setPending({ person, action })
+      setIsConfirmOpen(true)
+      return
+    }
+    setErrorMessage(null)
+    void run(person, action).then(setErrorMessage)
   }
 
-  // Awaited by the confirmation dialog, which closes once the request has settled either way.
-  function remove(person: AdminUserSummary): Promise<void> {
-    return send(`/api/v1/users/${person.id}`, { method: 'DELETE' })
+  async function confirmPending(): Promise<void> {
+    if (pending === null || isBusy) return
+    setConfirmError(null)
+    const { person, action } = pending
+    // Chosen before the request, while the row is certainly still rendered: the re-read inside
+    // run() may already have removed it by the time the request resolves.
+    const deleteFocus = action === 'delete' ? deleteFocusTarget(tableRef.current, person.id) : null
+    const failure = await run(person, action)
+    if (failure !== null) {
+      setConfirmError(failure)
+      return
+    }
+    if (action === 'delete') {
+      confirmFinalFocus.current = deleteFocus
+      // Also removed here, so the row is gone even if the re-read failed.
+      setPeople((current) => current.filter((row) => row.id !== person.id))
+    }
+    setIsConfirmOpen(false)
   }
+
+  const confirmation =
+    pending === null ? null : userActionConfirmation(pending.action, pending.person)
+  const isConfirmBusy =
+    pending !== null && busy?.personId === pending.person.id && busy.action === pending.action
 
   return (
     <>
@@ -113,7 +169,8 @@ export function UserTable({
       )}
 
       <div className={styles.tableScroll}>
-        <table className={styles.table}>
+        {/* tabIndex -1: focus lands here after a delete when no other row is left to take it. */}
+        <table className={styles.table} ref={tableRef} tabIndex={-1} aria-label="Accounts">
           <thead>
             <tr>
               <th scope="col">Email</th>
@@ -131,7 +188,9 @@ export function UserTable({
           </thead>
           <tbody>
             {people.map((person) => (
-              <tr key={person.id}>
+              // tabIndex -1: not in the tab order, but a place for focus to land after a delete
+              // when this row has no action button of its own (your own row).
+              <tr key={person.id} data-user-id={person.id} tabIndex={-1}>
                 <td>{person.email}</td>
                 <td>{person.role}</td>
                 <td>
@@ -147,9 +206,8 @@ export function UserTable({
                     <RowActions
                       person={person}
                       isBusy={isBusy}
-                      onSetAccess={setAccess}
-                      onSetRole={setRole}
-                      onRemove={remove}
+                      isReactivating={busy?.personId === person.id && busy.action === 'reactivate'}
+                      onAction={requestAction}
                     />
                   )}
                 </td>
@@ -158,101 +216,96 @@ export function UserTable({
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={isConfirmOpen}
+        onOpenChange={setIsConfirmOpen}
+        title={confirmation?.title ?? ''}
+        body={confirmation?.body ?? ''}
+        confirmLabel={
+          isConfirmBusy ? (confirmation?.busyLabel ?? '') : (confirmation?.confirmLabel ?? '')
+        }
+        tone={confirmation?.tone}
+        busy={isBusy}
+        error={confirmError}
+        finalFocus={confirmFinalFocus}
+        testId={pending === null ? undefined : `user-${pending.action}-dialog`}
+        confirmTestId={pending === null ? undefined : `user-${pending.action}-confirm`}
+        onConfirm={() => void confirmPending()}
+      />
     </>
   )
+}
+
+/**
+ * Where focus goes once the row for `personId` is deleted: the next row's first action, else the
+ * previous row's, else that neighbouring row itself (your own row has no actions), else the table.
+ * Read from the DOM before the row is removed, so the neighbours are still next to it.
+ */
+function deleteFocusTarget(table: HTMLTableElement | null, personId: string): HTMLElement | null {
+  if (table === null) return null
+  const row = Array.from(table.tBodies[0]?.rows ?? []).find(
+    (candidate) => candidate.dataset['userId'] === personId,
+  )
+  const neighbour = row?.nextElementSibling ?? row?.previousElementSibling ?? null
+  if (neighbour instanceof HTMLTableRowElement) {
+    return neighbour.querySelector<HTMLElement>('button') ?? neighbour
+  }
+  return table
 }
 
 function RowActions({
   person,
   isBusy,
-  onSetAccess,
-  onSetRole,
-  onRemove,
+  isReactivating,
+  onAction,
 }: {
   readonly person: AdminUserSummary
   readonly isBusy: boolean
-  readonly onSetAccess: (person: AdminUserSummary, isActive: boolean) => void
-  readonly onSetRole: (person: AdminUserSummary, role: AdminUserSummary['role']) => void
-  readonly onRemove: (person: AdminUserSummary) => Promise<void>
+  readonly isReactivating: boolean
+  readonly onAction: (person: AdminUserSummary, action: UserAction) => void
 }) {
+  const accessAction = accessActionFor(person)
+  const roleAction = roleActionFor(person)
+
   return (
     <div className={styles.rowActions}>
       <button
         className="button-secondary button-sm"
         type="button"
         aria-disabled={isBusy}
-        onClick={() => onSetAccess(person, !person.isActive)}
+        data-testid={`user-${accessAction}`}
+        onClick={() => onAction(person, accessAction)}
       >
-        {person.isActive ? 'Deactivate' : 'Reactivate'}
+        {accessAction === 'deactivate'
+          ? 'Deactivate'
+          : isReactivating
+            ? 'Reactivating…'
+            : 'Reactivate'}
       </button>
       <button
         className="button-secondary button-sm"
         type="button"
         aria-disabled={isBusy}
-        onClick={() => onSetRole(person, person.role === 'admin' ? 'member' : 'admin')}
+        data-testid={`user-${roleAction}`}
+        onClick={() => onAction(person, roleAction)}
       >
-        {person.role === 'admin' ? 'Make member' : 'Make admin'}
+        {roleAction === 'make-member' ? 'Make member' : 'Make admin'}
       </button>
-      <DeleteUserDialog person={person} isBusy={isBusy} onRemove={onRemove} />
-    </div>
-  )
-}
-
-/**
- * The server refuses to delete an account that still owns artifacts, so the only case that
- * reaches the API is the newly-invited person who has not published yet — irreversible, with
- * nothing to restore from.
- */
-function DeleteUserDialog({
-  person,
-  isBusy,
-  onRemove,
-}: {
-  readonly person: AdminUserSummary
-  readonly isBusy: boolean
-  readonly onRemove: (person: AdminUserSummary) => Promise<void>
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-
-  async function handleDelete(): Promise<void> {
-    if (isBusy) return
-    await onRemove(person)
-    // Closing on failure too — the refusal renders above the table, behind this popup.
-    setIsOpen(false)
-  }
-
-  return (
-    <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
-      <Dialog.Trigger
-        className={`button-sm ${css(deleteStyles.trigger)}`}
+      {/*
+        The server refuses to delete an account that still owns artifacts, so the only case that
+        reaches the API is the newly-invited person who has not published yet — irreversible, with
+        nothing to restore from.
+      */}
+      <button
+        className={cx('button-sm', deleteStyles.trigger)}
+        type="button"
+        aria-disabled={isBusy}
         data-testid="user-delete-open"
+        onClick={() => onAction(person, 'delete')}
       >
         Delete
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(dialogStyles.backdrop)} />
-        <Dialog.Popup className={css(dialogStyles.popup)} data-testid="user-delete-dialog">
-          <Dialog.Title className={css(dialogStyles.title)}>Delete {person.email}?</Dialog.Title>
-          <Dialog.Description className={css(dialogStyles.description)}>
-            Their sign-in stops working and the account is removed. Their audit trail stays. This
-            cannot be undone — deactivate instead if you only want to end their access.
-          </Dialog.Description>
-
-          <div className={dialogStyles.actions}>
-            <button
-              className={`button-sm ${dialogStyles.confirm}`}
-              type="button"
-              aria-disabled={isBusy}
-              data-testid="user-delete-confirm"
-              onClick={() => void handleDelete()}
-            >
-              Delete account
-            </button>
-            <Dialog.Close className={css(dialogStyles.cancel)}>Cancel</Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </button>
+    </div>
   )
 }

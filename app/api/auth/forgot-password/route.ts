@@ -1,3 +1,4 @@
+import { requireSameOriginRequest } from '@/lib/api/guards'
 import { forgotPasswordSchema, requestPasswordReset } from '@/lib/auth/forgot-password'
 import {
   enforceAuthRateLimit,
@@ -10,6 +11,11 @@ import { readRequestBody, wantsJsonResponse } from '@/lib/request'
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request): Promise<Response> {
+  try {
+    requireSameOriginRequest(request)
+  } catch (error) {
+    return toErrorResponse(error)
+  }
   const returnsJson = wantsJsonResponse(request)
 
   try {

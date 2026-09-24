@@ -1,69 +1,39 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
 import { useRouter } from 'next/navigation'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { deleteConfirmBody } from '@/lib/artifacts/delete-copy'
-import { css } from '@/lib/ui/class-name'
+import { cx } from '@/lib/ui/class-name'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from './delete-dialog.module.css'
+import { useOwnerControls } from './owner-controls'
 
 /**
  * The owner's delete control (US-10). Deleting kills every share link at the same instant, which
  * is the part a confirmation has to say out loud — the author reaches for delete precisely when a
  * link went somewhere it should not have.
  *
- * Motion is docs/motion.md § This project's surfaces: the popup scales in like the share dialog,
- * and the destructive button gets nothing at all. An instant response is what reads as trustworthy.
+ * The modal itself is the shared ConfirmDialog; this file owns the request and the trigger. The
+ * live-link count comes from the page's owner controls, which the Share dialog keeps current, so a
+ * link revoked there is already out of this sentence without a second read. Its motion rule — the
+ * destructive buttons get no animation at all — is in dialog.module.css for the confirm button
+ * and in delete-dialog.module.css for the trigger.
  */
 
 const DELETE_FAILED = 'That artifact could not be deleted.'
 
-interface ShareListResponse {
-  readonly data: { readonly liveCount: number }
-}
-
 export function DeleteDialog({
   artifactId,
-  initialLiveShareCount,
   retentionDays,
 }: {
   readonly artifactId: string
-  readonly initialLiveShareCount: number
   readonly retentionDays: number
 }) {
   const router = useRouter()
-  const [liveShareCount, setLiveShareCount] = useState(initialLiveShareCount)
+  const { liveCount: liveShareCount } = useOwnerControls()
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  // The count check is a round trip; reopening before it lands would fire a second one.
-  const isCountingShareLinks = useRef(false)
-
-  /**
-   * The Share dialog sits on this same page and can revoke a link without a reload, so the number
-   * the server rendered may already be wrong. A failed read falls back to it rather than to zero —
-   * a warning that was true at page load beats claiming there is nothing to lose.
-   */
-  async function readLiveShareCount(): Promise<number> {
-    try {
-      const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
-      if (!response.ok) return liveShareCount
-      return ((await response.json()) as ShareListResponse).data.liveCount
-    } catch {
-      return liveShareCount
-    }
-  }
-
-  async function refreshLiveShareCount(): Promise<void> {
-    if (isCountingShareLinks.current) return
-    isCountingShareLinks.current = true
-
-    try {
-      setLiveShareCount(await readLiveShareCount())
-    } finally {
-      isCountingShareLinks.current = false
-    }
-  }
 
   async function handleDelete(): Promise<void> {
     if (isBusy) return
@@ -86,43 +56,26 @@ export function DeleteDialog({
   }
 
   return (
-    <Dialog.Root
-      onOpenChange={(isOpen) => {
-        if (isOpen) void refreshLiveShareCount()
+    <ConfirmDialog
+      trigger={{
+        label: 'Delete',
+        className: cx('button-sm', styles.trigger),
+        testId: 'delete-open',
       }}
-    >
-      <Dialog.Trigger className={`button-sm ${css(styles.trigger)}`} data-testid="delete-open">
-        Delete
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(styles.backdrop)} />
-        <Dialog.Popup className={css(styles.popup)} data-testid="delete-dialog">
-          <Dialog.Title className={css(styles.title)}>Delete this artifact?</Dialog.Title>
-          <Dialog.Description className={css(styles.description)}>
-            {deleteConfirmBody(liveShareCount, retentionDays)}
-          </Dialog.Description>
-
-          {errorMessage !== null && (
-            <p className="form-error" role="alert">
-              {errorMessage}
-            </p>
-          )}
-
-          <div className={styles.actions}>
-            <button
-              className={`button-sm ${styles.confirm}`}
-              type="button"
-              aria-disabled={isBusy}
-              data-testid="delete-confirm"
-              onClick={() => void handleDelete()}
-            >
-              Delete
-            </button>
-            <Dialog.Close className={css(styles.cancel)}>Keep it</Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      title="Delete this artifact?"
+      body={deleteConfirmBody(liveShareCount, retentionDays)}
+      confirmLabel={isBusy ? 'Deleting…' : 'Delete'}
+      cancelLabel="Keep it"
+      tone="danger"
+      busy={isBusy}
+      error={errorMessage}
+      testId="delete-dialog"
+      confirmTestId="delete-confirm"
+      // A failure from an earlier attempt belongs to that attempt, not to the next opening.
+      onOpenChange={(isOpen) => {
+        if (isOpen) setErrorMessage(null)
+      }}
+      onConfirm={() => void handleDelete()}
+    />
   )
 }

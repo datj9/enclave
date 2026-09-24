@@ -77,6 +77,14 @@ export const envSchema = z.object({
   PASSWORD_RESET_RETENTION_DAYS: positiveIntFromString(7),
 
   RATE_LIMIT_AUTH_PER_IP_PER_HOUR: positiveIntFromString(30),
+  // How many reverse proxies sit in front of the app; the client IP is read that many entries
+  // from the right of X-Forwarded-For. 1 = one nginx/Caddy/Traefik, 2 = a CDN in front of it.
+  TRUSTED_PROXY_HOPS: positiveIntFromString(1),
+
+  // Off by default so a user's key can point at Ollama/vLLM on the LAN. Loopback, link-local and
+  // cloud-metadata targets are refused either way; this additionally refuses RFC 1918, CGNAT and
+  // IPv6 ULA ranges for instances whose private network holds things users must not reach.
+  PROVIDER_BASE_URL_BLOCK_PRIVATE: booleanFromString(false),
 
   SMTP_HOST: z.string().min(1).optional(),
   SMTP_PORT: positiveIntFromString(587),

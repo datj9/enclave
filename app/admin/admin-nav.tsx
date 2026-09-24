@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+
 import styles from './admin.module.css'
 
 /**
@@ -22,14 +24,14 @@ export function AdminNav() {
   return (
     <nav className={styles.nav} aria-label="Admin sections">
       {SECTIONS.map((section) => (
-        <a
+        <Link
           className={styles.navLink}
           key={section.href}
           href={section.href}
           {...(pathname === section.href ? { 'aria-current': 'page' as const } : {})}
         >
           {section.label}
-        </a>
+        </Link>
       ))}
     </nav>
   )

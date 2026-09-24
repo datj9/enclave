@@ -5,7 +5,7 @@ import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
 import { PROVIDER_IDS } from '@/lib/providers'
 import { acceptsBaseUrl } from '@/lib/providers/types'
-import { normaliseBaseUrl } from '@/lib/providers/base-url'
+import { checkUserBaseUrlTarget, normaliseBaseUrl } from '@/lib/providers/base-url'
 import {
   deleteUserProviderKeys,
   getStoredProviderKey,
@@ -75,6 +75,22 @@ function parseStoreKeyBody(body: unknown): ParsedStoreKeyBody {
   return { provider: parsed.data.provider, apiKey: parsed.data.apiKey, baseUrl }
 }
 
+/**
+ * Refuses a base URL that targets the server's loopback, link-local/metadata space or — when the
+ * operator opted in — a private range (see base-url.ts). Separate from the schema because it
+ * resolves DNS, which a synchronous zod refinement cannot. The message names the class of
+ * address and never echoes the URL, matching the rest of this route's validation errors.
+ */
+async function assertAllowedBaseUrl(baseUrl: string | undefined): Promise<void> {
+  if (baseUrl === undefined) return
+  const verdict = await checkUserBaseUrlTarget(baseUrl)
+  if (!verdict.allowed) {
+    throw new HttpError('VALIDATION_FAILED', verdict.reason, {
+      details: { fields: ['baseUrl'] },
+    })
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   try {
     const sessionUser = await requireSessionUser()
@@ -82,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
     requireJsonContentType(request)
 
     const body = parseStoreKeyBody(await readJsonBody(request))
+    await assertAllowedBaseUrl(body.baseUrl)
     await storeUserProviderKey(sessionUser.id, body.provider, body.apiKey, body.baseUrl)
 
     return new Response(null, { status: 204 })

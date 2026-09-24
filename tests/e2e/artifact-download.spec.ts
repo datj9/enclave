@@ -20,10 +20,10 @@ import {
  * The `.md` row navigates to the download route (the `attachment` header makes the browser save
  * it), which Playwright sees as a `download` event carrying the slug filename.
  *
- * The `zz-` prefix keeps this file sorted after `setup-and-signin.spec.ts` (the suite runs
- * serially, one worker, in filename order). That spec asserts `/setup` is still open on an empty
- * database, so any spec that creates the admin user — this one does, in `beforeAll` — must run
- * after it. Same convention as `zz-direct-artifact-entry.spec.ts`.
+ * Runs in the `chromium-late` project (playwright.config.ts), so after `setup-and-signin.spec.ts`.
+ * That spec asserts `/setup` is still open on an empty database, so any spec that creates the
+ * admin user — this one does, in `beforeAll` — must run after it. It also seeds an admin-owned
+ * artifact, which is why it waits for upload-and-list's first-page assertions too.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'

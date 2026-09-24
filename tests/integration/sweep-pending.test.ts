@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { db } from '@/db'
 import { artifactVersions, artifacts, type VersionStatus } from '@/db/schema/artifacts'
+import { markVersionReady } from '@/lib/artifacts/bundle-write'
 import { slugFromTitle } from '@/lib/artifacts/naming'
 import { PENDING_SWEEP_AFTER_MINUTES, sweepPendingVersions } from '@/jobs/sweep-pending'
+import { HttpError } from '@/lib/http'
 import { storageKey, versionPrefix, type ObjectStore } from '@/lib/storage/object-store'
 import { users } from '@/db/schema/users'
 import { createTestStore, probeServices, removeTestOwnerData } from './services'
@@ -193,5 +195,96 @@ describe.skipIf(!servicesReady)('T3 orphan-reclaiming sweep', () => {
     expect(secondSweep).toEqual({ sweptVersionCount: 1, failedVersionCount: 0, sweptArtifactCount: 1 })
     expect(await artifactRow(artifactId)).toBeUndefined()
     expect(await versionCount(artifactId)).toBe(0)
+  })
+
+  /*
+   * The two interleavings with `markVersionReady` (documented on `sweepPendingVersions`):
+   * whichever transaction locks the version row first wins, and the loser changes nothing.
+   */
+
+  it('skips a stale pending version whose row another transaction holds, keeping its objects', async () => {
+    const artifactId = await insertArtifact('Flip in progress')
+    const versionId = await insertVersion(artifactId, 1, 'pending')
+    await ageVersion(versionId, STALE_MINUTES)
+
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markLocked: () => void = () => undefined
+    const locked = new Promise<void>((resolve) => {
+      markLocked = resolve
+    })
+
+    // Stands in for `markVersionReady` between its guarded flip and its commit.
+    const holder = db.transaction(async (transaction) => {
+      await transaction
+        .select({ id: artifactVersions.id })
+        .from(artifactVersions)
+        .where(eq(artifactVersions.id, versionId))
+        .for('update')
+      markLocked()
+      await gate
+    })
+    await locked
+
+    const result = await sweepPendingVersions(store)
+    release()
+    await holder
+
+    expect(result).toEqual({ sweptVersionCount: 0, failedVersionCount: 0, sweptArtifactCount: 0 })
+    expect(await versionCount(artifactId)).toBe(1)
+    expect(await store.listKeys(versionPrefix(artifactId, versionId))).toHaveLength(1)
+
+    // Clean up so the next test's sweep doesn't count it.
+    await store.deletePrefix(versionPrefix(artifactId, versionId))
+    await db.delete(artifacts).where(eq(artifacts.id, artifactId))
+  })
+
+  it('blocks a flip that arrives mid-sweep, which then fails instead of serving deleted objects', async () => {
+    const artifactId = await insertArtifact('Swept under a slow upload')
+    const versionId = await insertVersion(artifactId, 1, 'pending')
+    await ageVersion(versionId, STALE_MINUTES)
+
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markDeleting: () => void = () => undefined
+    const deleting = new Promise<void>((resolve) => {
+      markDeleting = resolve
+    })
+    const gatedStore: ObjectStore = {
+      ...store,
+      deletePrefix: async (prefix) => {
+        markDeleting()
+        await gate
+        await store.deletePrefix(prefix)
+      },
+    }
+
+    const sweep = sweepPendingVersions(gatedStore)
+    await deleting
+
+    let flipSettled = false
+    const flip = markVersionReady({ artifactId, versionId })
+      .catch((thrown: unknown) => thrown)
+      .finally(() => {
+        flipSettled = true
+      })
+
+    // The sweep holds the version row, so the flip's guarded UPDATE must be waiting on it.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(flipSettled).toBe(false)
+
+    release()
+    const result = await sweep
+    const failure = await flip
+
+    expect(result).toEqual({ sweptVersionCount: 1, failedVersionCount: 0, sweptArtifactCount: 1 })
+    expect(failure).toBeInstanceOf(HttpError)
+    expect((failure as HttpError).message).toMatch(/no longer pending/)
+    expect(await artifactRow(artifactId)).toBeUndefined()
+    expect(await store.listKeys(versionPrefix(artifactId, versionId))).toHaveLength(0)
   })
 })

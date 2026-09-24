@@ -17,15 +17,15 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # No credentials in the job that runs project code.
           persist-credentials: false
 
       # No `version` input — `packageManager` in package.json is the single source of truth.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -44,7 +44,10 @@ jobs:
 
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
+      # Unit project only. This job starts no Postgres or MinIO, and under CI the integration
+      # project fails rather than skips without them (tests/integration/require-services.ts).
+      # The CLI's own tests all live in the unit project.
+      - run: pnpm vitest run --project unit
 
       - run: pnpm build:cli
 
@@ -67,7 +70,7 @@ jobs:
           test "$bytes" -eq 0 \
             || { echo "a usage error put $bytes bytes on stdout under --json" >&2; exit 1; }
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: npm-tarball
           path: packages/cli/enclave-artifacts-*.tgz
@@ -90,12 +93,12 @@ jobs:
       id-token: write # trusted publishing; no NPM_TOKEN is stored anywhere
 
     steps:
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: npm-tarball
 

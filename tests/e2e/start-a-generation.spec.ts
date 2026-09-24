@@ -7,10 +7,11 @@ import { hashPassword } from '../../src/lib/auth/password'
  * `/new` is fully built but nothing linked to it until this dashboard change, so a signed-in user
  * could only reach the composer by typing the URL.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database — a spec that consumes the single-use setup before it runs breaks it. This one
- * never touches `/setup`: it seeds its own member the way `two-account-privacy.spec.ts` does, and
- * that account owns no artifacts in any run order, which is what makes the empty state assertable.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database — a spec that consumes the single-use setup
+ * before it runs breaks it. This one never touches `/setup`: it seeds its own member the way
+ * `two-account-privacy.spec.ts` does, and that account owns no artifacts in any run order, which is
+ * what makes the empty state assertable.
  */
 
 const MEMBER_EMAIL = 'generation-entry@example.com'

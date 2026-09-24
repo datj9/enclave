@@ -12,8 +12,8 @@ import {
  * a paste, a bookmark, or a reload after the 30-minute grant lapsed — is sent back to `/a/{id}`
  * rather than dead-ending on the uniform 404.
  *
- * The `zz-` prefix keeps this file after `setup-and-signin.spec.ts`, which asserts `/setup` is
- * still open on an empty database. Artifact origins are driven through `page.goto` because Chrome
+ * Runs in the `chromium-late` project (playwright.config.ts), after `setup-and-signin.spec.ts`,
+ * which asserts `/setup` is still open on an empty database. Artifact origins are driven through `page.goto` because Chrome
  * resolves `*.localhost` to 127.0.0.1 itself and treats it as a secure context; Node's resolver
  * does neither, so an APIRequestContext cannot reach these hosts.
  */
@@ -152,9 +152,9 @@ test.describe('direct artifact entry', () => {
     // /a/{id} then does what it always does — authorize, mint a handoff token, frame __enter —
     // and the artifact renders. This is the whole point of the change.
     expect(page.url()).toBe(`${APP_ORIGIN}/a/${artifactId}`)
-    await expect(page.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-      'artifact D',
-    )
+    await expect(
+      page.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+    ).toHaveText('artifact D')
   })
 
   test('the redirect is not cached, so a reload after the grant exists still works', async () => {
@@ -243,7 +243,7 @@ test.describe('direct artifact entry', () => {
       await signIn(blocked.request)
       await blockedPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
 
-      const frame = blockedPage.frameLocator('iframe[title="Artifact"]')
+      const frame = blockedPage.frameLocator('iframe[data-testid="artifact-frame"]')
       // The framed case gets a page with a link, not a redirect the app CSP would block.
       await expect(frame.locator(`a[href="${APP_ORIGIN}/a/${artifactId}"]`)).toHaveCount(1)
       // The top-level URL is untouched: the frame did not navigate the tab.

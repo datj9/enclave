@@ -12,7 +12,7 @@ import {
   enforceChangePasswordUserRateLimit,
 } from '@/lib/auth/rate-limit-auth'
 import { createSessionCookie } from '@/lib/auth/session'
-import { requireSessionUser } from '@/lib/api/guards'
+import { requireSameOriginRequest, requireSessionUser } from '@/lib/api/guards'
 import { HttpError, seeOther, toErrorResponse } from '@/lib/http'
 import { clientIpFromHeaders } from '@/lib/rate-limit'
 import { readRequestBody, wantsJsonResponse } from '@/lib/request'
@@ -43,6 +43,13 @@ function formFailureRedirect(error: unknown): Response {
 
 export async function POST(request: Request): Promise<Response> {
   const returnsJson = wantsJsonResponse(request)
+  // Accepts urlencoded form posts, so the content type proves nothing about who sent it. A
+  // forged request gets the bare 403 envelope rather than a redirect into the settings UI.
+  try {
+    requireSameOriginRequest(request)
+  } catch (error) {
+    return toErrorResponse(error)
+  }
   try {
     const sessionUser = await requireSessionUser()
     enforceAuthRateLimit(request, 'change-password')

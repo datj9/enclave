@@ -44,6 +44,9 @@ export const shareLinks = pgTable(
   (table) => [
     // Matches `GET /api/v1/artifacts/{id}/shares`: one artifact's links, newest first.
     index('share_links_artifact_created_idx').on(table.artifactId, table.createdAt.desc()),
+    // `version_id` cascades from `artifact_versions`: without this, every version delete (the
+    // sweeper, the purge job) seq-scans `share_links` to find the rows to cascade to.
+    index('share_links_version_idx').on(table.versionId),
   ],
 )
 

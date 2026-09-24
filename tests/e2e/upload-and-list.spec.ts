@@ -3,9 +3,9 @@ import { expect, test, type APIRequestContext, type APIResponse } from '@playwri
 /**
  * `POST /api/v1/artifacts` and the dashboard list, end to end through the running app.
  *
- * The file name sorts after `setup-and-signin.spec.ts` on purpose: Playwright runs spec files in
- * path order with one worker, and that spec asserts `/setup` is still open on an empty database.
- * `signIn` below still creates the admin if it has to, so this file also passes on its own.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database. `signIn` below still creates the admin if it
+ * has to, so this file also passes on its own.
  */
 
 const ADMIN_EMAIL = 'ops@example.com'

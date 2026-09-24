@@ -8,8 +8,9 @@ import { hashPassword } from '../../src/lib/auth/password'
  * deactivation flow. `ALLOW_OPEN_REGISTRATION` is false in `.env`, which is the shipped default
  * and the configuration every assertion below is written against.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database — this spec needs the administrator that file creates.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database — this spec needs the administrator that file
+ * creates.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'

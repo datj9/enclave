@@ -1,6 +1,7 @@
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
 import { anthropicCompatibleProvider, anthropicProvider } from './anthropic'
+import { warnIfUnsafeStoredBaseUrl } from './base-url'
 import { openAiCompatibleProvider } from './openai-compatible'
 import type { ArtifactProvider, ProviderId } from './types'
 
@@ -89,6 +90,9 @@ export function selectProvider(credentials: ProviderCredentials): ProviderSelect
  * user has none stored, which is also what marks the selection as running on the instance key.
  */
 export function resolveProviderForUser(userKeys: UserProviderKeys = {}): ProviderSelection {
+  // Only user-stored URLs: the operator's OPENAI_BASE_URL is exempt from the target policy.
+  for (const credential of Object.values(userKeys)) warnIfUnsafeStoredBaseUrl(credential.baseUrl)
+
   return selectProvider({
     instanceAnthropicKey: env.ANTHROPIC_API_KEY,
     instanceOpenAiKey: env.OPENAI_API_KEY,

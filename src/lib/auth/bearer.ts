@@ -7,7 +7,7 @@ import { users } from '@/db/schema/users'
 import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
-import { requireSessionUser } from '@/lib/api/guards'
+import { requireSameOriginRequest, requireSessionUser } from '@/lib/api/guards'
 import { databaseNowEpoch, tryEpochToDate } from '@/lib/shares/clock'
 import { enforceAuthRateLimit } from './rate-limit-auth'
 
@@ -272,7 +272,12 @@ export async function requireApiPrincipal(
   requiredScope: ApiTokenScope,
 ): Promise<ApiPrincipal> {
   const bearerToken = bearerTokenFromHeaders(request.headers)
-  if (bearerToken === null) return { kind: 'user', userId: (await requireSessionUser()).id }
+  if (bearerToken === null) {
+    // The session cookie is ambient, so a cookie-authenticated write must prove it came from the
+    // app itself (§8). Bearer callers are exempt: a page cannot attach their header cross-site.
+    requireSameOriginRequest(request)
+    return { kind: 'user', userId: (await requireSessionUser()).id }
+  }
 
   // A plaintext hop in production means the token already crossed the network in the clear
   // (§8, A.10.1.1). Development runs over http on localhost, so the refusal is production-only.

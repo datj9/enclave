@@ -14,8 +14,8 @@ import postgres from 'postgres'
  * The expired row is written straight to the table — `createShareLink` refuses an expiry that is
  * already in the past, which is exactly the state this file needs.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database.
  */
 
 const APP_ORIGIN = process.env.E2E_BASE_URL ?? 'http://localhost:3000'
@@ -151,23 +151,32 @@ test.describe('an expired link is not counted as live (#30)', () => {
 
   test('revoking the live link empties the badge and the delete confirmation', async () => {
     await ownerPage.getByTestId('share-open').click()
+    // Revoke asks first; the DELETE goes out only from the confirmation.
+    await ownerPage.getByTestId('share-revoke').first().click()
 
     const [revoked] = await Promise.all([
       ownerPage.waitForResponse(
         (response) =>
           response.url().includes('/api/v1/shares/') && response.request().method() === 'DELETE',
       ),
-      ownerPage.getByTestId('share-revoke').first().click(),
+      ownerPage.getByTestId('share-revoke-confirm').click(),
     ])
     expect(revoked.status()).toBe(204)
 
-    await ownerPage.getByText('Done').click()
+    // The 204 arrives before the page has processed it, so the confirmation is still open (then
+    // in its exit transition). Wait for it to go before reaching back into the Share dialog.
+    await expect(ownerPage.getByTestId('share-revoke-dialog')).toBeHidden()
+    await ownerPage
+      .getByTestId('share-dialog')
+      .getByRole('button', { name: 'Done', exact: true })
+      .click()
 
     // The expired link is still unrevoked, so a badge that dropped its number proves the revoke
     // landed on the live one rather than on it.
     await expect(ownerPage.getByTestId('share-open')).toHaveText('Share')
 
-    // No reload: the count the server rendered is now stale, and the dialog has to re-read it.
+    // No reload: the count the server rendered is now stale. The Share dialog's own re-read after
+    // the revoke is what the Delete confirmation shows.
     await ownerPage.getByTestId('delete-open').click()
 
     await expect(ownerPage.getByTestId('delete-dialog')).toContainText(

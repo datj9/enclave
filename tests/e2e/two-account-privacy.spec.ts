@@ -14,9 +14,10 @@ import { hashPassword } from '../../src/lib/auth/password'
  * for everyone but its owner, flipping it to Organization opens reads without opening writes, and
  * every transition leaves exactly one row in `audit_log`.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database. Artifact origins are driven through `page.goto`: Chrome resolves `*.localhost`
- * itself and treats it as a secure context, Node's resolver does neither.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database. Artifact origins are driven through
+ * `page.goto`: Chrome resolves `*.localhost` itself and treats it as a secure context, Node's
+ * resolver does neither.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'
@@ -200,9 +201,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
     const response = await memberPage.goto(`${APP_ORIGIN}/a/${sharedArtifact}`)
 
     expect(response?.status()).toBe(200)
-    await expect(memberPage.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-      'shared numbers',
-    )
+    await expect(
+      memberPage.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+    ).toHaveText('shared numbers')
   })
 
   test('the second member sees no privacy switch — reading is not owning', async () => {
@@ -254,9 +255,9 @@ test.describe('private and org visibility across two accounts (US-3, US-4)', () 
 
   test('viewing the org artifact is audited and viewing your own private one is not', async () => {
     await ownerPage.goto(`${APP_ORIGIN}/a/${privateArtifact}`)
-    await expect(ownerPage.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-      'shared numbers',
-    )
+    await expect(
+      ownerPage.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+    ).toHaveText('shared numbers')
 
     const sharedViews = (await auditRowsFor(sharedArtifact)).filter(
       (row) => row.action === 'artifact.view',

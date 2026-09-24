@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 
 import { API_TOKEN_SCOPES, type ApiTokenScope } from '@/db/schema/api-tokens'
 import type { ApiTokenSummary } from '@/lib/auth/bearer'
@@ -9,11 +9,15 @@ import {
   formatInstantStable,
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from './page.module.css'
 
 /**
  * Create / show-once / list / revoke. The plaintext lives in this component's state and nowhere
  * else — no localStorage, no URL, and the server has only its hash, so a reload loses it for good.
+ *
+ * Revoking asks first: whatever runs on the token (a CI job, an agent) starts failing at once, and
+ * there is no un-revoke — only a new token to paste everywhere the old one was.
  */
 
 const SCOPE_LABEL: Readonly<Record<ApiTokenScope, string>> = {
@@ -24,6 +28,7 @@ const SCOPE_LABEL: Readonly<Record<ApiTokenScope, string>> = {
 }
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
+const REVOKE_FAILED = 'That token could not be revoked. Try again.'
 const CREATED_ANNOUNCEMENT = 'API token created. Copy it now — this is the only time it is shown.'
 
 interface CreatedTokenView {
@@ -43,21 +48,37 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
   const [tokens, setTokens] = useState(initialTokens)
   const [created, setCreated] = useState<CreatedTokenView | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  // One request at a time; which one is running picks the busy label.
+  const [busyAction, setBusyAction] = useState<'create' | 'revoke' | null>(null)
+  const isBusy = busyAction !== null
+  // Kept after close so the dialog does not change its wording during its exit transition.
+  const [revokeTarget, setRevokeTarget] = useState<ApiTokenSummary | null>(null)
+  const [isRevokeOpen, setIsRevokeOpen] = useState(false)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const isMountedForLocalTime = useIsMountedForLocalTime()
+  /**
+   * Where focus goes when the confirmation closes. `null` on cancel returns it to the Revoke
+   * button; on success that button is gone, so it lands on the row, which now reads "Revoked".
+   */
+  const revokeFinalFocus = useRef<HTMLElement | null>(null)
+  const revokeRow = useRef<HTMLElement | null>(null)
 
   async function refreshTokens(): Promise<void> {
-    const response = await fetch('/api/v1/tokens')
-    if (!response.ok) return
-    const body = (await response.json()) as ListResponse
-    setTokens(body.data.items)
+    try {
+      const response = await fetch('/api/v1/tokens')
+      if (!response.ok) return
+      const body = (await response.json()) as ListResponse
+      setTokens(body.data.items)
+    } catch {
+      // The write already landed; a failed re-read must not be reported as a failed create/revoke.
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (isBusy) return
     const form = new FormData(event.currentTarget)
-    setIsBusy(true)
+    setBusyAction('create')
     setErrorMessage(null)
 
     try {
@@ -75,24 +96,47 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
       const body = (await response.json()) as CreateResponse
       setCreated({ name: body.data.name, token: body.data.token })
       await refreshTokens()
+    } catch {
+      setErrorMessage(GENERIC_FAILURE)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
-  async function handleRevoke(tokenId: string): Promise<void> {
+  function requestRevoke(token: ApiTokenSummary, event: MouseEvent<HTMLButtonElement>): void {
     if (isBusy) return
-    setIsBusy(true)
-    setErrorMessage(null)
+    revokeRow.current = event.currentTarget.closest('li')
+    revokeFinalFocus.current = null
+    setRevokeError(null)
+    setRevokeTarget(token)
+    setIsRevokeOpen(true)
+  }
+
+  async function handleRevoke(): Promise<void> {
+    const token = revokeTarget
+    if (token === null || isBusy) return
+    setBusyAction('revoke')
+    setRevokeError(null)
     try {
-      const response = await fetch(`/api/v1/tokens/${tokenId}`, { method: 'DELETE' })
+      const response = await fetch(`/api/v1/tokens/${token.id}`, { method: 'DELETE' })
       if (!response.ok) {
-        setErrorMessage('That token could not be revoked.')
+        // Stays open with the reason, so a retry is one press away.
+        setRevokeError(REVOKE_FAILED)
         return
       }
+      // Marked here rather than by the re-read below, so the Revoke button is already gone when
+      // focus is placed on the row — otherwise it would land on that button, then drop to <body>.
+      const revokedAt = new Date().toISOString()
+      setTokens((current) =>
+        current.map((row) => (row.id === token.id ? { ...row, revokedAt } : row)),
+      )
+      revokeFinalFocus.current = revokeRow.current
+      setIsRevokeOpen(false)
       await refreshTokens()
+    } catch {
+      setRevokeError(REVOKE_FAILED)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -146,7 +190,7 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
         </div>
 
         <button className="button-primary" type="submit" aria-disabled={isBusy}>
-          Create token
+          {busyAction === 'create' ? 'Creating…' : 'Create token'}
         </button>
       </form>
 
@@ -154,7 +198,23 @@ export function TokenManager({ initialTokens }: { initialTokens: readonly ApiTok
         tokens={tokens}
         isBusy={isBusy}
         isMountedForLocalTime={isMountedForLocalTime}
-        onRevoke={(id) => void handleRevoke(id)}
+        onRevoke={requestRevoke}
+      />
+
+      <ConfirmDialog
+        open={isRevokeOpen}
+        onOpenChange={setIsRevokeOpen}
+        title={revokeTarget === null ? 'Revoke this token?' : `Revoke “${revokeTarget.name}”?`}
+        body="Anything still using it — a CI job, an agent, the CLI — is refused from the next request on. This cannot be undone; you would create a new token and replace it everywhere."
+        confirmLabel={busyAction === 'revoke' ? 'Revoking…' : 'Revoke token'}
+        cancelLabel="Keep it"
+        tone="danger"
+        busy={isBusy}
+        error={revokeError}
+        finalFocus={revokeFinalFocus}
+        testId="token-revoke-dialog"
+        confirmTestId="token-revoke-confirm"
+        onConfirm={() => void handleRevoke()}
       />
     </>
   )
@@ -209,7 +269,7 @@ function TokenTable({
   readonly tokens: readonly ApiTokenSummary[]
   readonly isBusy: boolean
   readonly isMountedForLocalTime: boolean
-  readonly onRevoke: (tokenId: string) => void
+  readonly onRevoke: (token: ApiTokenSummary, event: MouseEvent<HTMLButtonElement>) => void
 }) {
   if (tokens.length === 0) {
     return <p className={styles.empty}>No tokens yet.</p>
@@ -224,7 +284,8 @@ function TokenTable({
   return (
     <ul className={styles.list}>
       {tokens.map((token) => (
-        <li className={styles.row} key={token.id}>
+        // tabIndex -1: not in the tab order, but a place for focus to land once its Revoke is gone.
+        <li className={styles.row} key={token.id} tabIndex={-1}>
           <div className={styles.rowText}>
             <p className={styles.rowName}>{token.name}</p>
             <p className={styles.rowMeta}>
@@ -237,7 +298,8 @@ function TokenTable({
               className="button-secondary"
               type="button"
               aria-disabled={isBusy}
-              onClick={() => onRevoke(token.id)}
+              data-testid="token-revoke"
+              onClick={(event) => onRevoke(token, event)}
             >
               Revoke
             </button>

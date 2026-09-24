@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 
 import {
   formatInstantLocal,
@@ -9,16 +9,21 @@ import {
 } from '@/lib/format/instant'
 import { DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS } from '@/lib/invites/limits'
 import type { InviteSummary } from '@/lib/invites/manage'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from '../admin.module.css'
 
 /**
  * Create / show-once / list / revoke. The invite URL lives in this component's state and nowhere
  * else — no localStorage and no second read, because the server holds only its SHA-256 digest.
  *
+ * Revoking asks first: the link may already be in someone's inbox, and a revoked invite cannot
+ * be brought back — only replaced by a new one.
+ *
  * No row animation on the table (docs/motion.md).
  */
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
+const REVOKE_FAILED = 'That invite could not be revoked. Try again.'
 const CREATED_ANNOUNCEMENT = 'Invite link created. Copy it now — this is the only time it is shown.'
 
 interface CreatedInviteView {
@@ -53,20 +58,36 @@ export function InviteManager({
   const [invites, setInvites] = useState(initialInvites)
   const [created, setCreated] = useState<CreatedInviteView | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  // One request at a time; which one is running picks the busy label.
+  const [busyAction, setBusyAction] = useState<'create' | 'revoke' | null>(null)
+  const isBusy = busyAction !== null
+  // Kept after close so the dialog does not change its wording during its exit transition.
+  const [revokeTarget, setRevokeTarget] = useState<InviteSummary | null>(null)
+  const [isRevokeOpen, setIsRevokeOpen] = useState(false)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const isMountedForLocalTime = useIsMountedForLocalTime()
+  /**
+   * Where focus goes when the confirmation closes. `null` on cancel returns it to the Revoke
+   * button; on success that button is gone, so it lands on the row, whose status now says so.
+   */
+  const revokeFinalFocus = useRef<HTMLElement | null>(null)
+  const revokeRow = useRef<HTMLElement | null>(null)
 
   async function refresh(): Promise<void> {
-    const response = await fetch('/api/v1/invites')
-    if (!response.ok) return
-    setInvites(((await response.json()) as ListResponse).data.items)
+    try {
+      const response = await fetch('/api/v1/invites')
+      if (!response.ok) return
+      setInvites(((await response.json()) as ListResponse).data.items)
+    } catch {
+      // The write already landed; a failed re-read must not be reported as a failed create/revoke.
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (isBusy) return
     const form = new FormData(event.currentTarget)
-    setIsBusy(true)
+    setBusyAction('create')
     setErrorMessage(null)
 
     try {
@@ -89,24 +110,49 @@ export function InviteManager({
         expiresAt: body.data.expiresAt,
       })
       await refresh()
+    } catch {
+      setErrorMessage(GENERIC_FAILURE)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
-  async function handleRevoke(inviteId: string): Promise<void> {
+  function requestRevoke(invite: InviteSummary, event: MouseEvent<HTMLButtonElement>): void {
     if (isBusy) return
-    setIsBusy(true)
-    setErrorMessage(null)
+    revokeRow.current = event.currentTarget.closest('tr')
+    revokeFinalFocus.current = null
+    setRevokeError(null)
+    setRevokeTarget(invite)
+    setIsRevokeOpen(true)
+  }
+
+  async function handleRevoke(): Promise<void> {
+    const invite = revokeTarget
+    if (invite === null || isBusy) return
+    setBusyAction('revoke')
+    setRevokeError(null)
     try {
-      const response = await fetch(`/api/v1/invites/${inviteId}`, { method: 'DELETE' })
+      const response = await fetch(`/api/v1/invites/${invite.id}`, { method: 'DELETE' })
       if (!response.ok) {
-        setErrorMessage('That invite could not be revoked.')
+        // Stays open with the reason, so a retry is one press away.
+        setRevokeError(REVOKE_FAILED)
         return
       }
+      // Marked here rather than by the re-read below, so the Revoke button is already gone when
+      // focus is placed on the row — otherwise it would land on that button, then drop to <body>.
+      const revokedAt = new Date().toISOString()
+      setInvites((current) =>
+        current.map((row) =>
+          row.id === invite.id ? { ...row, status: 'revoked' as const, revokedAt } : row,
+        ),
+      )
+      revokeFinalFocus.current = revokeRow.current
+      setIsRevokeOpen(false)
       await refresh()
+    } catch {
+      setRevokeError(REVOKE_FAILED)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -161,7 +207,7 @@ export function InviteManager({
         </div>
 
         <button className="button-primary" type="submit" aria-disabled={isBusy}>
-          Create invite
+          {busyAction === 'create' ? 'Creating…' : 'Create invite'}
         </button>
       </form>
 
@@ -169,10 +215,31 @@ export function InviteManager({
         invites={invites}
         isBusy={isBusy}
         isMountedForLocalTime={isMountedForLocalTime}
-        onRevoke={(id) => void handleRevoke(id)}
+        onRevoke={requestRevoke}
+      />
+
+      <ConfirmDialog
+        open={isRevokeOpen}
+        onOpenChange={setIsRevokeOpen}
+        title={revokeTitle(revokeTarget)}
+        body="The link stops working at once, even if it has already been sent. This cannot be undone — create a new invite if they still need one."
+        confirmLabel={busyAction === 'revoke' ? 'Revoking…' : 'Revoke invite'}
+        cancelLabel="Keep it"
+        tone="danger"
+        busy={isBusy}
+        error={revokeError}
+        finalFocus={revokeFinalFocus}
+        testId="invite-revoke-dialog"
+        confirmTestId="invite-revoke-confirm"
+        onConfirm={() => void handleRevoke()}
       />
     </>
   )
+}
+
+function revokeTitle(invite: InviteSummary | null): string {
+  const email = invite?.email ?? null
+  return email === null ? 'Revoke this invite?' : `Revoke the invite for ${email}?`
 }
 
 function RevealedInvite({
@@ -219,7 +286,7 @@ function InviteTable({
   readonly invites: readonly InviteSummary[]
   readonly isBusy: boolean
   readonly isMountedForLocalTime: boolean
-  readonly onRevoke: (inviteId: string) => void
+  readonly onRevoke: (invite: InviteSummary, event: MouseEvent<HTMLButtonElement>) => void
 }) {
   if (invites.length === 0) return <p className={styles.empty}>No invites yet.</p>
 
@@ -242,7 +309,8 @@ function InviteTable({
         </thead>
         <tbody>
           {invites.map((invite) => (
-            <tr key={invite.id}>
+            // tabIndex -1: not in the tab order, but a place for focus to land once Revoke is gone.
+            <tr key={invite.id} tabIndex={-1}>
               <td>{invite.email ?? <span className={styles.muted}>any address</span>}</td>
               <td>{invite.status}</td>
               <td>{formatMoment(invite.expiresAt)}</td>
@@ -254,7 +322,8 @@ function InviteTable({
                     className="button-secondary button-sm"
                     type="button"
                     aria-disabled={isBusy}
-                    onClick={() => onRevoke(invite.id)}
+                    data-testid="invite-revoke"
+                    onClick={(event) => onRevoke(invite, event)}
                   >
                     Revoke
                   </button>
