@@ -61,6 +61,14 @@ export const artifacts = pgTable(
     ),
     // The trash listing (S9) and the purge job's due-row scan, which both filter on `deleted_at`.
     index('artifacts_owner_deleted_idx').on(table.ownerId, table.deletedAt),
+    // `/sitemap.xml` (`listPublicArtifacts`): the predicate mirrors that query exactly so the
+    // planner can use it, and public rows are a small slice of the table, so a partial index
+    // stays tiny while sparing the sitemap a full scan of every private artifact.
+    index('artifacts_public_updated_idx')
+      .on(table.updatedAt.desc())
+      .where(
+        sql`${table.visibility} = 'public' and ${table.deletedAt} is null and ${table.currentVersionId} is not null`,
+      ),
   ],
 )
 
