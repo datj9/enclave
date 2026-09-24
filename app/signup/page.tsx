@@ -50,6 +50,7 @@ export default async function SignupPage({ searchParams }: SignupPageProps) {
       caption={captionFor(invite)}
       action="/api/auth/signup"
       submitLabel="Create account"
+      submitPendingLabel="Creating account"
       passwordAutoComplete="new-password"
       passwordHint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
       errorMessage={error === undefined ? null : INVALID_SUBMISSION}

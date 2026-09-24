@@ -16,6 +16,22 @@
   line-height: 1.55;
 }
 
+/* readOnly while a stream runs: still focusable and selectable, visibly not editable. */
+.prompt:read-only {
+  color: var(--color-ink-2);
+  cursor: default;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.hint kbd {
+  font-size: inherit;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -42,9 +58,14 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .starter:hover {
+  .starter:not([aria-disabled='true']):hover {
     border-color: var(--color-ink-2);
   }
+}
+
+/* aria-disabled, not disabled: focus stays put while a stream runs; the click is a no-op. */
+.starter[aria-disabled='true'] {
+  cursor: not-allowed;
 }
 
 .cancelledNotice {
@@ -156,6 +177,16 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2xs);
+}
+
+.resultHeading {
+  font-size: var(--text-base);
+  margin: 0;
+}
+
+/* Focused programmatically on arrival; the heading, not a ring, is what marks it. */
+.result:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .resultUrl {

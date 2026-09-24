@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { getSessionUser } from '@/lib/auth/session'
@@ -19,9 +20,9 @@ export default async function NewArtifactPage() {
         Skip to content
       </a>
       <header className={styles.bar}>
-        <a className={styles.wordmark} href="/dashboard">
+        <Link className={styles.wordmark} href="/dashboard">
           enclave
-        </a>
+        </Link>
         <span className={styles.email}>{sessionUser.email}</span>
       </header>
 

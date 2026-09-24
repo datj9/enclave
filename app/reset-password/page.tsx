@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { AuthScreen } from '@app/_components/auth-screen'
@@ -34,13 +35,14 @@ export default async function ResetPasswordPage({ searchParams }: ResetPasswordP
       caption="This link is single-use."
       action="/api/auth/reset-password"
       submitLabel="Reset password"
+      submitPendingLabel="Resetting password"
       showEmail={false}
       showPassword
       passwordAutoComplete="new-password"
       passwordHint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
       hiddenFields={rawToken === undefined ? {} : { token: rawToken }}
       errorMessage={errorMessageFor(error)}
-      footer={<a href="/signin">Back to sign in</a>}
+      footer={<Link href="/signin">Back to sign in</Link>}
     />
   )
 }

@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import { redirect } from 'next/navigation'
+import Link from 'next/link'
 
 import { env } from '@/env'
 import { MAX_LIST_LIMIT } from '@/lib/artifacts/list-query'
 import { listTrashedArtifacts } from '@/lib/artifacts/trash'
-import { getSessionUser } from '@/lib/auth/session'
+import { requireSessionUser } from '@app/_components/session-gate'
 import { TrashList } from './trash-list'
 import styles from './page.module.css'
 
@@ -18,8 +18,9 @@ export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Trash · enclave' }
 
 export default async function TrashPage() {
-  const sessionUser = await getSessionUser()
-  if (sessionUser === null) redirect('/signin')
+  // layout.tsx has already redirected a signed-out visitor; repeating the check here costs
+  // nothing (the lookup is memoised per request) and keeps the page safe on its own.
+  const sessionUser = await requireSessionUser()
 
   // Paging UI is a later slice; the page takes the largest single page the API allows so the
   // list still shows everything a realistic trash holds, without the old unbounded query.
@@ -35,9 +36,9 @@ export default async function TrashPage() {
       </a>
       <header className={styles.bar}>
         <p className={styles.wordmark}>enclave</p>
-        <a className="button-secondary" href="/dashboard">
+        <Link className="button-secondary" href="/dashboard">
           Back to artifacts
-        </a>
+        </Link>
       </header>
 
       <main className={styles.main} id="main" tabIndex={-1}>

@@ -2,6 +2,8 @@
 
 import { useCallback, useReducer, useRef } from 'react'
 
+import { createActionBatcher } from './stream-batch'
+
 /**
  * Client half of the §5.4 stream. `EventSource` cannot POST, so the stream is read off `fetch`
  * and framed here — the format is small and fixed, and a dependency to parse `event:`/`data:`
@@ -180,6 +182,9 @@ export function useGeneration() {
     wasCancelled.current = false
     controller.current = new AbortController()
     dispatch({ type: 'start' })
+    // Chunks are coalesced per animation frame; see stream-batch.ts. Every exit path below
+    // flushes it before its own dispatch, so no streamed text is lost behind a terminal state.
+    const batcher = createActionBatcher(dispatch)
 
     try {
       const response = await fetch('/api/v1/generate', {
@@ -199,18 +204,21 @@ export function useGeneration() {
         const action = toAction(frame)
         if (action === undefined) continue
         if (isTerminalAction(action)) reachedEnd = true
-        dispatch(action)
+        batcher.push(action)
       }
+      batcher.flush()
 
       // A stream that stops without `done` or `error` is a dropped connection, not a success.
       if (!reachedEnd) dispatch({ type: 'error', failure: NETWORK_FAILURE })
     } catch {
+      batcher.flush()
       // `AbortError` is indistinguishable from a dropped connection by type alone, so the
       // cancel path is told apart with a ref `cancel` sets, not by inspecting the error.
       dispatch(
         wasCancelled.current ? { type: 'cancelled' } : { type: 'error', failure: NETWORK_FAILURE },
       )
     } finally {
+      batcher.dispose()
       inFlight.current = false
       controller.current = null
     }

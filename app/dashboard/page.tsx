@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
-import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { env } from '@/env'
 import { listOwnedArtifacts } from '@/lib/artifacts/list'
 import { DEFAULT_LIST_LIMIT } from '@/lib/artifacts/list-query'
-import { getSessionUser } from '@/lib/auth/session'
+import { requireSessionUser } from '@app/_components/session-gate'
+import { SubmitButton } from '@app/_components/submit-button'
 import { ArtifactList } from './artifact-list'
 import styles from './page.module.css'
 
@@ -12,8 +13,9 @@ export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Dashboard · enclave' }
 
 export default async function DashboardPage() {
-  const sessionUser = await getSessionUser()
-  if (sessionUser === null) redirect('/signin')
+  // layout.tsx has already redirected a signed-out visitor; repeating the check here costs
+  // nothing (the lookup is memoised per request) and keeps the page safe on its own.
+  const sessionUser = await requireSessionUser()
 
   const page = await listOwnedArtifacts(sessionUser.id, {
     limit: DEFAULT_LIST_LIMIT,
@@ -29,24 +31,24 @@ export default async function DashboardPage() {
         <p className={styles.wordmark}>enclave</p>
         <div className={styles.identity}>
           <span className={styles.email}>{sessionUser.email}</span>
-          <a className="button-primary" href="/new">
+          <Link className="button-primary" href="/new">
             New artifact
-          </a>
-          <a className="button-secondary" href="/trash">
+          </Link>
+          <Link className="button-secondary" href="/trash">
             Trash
-          </a>
-          <a className="button-secondary" href="/settings/keys">
+          </Link>
+          <Link className="button-secondary" href="/settings/keys">
             Settings
-          </a>
+          </Link>
           {sessionUser.role === 'admin' && (
-            <a className="button-secondary" href="/admin/users">
+            <Link className="button-secondary" href="/admin/users">
               Admin
-            </a>
+            </Link>
           )}
           <form method="post" action="/api/auth/signout">
-            <button className="button-secondary" type="submit">
+            <SubmitButton className="button-secondary" pendingLabel="Signing out">
               Sign out
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </header>
@@ -74,9 +76,9 @@ function EmptyState() {
         Describe what you want and enclave generates it, then you choose who can see it — only you,
         everyone on this instance, or anyone holding a share link.
       </p>
-      <a className={`button-primary ${styles.cta}`} href="/new">
+      <Link className={`button-primary ${styles.cta}`} href="/new">
         Describe your first artifact
-      </a>
+      </Link>
     </div>
   )
 }

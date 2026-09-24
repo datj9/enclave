@@ -148,6 +148,11 @@ function describeTooSmall(controls: readonly Measured[], floor: number): string[
     .map((c) => `${c.height}px <${c.tag}> "${c.label}"`)
 }
 
+/**
+ * Signs in on the *page's* request context. `page.request` shares the browser context's cookie
+ * jar; the standalone `request` fixture does not, so signing in through it left `page` anonymous
+ * and every signed-in path silently measured /signin after the server redirect.
+ */
 async function signIn(request: APIRequestContext): Promise<void> {
   if ((await request.get('/setup')).status() === 200) {
     await request.post('/api/setup', {
@@ -181,6 +186,19 @@ const SIGNED_IN_PAGES = [
   '/admin/settings',
 ] as const
 
+/**
+ * Yields every page for the combined loops: the signed-in ones first, then the public ones with
+ * the session cookie cleared. A signed-in visit to /signin or /forgot-password redirects to
+ * /dashboard, so measuring them while signed in would silently measure the dashboard instead.
+ * Signing in first also completes /setup, so /signin renders rather than redirecting there.
+ */
+async function* signedInThenPublic(page: Page): AsyncGenerator<string> {
+  await signIn(page.request)
+  yield* SIGNED_IN_PAGES
+  await page.context().clearCookies()
+  yield* PUBLIC_PAGES
+}
+
 test.describe('design system: control scale', () => {
   /*
    * `hasTouch` is what flips `pointer: coarse`, and the coarse promotion in styles/globals.css is
@@ -199,8 +217,8 @@ test.describe('design system: control scale', () => {
       })
     }
 
-    test('signed-in surfaces meet the 44px touch target at 320px', async ({ page, request }) => {
-      await signIn(request)
+    test('signed-in surfaces meet the 44px touch target at 320px', async ({ page }) => {
+      await signIn(page.request)
 
       for (const path of SIGNED_IN_PAGES) {
         await page.goto(path)
@@ -217,10 +235,8 @@ test.describe('design system: control scale', () => {
   test.describe('fine pointer', () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
-    test('desktop controls still clear the WCAG 2.5.8 floor', async ({ page, request }) => {
-      await signIn(request)
-
-      for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
+    test('desktop controls still clear the WCAG 2.5.8 floor', async ({ page }) => {
+      for await (const path of signedInThenPublic(page)) {
         await page.goto(path)
         const measurement = await measure(page)
 
@@ -257,8 +273,8 @@ test.describe('design system: responsive layout', () => {
     })
   }
 
-  test('signed-in surfaces do not scroll sideways at 320px', async ({ page, request }) => {
-    await signIn(request)
+  test('signed-in surfaces do not scroll sideways at 320px', async ({ page }) => {
+    await signIn(page.request)
     await page.setViewportSize(NARROW_VIEWPORT)
 
     for (const path of SIGNED_IN_PAGES) {
@@ -274,10 +290,8 @@ test.describe('design system: responsive layout', () => {
 })
 
 test.describe('design system: typography', () => {
-  test('no page uses more than five type sizes', async ({ page, request }) => {
-    await signIn(request)
-
-    for (const path of [...PUBLIC_PAGES, ...SIGNED_IN_PAGES]) {
+  test('no page uses more than five type sizes', async ({ page }) => {
+    for await (const path of signedInThenPublic(page)) {
       await page.goto(path)
       const { fontSizes } = await measure(page)
 

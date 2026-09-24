@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { ArtifactListItem, ArtifactListPage } from '@/lib/artifacts/list'
+import { formatBytes } from '@/lib/format/bytes'
 import styles from './artifact-list.module.css'
 
 /**
@@ -25,13 +26,6 @@ interface ArtifactListResponse {
 
 function allLoadedText(count: number): string {
   return `All ${String(count)} artifacts loaded.`
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const kibibytes = bytes / 1024
-  if (kibibytes < 1024) return `${kibibytes.toFixed(1)} KB`
-  return `${(kibibytes / 1024).toFixed(1)} MB`
 }
 
 /** `naming.ts` builds this from `env`, which never reaches the browser — hence the origin prop. */
@@ -104,6 +98,11 @@ export function ArtifactList({
                   : '0ms',
             }}
           >
+            {/*
+              A plain <a>, not next/link: /a/{id} embeds a single-use handoff token in the iframe
+              URL, and the client router cache replays the rendered page on Back/Forward, so the
+              iframe would re-present a burnt token and land on the re-entry page.
+            */}
             <a className={styles.link} href={`/a/${item.id}`}>
               <span className={styles.title}>{item.title}</span>
             </a>
