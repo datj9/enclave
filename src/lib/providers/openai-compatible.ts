@@ -1,6 +1,8 @@
 import OpenAI from 'openai'
 
+import { env } from '@/env'
 import { ARTIFACT_SYSTEM_PROMPT } from '@/prompts/system'
+import { fetchWithoutRedirects, type FetchLike } from './base-url'
 import { providerRefusal, toProviderError } from './errors'
 import type { ArtifactProvider, GenerateInput } from './types'
 
@@ -14,9 +16,27 @@ import type { ArtifactProvider, GenerateInput } from './types'
 
 const MAX_OUTPUT_TOKENS = 16_000
 
-/** Exported for the S7 seam and for tests; the client is otherwise created per generation. */
-export function createOpenAiClient(apiKey: string, baseUrl: string | undefined): OpenAI {
-  return new OpenAI({ apiKey, baseURL: baseUrl ?? null, maxRetries: 0 })
+/**
+ * Exported for the S7 seam and for tests; the client is otherwise created per generation.
+ *
+ * A base URL other than the operator's `OPENAI_BASE_URL` came from a user's key, so that client
+ * never follows a redirect (see `fetchWithoutRedirects`). The operator's own endpoint, and the
+ * SDK default, keep the SDK's ordinary behaviour. `fetchImpl` is injected by tests.
+ */
+export function createOpenAiClient(
+  apiKey: string,
+  baseUrl: string | undefined,
+  fetchImpl?: FetchLike,
+): OpenAI {
+  const userSupplied = baseUrl !== undefined && baseUrl !== env.OPENAI_BASE_URL
+  return userSupplied
+    ? new OpenAI({
+        apiKey,
+        baseURL: baseUrl,
+        maxRetries: 0,
+        fetch: fetchWithoutRedirects(fetchImpl),
+      })
+    : new OpenAI({ apiKey, baseURL: baseUrl ?? null, maxRetries: 0 })
 }
 
 /**

@@ -6,8 +6,8 @@ import { expect, test, type APIRequestContext } from '@playwright/test'
  * engine is invited to index — so its title, its canonical URL, `/robots.txt` and `/sitemap.xml`
  * are asserted here alongside the read itself.
  *
- * The file name sorts last on purpose: it signs in as the administrator, and
- * `setup-and-signin.spec.ts` needs `/setup` still open on an empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts): it
+ * signs in as the administrator, and that spec needs `/setup` still open on an empty database.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'

@@ -145,7 +145,7 @@ within its TTL.
 
 | Area | What is done |
 |---|---|
-| Passwords | argon2id (m=19456, t=2, p=1). Sign-in is rate-limited per email and per IP, with one generic failure message that distinguishes nothing. |
+| Passwords | argon2id (m=19456, t=2, p=1). Sign-in is rate-limited per IP and, separately, per email address (compared case-insensitively), with one generic failure message that distinguishes nothing. |
 | Sessions | HttpOnly, Secure, `SameSite=Lax`, and **host-only** — no `Domain` attribute, so an artifact origin can never see the session cookie. Rotated on sign-in, revocable server-side. |
 | Share and API tokens | 32 bytes of entropy, stored only as a SHA-256 hash. The plaintext is returned exactly once, at creation, and is unrecoverable afterwards. |
 | User provider keys | AES-256-GCM with `ENCRYPTION_KEY`. Never returned by any endpoint after being stored. |
@@ -153,7 +153,7 @@ within its TTL.
 | Existence leaks | An unauthorized read is a `404`, never a `403`. That applies to artifacts, `/setup` after first run, and `/signup` without a redeemable invite. |
 | Untrusted input | Zod schemas on request bodies and on the environment. Model output goes through a dedicated incremental parser and bundle validator instead, both held to 100% branch coverage: paths are rejected for traversal, absolute paths, backslashes, double slashes, null bytes and disallowed extensions, and only complete file blocks are ever committed — prose outside a block or an unterminated final block persists nothing. |
 | SQL | Drizzle with parameterized queries throughout. No string-built SQL. |
-| CSRF | `SameSite=Lax` plus an origin check on state-changing requests. |
+| CSRF | `SameSite=Lax`, plus an origin check on every cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` that sends a JSON body or authenticates through the shared token-or-session gate, and on sign-out, password change and restore. The unauthenticated form posts (sign-in, sign-up, first-run setup, forgot-password and reset-password) run the same check first, so a same-site page cannot sign the viewer into an attacker's account (login CSRF), spend their rate-limit budget or send reset mail in their name. The few bodyless `DELETE` routes that take the session alone (provider key, API token, invite, user) do not run it; they rely on `DELETE` needing a CORS preflight, which the app never answers. The request is refused with `403` when `Sec-Fetch-Site` is present and is anything but `same-origin` or `none`, or when `Origin` is present and is neither `APP_URL`'s origin nor the request's own host. `SameSite=Lax` alone is not enough here: an artifact origin on the same parent domain is the same *site*, so the browser would still send the session cookie with its requests. JSON routes also require a content type whose MIME essence is exactly `application/json`. See the known limit below for what the check does not cover. |
 | Audit trail | Privacy changes, share creation and revocation, deletes, restores, purges, token and invite lifecycle, sign-ins and failures, and every non-private view including anonymous ones — with the IP. Rows survive artifact purge. |
 | Log hygiene | Prompts, tokens, presigned URLs and `Authorization` headers are never logged. Prompts are never written to the audit log either. |
 | Error hygiene | No stack traces, bucket names or file paths in any client-facing response. |
@@ -167,11 +167,21 @@ Stated plainly, because a limit you know about is not a vulnerability report:
   a user asked a model to write; treat it as such.
 - **Rate limits and quotas are per process.** They are held in memory, so a multi-replica deployment
   enforces them per replica rather than globally.
-- **`X-Forwarded-For` is trusted.** Every supported deployment puts a TLS-terminating proxy in
-  front, so the first hop of that header is taken as the client IP. Expose the app process directly
-  and the header becomes client-controlled: the per-IP sign-in rate limit can be bypassed and audit
-  rows can be given arbitrary IPs. This is a deployment requirement, documented in
-  [docs/self-hosting.md](docs/self-hosting.md#dns), not a defect to report.
+- **`X-Forwarded-For` is trusted up to `TRUSTED_PROXY_HOPS`.** Every supported deployment puts a
+  TLS-terminating proxy in front, so the client IP is read that many entries from the *right* of
+  the header (default `1`, one proxy that appends the peer address; a CDN in front of that proxy
+  needs `2`). Expose the app process directly, or set the hop count higher than the number of
+  proxies you actually run, and the header becomes client-controlled: the per-IP sign-in rate limit
+  can be bypassed and audit rows can be given arbitrary IPs. This is a deployment requirement,
+  documented in [docs/self-hosting.md](docs/self-hosting.md#dns), not a defect to report.
+- **The CSRF origin check relies on browser headers.** A request that carries neither `Origin` nor
+  `Sec-Fetch-Site` is allowed, because that is what the CLI, curl and other non-browser clients
+  send, and they hold no ambient session cookie. Every current browser sets `Origin` on a
+  cross-origin `POST`, so this only matters for very old browsers. Requests carrying a `Bearer`
+  token skip the check: a page cannot attach an `Authorization` header cross-origin without a CORS
+  preflight, and the app answers none. `Origin` is matched against the request host as well as
+  `APP_URL`, and that host honours `X-Forwarded-Host`, so the proxy in front must set or strip that
+  header rather than pass a client's value through.
 - **Wildcard TLS is your responsibility.** Run it over plain http and the origin isolation this
   whole document rests on does not exist. The app warns at startup; it cannot refuse.
 - **No published container image yet.** Build from source and verify what you run.

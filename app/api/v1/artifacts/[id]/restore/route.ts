@@ -1,3 +1,4 @@
+import { requireSameOriginRequest } from '@/lib/api/guards'
 import { apiTokenViewerRef, userViewerRef } from '@/lib/artifacts/authorize'
 import { restoreArtifact } from '@/lib/artifacts/update'
 import { requireApiPrincipal, type ApiPrincipal } from '@/lib/auth/bearer'
@@ -23,6 +24,9 @@ function viewerRefOf(principal: ApiPrincipal): string {
 
 export async function POST(request: Request, context: RouteContext): Promise<Response> {
   try {
+    // Bodyless, so no `requireJsonContentType` to carry the origin check. `requireApiPrincipal`
+    // runs it too; stating it here keeps the route safe if the auth gate is ever swapped.
+    requireSameOriginRequest(request)
     const principal = await requireApiPrincipal(request, 'artifacts:write')
     const { id } = await context.params
 

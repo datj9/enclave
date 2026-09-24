@@ -3,46 +3,65 @@ name: release
 # Publishes a multi-arch image when the maintainer pushes a `v*` tag. Nothing is published on a
 # normal push — `ci.yml` is what guards master. This workflow has never run: until a tag exists,
 # there is no published image and the docs tell operators to build from source.
+#
+# The image is pushed only after the full `ci.yml` suite (static checks, unit + integration under
+# coverage, build + e2e) passes on the tagged commit — a tag is not proof the commit was green.
 
 on:
   push:
     tags: ['v*']
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   image:
+    needs: ci
     runs-on: ubuntu-latest
+    # Two architectures, one under QEMU emulation: slow, but not unbounded.
+    timeout-minutes: 90
 
     permissions:
       contents: read
       packages: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `latest` is what an operator pulls without thinking, so a prerelease (`v1.2.0-rc.1`,
+          # any tag with a semver `-` suffix) must never take it. The `major.minor` pattern already
+          # skips prereleases on its own; `latest` is explicit so it needs the same rule spelled out.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           # The Dockerfile's last stage; `builder` and `deps` are not shipped.

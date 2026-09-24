@@ -6,6 +6,7 @@ import { classifyArtifactVersion } from '@/lib/categories/classify'
 import { HttpError, type ErrorCode } from '@/lib/http'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
+import { runAfterResponse } from './after-response'
 import { markVersionReady, totalBytesOf, uploadBundleObjects, type PendingVersion } from './bundle-write'
 import { artifactViewUrl, slugFromTitle } from './naming'
 
@@ -34,6 +35,8 @@ export interface CreateArtifactInput {
   readonly visibility: Visibility
   readonly files: readonly BundleFile[]
   readonly actorIp?: string | null
+  /** §5.2's link back to the generation that produced the bundle; absent for an upload. */
+  readonly generationId?: string | null
 }
 
 export interface CreatedArtifact {
@@ -72,6 +75,7 @@ async function insertPendingVersion(
         totalBytes: totalBytesOf(manifest),
         fileCount: manifest.length,
         createdBy: input.ownerId,
+        generationId: input.generationId ?? null,
       })
       .returning({ id: artifactVersions.id })
 
@@ -117,12 +121,15 @@ export async function createArtifactWithBundle(
     metadata: { versionNo: FIRST_VERSION_NO, fileCount: validation.manifest.length },
   })
 
-  // Best-effort model tagging — the classifier never throws by contract, so no try/catch.
-  await classifyArtifactVersion({
-    artifactId: version.artifactId,
-    title: input.title,
-    files: input.files,
-  })
+  // Best-effort model tagging, after the response: the upload is committed and readable now, and
+  // an LLM round-trip must not sit on the request path. Outside a request it runs inline.
+  await runAfterResponse(`classify artifact ${version.artifactId}`, () =>
+    classifyArtifactVersion({
+      artifactId: version.artifactId,
+      title: input.title,
+      files: input.files,
+    }),
+  )
 
   return {
     id: version.artifactId,

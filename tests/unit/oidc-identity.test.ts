@@ -93,6 +93,7 @@ function queueSelects(...batches: FakeUserRow[][]): void {
 }
 
 const DAVE = { subject: '10769150350006150715113', email: 'dave@example.com' } as const
+const INVITE_FOR_DAVE = { id: 'invite-1', email: 'dave@example.com' }
 
 beforeEach(() => {
   disableProvider()
@@ -304,6 +305,56 @@ describe('resolveOidcIdentity', () => {
     expect(fakeDatabase.insertedRows).toHaveLength(0)
   })
 
+  it('refuses to redeem an email invite when the provider did not verify the address', async () => {
+    // oidc_sub lookup, email-taken lookup, then the invite naming the address.
+    queueSelects([], [], [INVITE_FOR_DAVE as unknown as FakeUserRow])
+
+    await expect(resolveOidcIdentity({ ...DAVE, emailVerified: false })).resolves.toEqual({
+      ok: false,
+      reason: 'email_unverified',
+    })
+    expect(fakeDatabase.insertedRows).toHaveLength(0)
+  })
+
+  it('treats a missing verification flag as unverified on the invite branch', async () => {
+    queueSelects([], [], [INVITE_FOR_DAVE as unknown as FakeUserRow])
+
+    await expect(resolveOidcIdentity(DAVE)).resolves.toEqual({
+      ok: false,
+      reason: 'email_unverified',
+    })
+  })
+
+  it('still says invite-only, not unverified, when no invite names the address', async () => {
+    queueSelects([], [], [])
+
+    await expect(resolveOidcIdentity({ ...DAVE, emailVerified: false })).resolves.toEqual({
+      ok: false,
+      reason: 'registration_closed',
+    })
+  })
+
+  it('does not require a verified email for a returning user', async () => {
+    queueSelects([{ id: 'user-1', isActive: true }])
+
+    await expect(resolveOidcIdentity({ ...DAVE, emailVerified: false })).resolves.toEqual({
+      ok: true,
+      userId: 'user-1',
+      created: false,
+    })
+  })
+
+  it('does not require a verified email under open registration', async () => {
+    testEnv.ALLOW_OPEN_REGISTRATION = true
+    queueSelects([], [])
+    fakeDatabase.insertReturns = [{ id: 'user-new' }]
+
+    await expect(resolveOidcIdentity({ ...DAVE, emailVerified: false })).resolves.toMatchObject({
+      ok: true,
+      created: true,
+    })
+  })
+
   it('creates a password-less member when open registration is on', async () => {
     testEnv.ALLOW_OPEN_REGISTRATION = true
     queueSelects([], [])
@@ -357,7 +408,12 @@ describe('rejectionError', () => {
     expect(rejectionError('deactivated').message).toBe('This account cannot sign in')
   })
 
+  it('explains an unverified email without calling the instance invite-only', () => {
+    expect(rejectionError('email_unverified').message).toContain('not verified')
+  })
+
   it('answers 403 for every rejection', () => {
+    expect(rejectionError('email_unverified').status).toBe(403)
     expect(rejectionError('deactivated').status).toBe(403)
     expect(rejectionError('email_taken').status).toBe(403)
     expect(rejectionError('registration_closed').status).toBe(403)

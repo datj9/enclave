@@ -1,3 +1,4 @@
+import { requireSameOriginRequest } from '@/lib/api/guards'
 import { credentialsSchema } from '@/lib/auth/credentials'
 import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
 import { createFirstAdmin, isSetupComplete } from '@/lib/auth/setup'
@@ -12,6 +13,11 @@ export const dynamic = 'force-dynamic'
 const SETUP_ALREADY_DONE = 'Setup has already been completed'
 
 export async function POST(request: Request): Promise<Response> {
+  try {
+    requireSameOriginRequest(request)
+  } catch (error) {
+    return toErrorResponse(error)
+  }
   const returnsJson = wantsJsonResponse(request)
 
   try {

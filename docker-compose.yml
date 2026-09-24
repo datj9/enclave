@@ -26,6 +26,28 @@ services:
       postgres:
         condition: service_healthy
 
+  # Operator toolbox: migrations and the scheduled jobs under scripts/. The server image above
+  # carries neither drizzle-kit nor the sources, so these run from the Dockerfile's `migrate`
+  # target instead. Never started or rebuilt by `up`, and `run` reuses a stale image unless told
+  # to rebuild, so pass --build after pulling a new version:
+  #   docker compose run --rm --build tools                                # apply migrations
+  #   docker compose run --rm tools pnpm exec tsx scripts/purge-trash.ts   # any job
+  tools:
+    build:
+      context: .
+      target: migrate
+    image: enclave-tools:local
+    profiles: ['tools']
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://enclave:enclave@postgres:5432/enclave
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-${S3_ENDPOINT}}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-${S3_ENDPOINT}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -49,7 +71,10 @@ services:
   #   docker compose --profile minio up -d
   # Any S3-compatible backend works in production (AWS S3, GCS, R2, B2).
   minio:
-    image: minio/minio:latest
+    # A dated release, not `latest`, so a fresh `up` next month runs the server this was tested
+    # against (quay.io: Docker Hub does not carry the dated tags). Keep in step with MINIO_IMAGE in
+    # .github/workflows/ci.yml.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     profiles: ['minio']
     restart: unless-stopped
     command: server /data --console-address ":9001"

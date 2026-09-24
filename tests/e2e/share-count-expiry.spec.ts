@@ -14,8 +14,8 @@ import postgres from 'postgres'
  * The expired row is written straight to the table — `createShareLink` refuses an expiry that is
  * already in the past, which is exactly the state this file needs.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database.
  */
 
 const APP_ORIGIN = process.env.E2E_BASE_URL ?? 'http://localhost:3000'

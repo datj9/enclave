@@ -26,6 +26,27 @@ const mocks = vi.hoisted(() => ({
   sessionUser: null as { id: string; email: string; role: string; isActive: boolean } | null,
 }))
 
+/**
+ * The store-time SSRF check resolves hostnames. Answering from a table keeps these tests off the
+ * network and deterministic: `gw.example.com` is public, `inward.example.test` resolves to the
+ * metadata address, and anything else is ENOTFOUND.
+ */
+vi.mock('node:dns/promises', () => {
+  const table: Record<string, { address: string; family: number }[]> = {
+    'gw.example.com': [{ address: '203.0.113.7', family: 4 }],
+    'inward.example.test': [{ address: '169.254.169.254', family: 4 }],
+  }
+  const lookup = (hostname: string) => {
+    const addresses = table[hostname]
+    return addresses === undefined
+      ? Promise.reject(
+          Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), { code: 'ENOTFOUND' }),
+        )
+      : Promise.resolve(addresses)
+  }
+  return { lookup, default: { lookup } }
+})
+
 vi.mock('@/lib/auth/session', () => ({
   getSessionUser: () => Promise.resolve(mocks.sessionUser),
 }))
@@ -264,6 +285,42 @@ describe.skipIf(!database)('/api/v1/settings/keys', () => {
       error: { code: 'VALIDATION_FAILED', details: { fields: ['baseUrl'] } },
     })
     expect(await storedRows()).toHaveLength(0)
+  })
+
+  it.each([
+    ['a loopback address', 'http://127.0.0.1:11434/v1'],
+    ['localhost', 'http://localhost:11434/v1'],
+    ['the cloud metadata address', 'http://169.254.169.254/latest'],
+    ['a hostname that resolves to the metadata address', 'https://inward.example.test/v1'],
+  ])(
+    'refuses a base URL targeting %s without storing it or echoing it',
+    async (_label, baseUrl) => {
+      const response = await POST(
+        storeRequest({ provider: 'openai-compatible', apiKey: API_KEY, baseUrl }),
+      )
+      const body = await response.text()
+
+      expect(response.status).toBe(422)
+      expect(JSON.parse(body)).toMatchObject({
+        error: { code: 'VALIDATION_FAILED', details: { fields: ['baseUrl'] } },
+      })
+      expect(body).not.toContain(baseUrl)
+      expect(await storedRows()).toHaveLength(0)
+    },
+  )
+
+  it('accepts a private-network base URL by default, for a LAN model server', async () => {
+    const response = await POST(
+      storeRequest({
+        provider: 'openai-compatible',
+        apiKey: API_KEY,
+        baseUrl: 'http://192.168.1.50:11434/v1',
+      }),
+    )
+
+    expect(response.status).toBe(204)
+    const [row] = await storedRows()
+    expect(row?.baseUrl).toBe('http://192.168.1.50:11434/v1')
   })
 
   it('never echoes the submitted API key or base URL in a validation error body', async () => {

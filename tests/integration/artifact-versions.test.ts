@@ -64,6 +64,38 @@ function storeFailingAt(store: ObjectStore, failingPutNumber: number): ObjectSto
   }
 }
 
+/**
+ * Holds every put until `release()` — the way to make one append's upload outlast another's.
+ * `started` resolves on the first put, which happens only after the append's insert committed.
+ */
+function gatedStore(store: ObjectStore): {
+  readonly store: ObjectStore
+  readonly started: Promise<void>
+  readonly release: () => void
+} {
+  let release: () => void = () => undefined
+  let markStarted: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
+
+  return {
+    store: {
+      ...store,
+      putObject: async (input) => {
+        markStarted()
+        await gate
+        await store.putObject(input)
+      },
+    },
+    started,
+    release,
+  }
+}
+
 /** Any call at all fails the test: the proof that a refused append uploaded nothing. */
 const refusingStore: ObjectStore = {
   ensureBucket: () => Promise.reject(new Error('storage must not be touched')),
@@ -312,6 +344,78 @@ describe.skipIf(!servicesReady)('appendVersion', () => {
       .from(artifactVersions)
       .where(eq(artifactVersions.artifactId, created.id))
     expect(versions).toHaveLength(2)
+  })
+
+  it('an older version finishing its upload last does not roll current_version_id back', async () => {
+    const created = await createFirstVersion()
+    const slow = gatedStore(store)
+
+    // v2 commits its row, then stalls in upload; v3 is appended, uploaded and flipped meanwhile.
+    const second = appendVersion({ artifactId: created.id, ownerId, files: bundle() }, slow.store)
+    await slow.started
+    const third = await appendVersion({ artifactId: created.id, ownerId, files: bundle() }, store)
+    expect(third.versionNo).toBe(3)
+
+    slow.release()
+    const secondResult = await second
+    expect(secondResult.versionNo).toBe(2)
+
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, created.id))
+    expect(artifact?.currentVersionId).toBe(third.versionId)
+
+    // v2 still becomes ready — it is a real version in the history — it just is not served.
+    const [v2] = await db
+      .select()
+      .from(artifactVersions)
+      .where(eq(artifactVersions.id, secondResult.versionId))
+    expect(v2?.status).toBe('ready')
+  })
+
+  it('expectedVersionNo is checked against the ready version, not an abandoned pending one', async () => {
+    const created = await createFirstVersion()
+
+    await appendVersion(
+      { artifactId: created.id, ownerId, files: bundleOf(3) },
+      storeFailingAt(store, 2),
+    ).catch(() => undefined)
+
+    // Past the sweeper cutoff: an abandoned upload, not one still in flight.
+    await db
+      .update(artifactVersions)
+      .set({ createdAt: sql`now() - interval '1 hour'` })
+      .where(and(eq(artifactVersions.artifactId, created.id), eq(artifactVersions.versionNo, 2)))
+
+    const appended = await appendVersion(
+      { artifactId: created.id, ownerId, files: bundle(), expectedVersionNo: 1 },
+      store,
+    )
+
+    // v2's number stays taken until the sweeper reclaims it.
+    expect(appended.versionNo).toBe(3)
+    const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, created.id))
+    expect(artifact?.currentVersionId).toBe(appended.versionId)
+  })
+
+  it('expectedVersionNo refuses while a fresh pending version may still be uploading', async () => {
+    const created = await createFirstVersion()
+
+    await appendVersion(
+      { artifactId: created.id, ownerId, files: bundleOf(3) },
+      storeFailingAt(store, 2),
+    ).catch(() => undefined)
+
+    const failure = await appendVersion(
+      { artifactId: created.id, ownerId, files: bundle(), expectedVersionNo: 1 },
+      refusingStore,
+    ).catch((thrown: unknown) => thrown)
+
+    expect(failure).toBeInstanceOf(HttpError)
+    expect(failure).toMatchObject({ code: 'VERSION_CONFLICT', status: 409 })
+    expect((failure as HttpError).details).toEqual({
+      expectedVersionNo: 1,
+      currentVersionNo: 1,
+      inFlightVersionNo: 2,
+    })
   })
 
   it('writes exactly one version.create audit row per append, carrying actorIp', async () => {

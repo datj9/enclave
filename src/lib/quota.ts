@@ -5,6 +5,7 @@ import { generations } from '@/db/schema/generations'
 import { usageCounters } from '@/db/schema/usage-counters'
 import { env } from '@/env'
 import { HttpError } from '@/lib/http'
+import type { DbHandle } from '@/lib/invites/redeem'
 
 /**
  * The §5.7 generation caps: a rolling hourly rate limit and a fixed daily quota, both per user
@@ -15,9 +16,30 @@ import { HttpError } from '@/lib/http'
  * counter in `usage_counters`, so it survives a restart and holds across replicas. The in-process
  * limiter in `src/lib/rate-limit.ts` can do neither, which is why it stays on the auth surface.
  *
- * Both are checked before the provider is called and neither is incremented by a rejected call:
- * `recordGeneration` runs only once a stream has actually opened.
+ * Check and spend are one step (`reserveGeneration`). Checking first and counting later let two
+ * concurrent requests both read "one slot left" and both reach the provider, so a burst could run
+ * past either cap. A reservation instead takes a per-user advisory lock, reads both counters,
+ * and — only if the decision is "allowed" — writes the `generations` row and bumps the daily
+ * counter before the lock is released at commit. A second request for the same user waits on the
+ * lock and then sees the first one's row and counter.
+ *
+ * What an attempt costs, precisely:
+ *
+ *  - denied by either cap: nothing — no `generations` row, no counter bump, no provider call;
+ *  - rejected by the provider before its first delta (a bad key, a 429, a refusal, a client that
+ *    disconnected first): its `generations` row stays, so it still occupies a slot in the hourly
+ *    window — that row is the durable record of the attempt, and the hourly limit has always
+ *    counted attempts — but its daily unit is handed back by `releaseGenerationReservation`, so
+ *    a rejected key consumes no daily quota;
+ *  - anything that reached the model: one hourly slot and one daily unit, whatever happens later
+ *    in the stream.
+ *
+ * If the process dies between the reservation and a refund the daily counter keeps the unit;
+ * erring toward over-counting one attempt is the safe side of a spend limit.
  */
+
+/** Distinct from the setup/invite/password-reset lock spaces, so none of them contend. */
+const QUOTA_LOCK_NAMESPACE = 8_531_210
 
 const HOUR_SECONDS = 3600
 const DAY_SECONDS = 86_400
@@ -88,8 +110,12 @@ export function hourlyLimitFor(usingOwnKey: boolean): number {
     : env.RATE_LIMIT_GENERATIONS_PER_HOUR
 }
 
-async function countGenerationsSince(userId: string, since: Date): Promise<number> {
-  const [row] = await db
+async function countGenerationsSince(
+  handle: DbHandle,
+  userId: string,
+  since: Date,
+): Promise<number> {
+  const [row] = await handle
     .select({ total: count() })
     .from(generations)
     .where(and(eq(generations.userId, userId), gt(generations.createdAt, since)))
@@ -103,11 +129,12 @@ async function countGenerationsSince(userId: string, since: Date): Promise<numbe
  * is exactly at the cap, and later when the operator has since lowered the limit.
  */
 async function oldestCountedGeneration(
+  handle: DbHandle,
   userId: string,
   since: Date,
   offset: number,
 ): Promise<Date | undefined> {
-  const [row] = await db
+  const [row] = await handle
     .select({ createdAt: generations.createdAt })
     .from(generations)
     .where(and(eq(generations.userId, userId), gt(generations.createdAt, since)))
@@ -118,8 +145,12 @@ async function oldestCountedGeneration(
   return row?.createdAt
 }
 
-async function readDailyCount(userId: string, windowDate: string): Promise<number> {
-  const [row] = await db
+async function readDailyCount(
+  handle: DbHandle,
+  userId: string,
+  windowDate: string,
+): Promise<number> {
+  const [row] = await handle
     .select({ generations: usageCounters.generations })
     .from(usageCounters)
     .where(and(eq(usageCounters.userId, userId), eq(usageCounters.windowDate, windowDate)))
@@ -127,19 +158,24 @@ async function readDailyCount(userId: string, windowDate: string): Promise<numbe
   return row?.generations ?? 0
 }
 
+/**
+ * `handle` defaults to the pool for the settings page's read-only display; a reservation passes
+ * its transaction so every read happens under the lock and on the connection that holds it.
+ */
 export async function readQuotaUsage(
   userId: string,
   usingOwnKey: boolean,
   now: Date = new Date(),
+  handle: DbHandle = db,
 ): Promise<QuotaUsage> {
   const windowStart = new Date(now.getTime() - HOUR_SECONDS * MILLIS_PER_SECOND)
   const hourlyLimit = hourlyLimitFor(usingOwnKey)
-  const hourlyCount = await countGenerationsSince(userId, windowStart)
+  const hourlyCount = await countGenerationsSince(handle, userId, windowStart)
 
   const hourlySlotFreesAt =
     hourlyCount < hourlyLimit
       ? undefined
-      : await oldestCountedGeneration(userId, windowStart, hourlyCount - hourlyLimit).then(
+      : await oldestCountedGeneration(handle, userId, windowStart, hourlyCount - hourlyLimit).then(
           (createdAt) =>
             createdAt === undefined
               ? undefined
@@ -150,14 +186,9 @@ export async function readQuotaUsage(
     hourlyCount,
     hourlyLimit,
     hourlySlotFreesAt,
-    dailyCount: await readDailyCount(userId, utcWindowDate(now)),
+    dailyCount: await readDailyCount(handle, userId, utcWindowDate(now)),
     dailyLimit: dailyLimitFor(usingOwnKey),
   }
-}
-
-export async function checkQuota(userId: string, usingOwnKey: boolean): Promise<QuotaDecision> {
-  const now = new Date()
-  return decideQuota(await readQuotaUsage(userId, usingOwnKey, now), now)
 }
 
 const DENIAL_MESSAGE: Readonly<Record<QuotaDenialCode, (seconds: number) => string>> = {
@@ -165,23 +196,93 @@ const DENIAL_MESSAGE: Readonly<Record<QuotaDenialCode, (seconds: number) => stri
   QUOTA_EXCEEDED: (seconds) => `Daily generation quota reached, retry in ${seconds}s`,
 }
 
-/** Throws the §5.3 error with `Retry-After` when the user is over either cap. */
-export async function enforceQuota(userId: string, usingOwnKey: boolean): Promise<void> {
-  const decision = await checkQuota(userId, usingOwnKey)
-  if (decision.allowed) return
-
-  throw new HttpError(decision.code, DENIAL_MESSAGE[decision.code](decision.retryAfterSeconds), {
+/** The §5.3 error with `Retry-After` for a denied decision. Pure, so the wording is testable. */
+export function quotaDenialError(
+  decision: Extract<QuotaDecision, { readonly allowed: false }>,
+): HttpError {
+  return new HttpError(decision.code, DENIAL_MESSAGE[decision.code](decision.retryAfterSeconds), {
     headers: { 'retry-after': String(decision.retryAfterSeconds) },
   })
 }
 
-/** Called only after a provider stream has opened, so a rejected request consumes no quota. */
-export async function recordGeneration(userId: string, now: Date = new Date()): Promise<void> {
-  await db
-    .insert(usageCounters)
-    .values({ userId, windowDate: utcWindowDate(now), generations: 1 })
-    .onConflictDoUpdate({
-      target: [usageCounters.userId, usageCounters.windowDate],
-      set: { generations: sql`${usageCounters.generations} + 1` },
-    })
+/** What `releaseGenerationReservation` needs to hand back exactly the unit that was taken. */
+export interface QuotaReservation {
+  readonly userId: string
+  /** The UTC day the unit was charged to — a refund after midnight must not credit the new day. */
+  readonly windowDate: string
+}
+
+export interface ReservedGeneration<TRecord> {
+  readonly record: TRecord
+  readonly reservation: QuotaReservation
+}
+
+/**
+ * Atomically checks both caps and, if they allow it, spends one unit of each: `recordAttempt`
+ * writes the `generations` row (the hourly unit) on the same transaction, and the daily counter
+ * is incremented beside it. Throws the §5.3 `RATE_LIMITED` / `QUOTA_EXCEEDED` error, with nothing
+ * written, when either cap is reached.
+ *
+ * The lock is per user and held only for these few statements — never across the provider call.
+ */
+export async function reserveGeneration<TRecord>(
+  userId: string,
+  usingOwnKey: boolean,
+  recordAttempt: (handle: DbHandle) => Promise<TRecord>,
+  now: Date = new Date(),
+): Promise<ReservedGeneration<TRecord>> {
+  const windowDate = utcWindowDate(now)
+
+  const record = await db.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(${QUOTA_LOCK_NAMESPACE}, hashtext(${userId}))`,
+    )
+
+    const decision = decideQuota(await readQuotaUsage(userId, usingOwnKey, now, transaction), now)
+    if (!decision.allowed) throw quotaDenialError(decision)
+
+    const recorded = await recordAttempt(transaction)
+
+    await transaction
+      .insert(usageCounters)
+      .values({ userId, windowDate, generations: 1 })
+      .onConflictDoUpdate({
+        target: [usageCounters.userId, usageCounters.windowDate],
+        set: { generations: sql`${usageCounters.generations} + 1` },
+      })
+
+    return recorded
+  })
+
+  return { record, reservation: { userId, windowDate } }
+}
+
+/**
+ * Hands back the daily unit of an attempt the provider rejected before producing anything. The
+ * hourly unit is not refunded: the attempt's `generations` row stays (see the module comment).
+ *
+ * Never throws: it runs from the catch block that is about to report the provider's own error,
+ * and a failed refund must not replace that error. `greatest` keeps a refund racing a manual
+ * counter reset from driving the row negative.
+ */
+export async function releaseGenerationReservation(reservation: QuotaReservation): Promise<void> {
+  try {
+    await db
+      .update(usageCounters)
+      .set({ generations: sql`greatest(${usageCounters.generations} - 1, 0)` })
+      .where(
+        and(
+          eq(usageCounters.userId, reservation.userId),
+          eq(usageCounters.windowDate, reservation.windowDate),
+        ),
+      )
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        kind: 'quota.refund_failed',
+        userId: reservation.userId,
+        error: String(error),
+      }),
+    )
+  }
 }

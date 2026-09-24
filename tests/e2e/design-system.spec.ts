@@ -17,9 +17,9 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
  *  2. No horizontal overflow. 320px is the narrowest viewport still in real use (iPhone SE).
  *  3. Five type sizes per page, maximum — design.md § Typography rules.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on
- * an empty database; `signIn` below creates the admin if it has to, so this file also passes
- * on its own.
+ * Runs in the `chromium-late` project (playwright.config.ts), after `setup-and-signin.spec.ts` has
+ * asserted `/setup` is open on an empty database; `signIn` below creates the admin if it has to,
+ * so this file also passes on its own.
  */
 
 const ADMIN_EMAIL = 'ops@example.com'

@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 
 import { db } from '@/db'
 import { userProviderKeys } from '@/db/schema/user-provider-keys'
@@ -18,6 +18,9 @@ import type { UserProviderCredential, UserProviderKeys } from './index'
  */
 
 const LAST4_LENGTH = 4
+
+/** Its own advisory-lock space, so a key save never contends with setup, invites or quota. */
+const PROVIDER_KEY_LOCK_NAMESPACE = 8_531_211
 
 const UNREADABLE_KEY_MESSAGE =
   'Your stored provider key could not be read. Replace it in settings, or delete it to fall back to the instance key.'
@@ -84,6 +87,12 @@ export async function getStoredProviderKey(userId: string): Promise<StoredProvid
   }
 }
 
+/**
+ * The upsert and the delete of the other provider's key are one transaction under a per-user
+ * lock. Apart, a failure between them left the user holding two keys — and `selectProvider`
+ * would quietly keep running the old anthropic one — and two concurrent saves for different
+ * providers could each delete nothing the other had committed yet, ending with both rows.
+ */
 export async function storeUserProviderKey(
   userId: string,
   provider: ProviderId,
@@ -93,17 +102,23 @@ export async function storeUserProviderKey(
   const encryptedKey = encryptKey(apiKey)
   const storedBaseUrl = acceptsBaseUrl(provider) ? (baseUrl ?? null) : null
 
-  await db
-    .insert(userProviderKeys)
-    .values({ userId, provider, encryptedKey, baseUrl: storedBaseUrl })
-    .onConflictDoUpdate({
-      target: [userProviderKeys.userId, userProviderKeys.provider],
-      set: { encryptedKey, baseUrl: storedBaseUrl, createdAt: new Date() },
-    })
+  await db.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(${PROVIDER_KEY_LOCK_NAMESPACE}, hashtext(${userId}))`,
+    )
 
-  await db
-    .delete(userProviderKeys)
-    .where(and(eq(userProviderKeys.userId, userId), ne(userProviderKeys.provider, provider)))
+    await transaction
+      .insert(userProviderKeys)
+      .values({ userId, provider, encryptedKey, baseUrl: storedBaseUrl })
+      .onConflictDoUpdate({
+        target: [userProviderKeys.userId, userProviderKeys.provider],
+        set: { encryptedKey, baseUrl: storedBaseUrl, createdAt: new Date() },
+      })
+
+    await transaction
+      .delete(userProviderKeys)
+      .where(and(eq(userProviderKeys.userId, userId), ne(userProviderKeys.provider, provider)))
+  })
 }
 
 /** Falls the user back to the instance key, and with it the stricter daily quota. */

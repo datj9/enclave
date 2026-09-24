@@ -8,8 +8,8 @@ import postgres from 'postgres'
  * themselves — restores it from the trash with both versions intact, and finds the share link
  * still dead. That last step is the deliberate one (§5.3): restore does not un-revoke links.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on an
- * empty database.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database.
  */
 
 const APP_ORIGIN = 'http://localhost:3000'
