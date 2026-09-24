@@ -71,11 +71,14 @@ services:
   #   docker compose --profile minio up -d
   # Any S3-compatible backend works in production (AWS S3, GCS, R2, B2).
   minio:
-    # A dated release, not `latest`, so a fresh `up` next month runs the server this was tested
-    # against (quay.io: Docker Hub does not carry the dated tags). Keep in step with MINIO_IMAGE in
-    # .github/workflows/ci.yml.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # Pinned by digest so a fresh `up` next month runs the server this was tested against. MinIO no
+    # longer serves its images anonymously, so this is Chainguard's free build of the same server.
+    # Keep in step with MINIO_IMAGE in .github/workflows/ci.yml.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     profiles: ['minio']
+    # The image runs as uid 65532, but a fresh named volume is owned by root, so MinIO could not
+    # write /data. This is a local demo service; production uses a real S3-compatible provider.
+    user: '0:0'
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
@@ -86,11 +89,9 @@ services:
       MINIO_ROOT_PASSWORD: enclave-dev-secret-key
     volumes:
       - minio-data:/data
-    healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    # No healthcheck: the image ships neither `mc` nor `curl`, and nothing depends on this service
+    # being healthy. Readiness is http://localhost:9000/minio/health/live, which
+    # scripts/fresh-clone-demo.sh polls.
 
 volumes:
   postgres-data:
