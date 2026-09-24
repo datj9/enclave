@@ -6,8 +6,14 @@ import { artifacts } from '@/db/schema/artifacts'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
 import { type CategoryView } from '@/lib/categories/manage'
+import type { DbHandle } from '@/lib/invites/redeem'
 
-import { requireOwnedArtifact } from './update'
+import {
+  requireOwnedArtifact,
+  updateArtifact,
+  type ArtifactView,
+  type UpdateArtifactInput,
+} from './update'
 
 /**
  * `PATCH /api/v1/artifacts/{id}` tag handling (§artifact-tagging). `categoryIds` replaces the
@@ -40,6 +46,45 @@ export async function assertCategoriesAvailable(ids: readonly string[]): Promise
   if (found.length !== unique.length) throw CATEGORY_ERROR()
 }
 
+/**
+ * The row half of a manual replacement, on the caller's handle so it can share a transaction with
+ * other writes. The caller must be inside a transaction: the delete and insert are only atomic
+ * together there.
+ */
+async function writeManualTags(
+  handle: DbHandle,
+  artifactId: string,
+  ids: readonly string[],
+): Promise<void> {
+  await handle.delete(artifactCategories).where(eq(artifactCategories.artifactId, artifactId))
+
+  if (ids.length > 0) {
+    await handle
+      .insert(artifactCategories)
+      .values(ids.map((categoryId) => ({ artifactId, categoryId })))
+  }
+
+  await handle
+    .update(artifacts)
+    .set({ categorySource: 'manual', updatedAt: new Date() })
+    .where(eq(artifacts.id, artifactId))
+}
+
+function recordManualTagChange(input: {
+  readonly ownerId: string
+  readonly artifactId: string
+  readonly ids: readonly string[]
+  readonly actorIp?: string | null
+}): Promise<void> {
+  return recordAuditEvent({
+    action: 'artifact.tag_change',
+    actorUserId: input.ownerId,
+    actorIp: input.actorIp ?? null,
+    artifactId: input.artifactId,
+    metadata: { categoryIds: [...input.ids], categorySource: 'manual' },
+  })
+}
+
 export async function replaceArtifactTags(input: {
   readonly artifactId: string
   readonly categoryIds: readonly string[]
@@ -51,32 +96,62 @@ export async function replaceArtifactTags(input: {
   await assertCategoriesAvailable(input.categoryIds)
   const ids = [...new Set(input.categoryIds)]
 
-  await db.transaction(async (transaction) => {
-    await transaction
-      .delete(artifactCategories)
-      .where(eq(artifactCategories.artifactId, input.artifactId))
+  await db.transaction((transaction) => writeManualTags(transaction, input.artifactId, ids))
 
-    if (ids.length > 0) {
-      await transaction.insert(artifactCategories).values(
-        ids.map((categoryId) => ({ artifactId: input.artifactId, categoryId })),
-      )
-    }
-
-    await transaction
-      .update(artifacts)
-      .set({ categorySource: 'manual', updatedAt: new Date() })
-      .where(eq(artifacts.id, input.artifactId))
-  })
-
-  await recordAuditEvent({
-    action: 'artifact.tag_change',
-    actorUserId: owned.ownerId,
-    actorIp: input.actorIp ?? null,
+  await recordManualTagChange({
+    ownerId: owned.ownerId,
     artifactId: input.artifactId,
-    metadata: { categoryIds: ids, categorySource: 'manual' },
+    ids,
+    actorIp: input.actorIp ?? null,
   })
 
   return (await readArtifactTags([input.artifactId])).get(input.artifactId) ?? []
+}
+
+export interface UpdatedArtifactWithTags {
+  readonly artifact: ArtifactView
+  readonly categories: readonly CategoryView[]
+  /** Whether `categoryIds` was part of the patch, i.e. whether the tag set was replaced. */
+  readonly tagsReplaced: boolean
+}
+
+/**
+ * The whole `PATCH /api/v1/artifacts/{id}`: title, visibility and the tag set commit in one
+ * transaction, so a PATCH that renames and re-tags can never land half-applied if the tag write
+ * fails. `categoryIds` must already have passed `assertCategoriesAvailable` — the route checks it
+ * before any write so a bad id is a 422 that changed nothing.
+ */
+export async function updateArtifactWithTags(
+  input: Omit<UpdateArtifactInput, 'alsoWrite'>,
+): Promise<UpdatedArtifactWithTags> {
+  const categoryIds = input.patch.categoryIds
+  if (categoryIds === undefined) {
+    const artifact = await updateArtifact(input)
+    const categories = (await readArtifactTags([artifact.id])).get(artifact.id) ?? []
+    return { artifact, categories, tagsReplaced: false }
+  }
+
+  const ids = [...new Set(categoryIds)]
+  let ownerId: string | undefined
+  const artifact = await updateArtifact({
+    ...input,
+    alsoWrite: async (handle, owner) => {
+      ownerId = owner.ownerId
+      await writeManualTags(handle, input.artifactId, ids)
+    },
+  })
+
+  if (ownerId !== undefined) {
+    await recordManualTagChange({
+      ownerId,
+      artifactId: input.artifactId,
+      ids,
+      actorIp: input.actorIp ?? null,
+    })
+  }
+
+  const categories = (await readArtifactTags([artifact.id])).get(artifact.id) ?? []
+  return { artifact, categories, tagsReplaced: true }
 }
 
 export async function readArtifactTags(

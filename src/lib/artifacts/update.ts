@@ -7,6 +7,7 @@ import { shareLinks } from '@/db/schema/share-links'
 import { env } from '@/env'
 import { recordAuditEvent } from '@/lib/audit'
 import { HttpError } from '@/lib/http'
+import type { DbHandle } from '@/lib/invites/redeem'
 import { authorizeArtifactRead, loadArtifactForRead, resolveViewer } from './authorize'
 import { canRead, type Viewer } from './can-read'
 import { artifactViewUrl, slugFromTitle } from './naming'
@@ -77,6 +78,11 @@ export interface UpdateArtifactInput {
   readonly viewerRef: string
   readonly patch: UpdateArtifactPatch
   readonly actorIp?: string | null
+  /**
+   * Further writes that must commit or roll back with the artifact row — the PATCH route's tag
+   * replacement. Runs after the ownership check, on the same transaction as the row update.
+   */
+  readonly alsoWrite?: (handle: DbHandle, owner: { readonly ownerId: string }) => Promise<void>
 }
 
 /** A share-token viewer owns nothing, so it never reaches a write path. */
@@ -108,29 +114,39 @@ export async function requireOwnedArtifact(
   return { ownerId: loaded.artifact.ownerId, visibility: loaded.artifact.visibility }
 }
 
+/**
+ * The row update and any `alsoWrite` share one transaction, so a PATCH that renames and re-tags
+ * either lands whole or not at all. Audit rows are written only after the commit: an event must
+ * never describe a change that was rolled back.
+ */
 export async function updateArtifact(input: UpdateArtifactInput): Promise<ArtifactView> {
   const current = await requireOwnedArtifact(input.artifactId, input.viewerRef)
 
-  const [row] = await db
-    .update(artifacts)
-    .set({
-      ...(input.patch.title === undefined
-        ? {}
-        : { title: input.patch.title, slug: slugFromTitle(input.patch.title) }),
-      ...(input.patch.visibility === undefined ? {} : { visibility: input.patch.visibility }),
-      updatedAt: sql`now()`,
-    })
-    .where(eq(artifacts.id, input.artifactId))
-    .returning({
-      id: artifacts.id,
-      title: artifacts.title,
-      slug: artifacts.slug,
-      visibility: artifacts.visibility,
-      createdAt: artifacts.createdAt,
-      updatedAt: artifacts.updatedAt,
-    })
+  const row = await db.transaction(async (transaction) => {
+    const [updated] = await transaction
+      .update(artifacts)
+      .set({
+        ...(input.patch.title === undefined
+          ? {}
+          : { title: input.patch.title, slug: slugFromTitle(input.patch.title) }),
+        ...(input.patch.visibility === undefined ? {} : { visibility: input.patch.visibility }),
+        updatedAt: sql`now()`,
+      })
+      .where(eq(artifacts.id, input.artifactId))
+      .returning({
+        id: artifacts.id,
+        title: artifacts.title,
+        slug: artifacts.slug,
+        visibility: artifacts.visibility,
+        createdAt: artifacts.createdAt,
+        updatedAt: artifacts.updatedAt,
+      })
 
-  if (row === undefined) throw new HttpError('NOT_FOUND', 'No such artifact')
+    if (updated === undefined) throw new HttpError('NOT_FOUND', 'No such artifact')
+
+    await input.alsoWrite?.(transaction, { ownerId: current.ownerId })
+    return updated
+  })
 
   // Only an actual transition is an event. Re-sending the current value must not manufacture a
   // row that reads as a privacy change in the audit trail.

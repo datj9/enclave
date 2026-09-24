@@ -1,12 +1,13 @@
 import { eq } from 'drizzle-orm'
 
 import { db } from '@/db'
-import { artifactVersions } from '@/db/schema/artifacts'
 import { generations } from '@/db/schema/generations'
 import { createArtifactWithBundle } from '@/lib/artifacts/create'
 import { FileBlockParser, type ParseEvent } from '@/lib/bundle/parse-file-blocks'
 import { HttpError } from '@/lib/http'
+import type { DbHandle } from '@/lib/invites/redeem'
 import type { ProviderSelection, ProviderUsage } from '@/lib/providers'
+import { releaseGenerationReservation, reserveGeneration } from '@/lib/quota'
 import type { ObjectStore } from '@/lib/storage/object-store'
 import { objectStore } from '@/lib/storage/s3'
 import { encodeSseEvent } from './sse'
@@ -15,7 +16,8 @@ import { encodeSseEvent } from './sse'
  * Prompt → streamed artifact, per §5.4. The order matters and is the whole slice:
  *
  *  1. a `generations` row is written before the first provider call, so an attempt is always
- *     recorded even if the process dies mid-stream;
+ *     recorded even if the process dies mid-stream — and it is written by the §5.7 quota
+ *     reservation itself, so the cap check and the spend cannot be split by a concurrent request;
  *  2. the first delta is pulled *before* the response is returned, so a rejected key, a 429 or a
  *     refusal is still an HTTP status with the §5.3 envelope rather than a 200 that fails later;
  *  3. everything after that is an SSE event, because the status line is already gone.
@@ -66,8 +68,8 @@ function sseFromParseEvent(event: ParseEvent): Uint8Array {
   return encodeSseEvent('file_end', { path: event.path, bytes: event.bytes })
 }
 
-async function insertGeneration(input: StartGenerationInput): Promise<string> {
-  const [row] = await db
+async function insertGeneration(handle: DbHandle, input: StartGenerationInput): Promise<string> {
+  const [row] = await handle
     .insert(generations)
     .values({
       userId: input.userId,
@@ -118,6 +120,9 @@ async function persistArtifact(
   context: StreamContext,
   files: readonly { readonly path: string; readonly content: Buffer }[],
 ): Promise<{ readonly artifactId: string; readonly versionId: string; readonly viewUrl: string }> {
+  // §5.2 links the version back to the generation that produced it. It is written with the
+  // version row itself, so there is no instant in which the artifact is live but unattributed —
+  // and no second write that could fail after the artifact already exists.
   const created = await createArtifactWithBundle(
     {
       ownerId: context.input.userId,
@@ -125,16 +130,10 @@ async function persistArtifact(
       visibility: 'private',
       files,
       actorIp: context.input.actorIp ?? null,
+      generationId: context.generationId,
     },
     context.store,
   )
-
-  // §5.2 links the version back to the generation that produced it; `createArtifactWithBundle`
-  // serves the upload path too, so the column is filled in here rather than passed through it.
-  await db
-    .update(artifactVersions)
-    .set({ generationId: context.generationId })
-    .where(eq(artifactVersions.id, created.versionId))
 
   return { artifactId: created.id, versionId: created.versionId, viewUrl: created.viewUrl }
 }
@@ -208,31 +207,40 @@ function buildEventStream(context: StreamContext): ReadableStream<Uint8Array> {
 }
 
 /**
- * Records the attempt, opens the provider stream, and only then hands back a body. Throws an
- * `HttpError` for anything that fails before the first delta — that is what keeps
- * `PROVIDER_KEY_INVALID` a 400 and a provider 429 a 502 rather than a 200 with an error frame.
+ * Reserves quota and records the attempt, opens the provider stream, and only then hands back a
+ * body. Throws an `HttpError` for anything that fails before the first delta — that is what keeps
+ * a quota denial a 429, `PROVIDER_KEY_INVALID` a 400 and a provider 429 a 502 rather than a 200
+ * with an error frame.
+ *
+ * Which key runs decides which caps apply, so the selection's `usedInstanceKey` picks them.
  */
 export async function startGeneration(
   input: StartGenerationInput,
   store: ObjectStore = objectStore(),
 ): Promise<ReadableStream<Uint8Array>> {
-  const generationId = await insertGeneration(input)
+  const { record: generationId, reservation } = await reserveGeneration(
+    input.userId,
+    !input.selection.usedInstanceKey,
+    (handle) => insertGeneration(handle, input),
+  )
 
   let usage: ProviderUsage = { tokensIn: null, tokensOut: null }
-  const iterator = input.selection.provider
-    .generate({
-      prompt: input.prompt,
-      model: input.selection.model,
-      apiKey: input.selection.apiKey,
-      signal: input.signal,
-      onUsage: (reported) => {
-        usage = reported
-      },
-      ...(input.selection.baseUrl === undefined ? {} : { baseUrl: input.selection.baseUrl }),
-    })
-    [Symbol.asyncIterator]()
 
+  // Opening the iterator sits inside the `try` too: a provider that throws synchronously has
+  // still failed before its first delta, and must be refunded and marked failed like any other.
   try {
+    const iterator = input.selection.provider
+      .generate({
+        prompt: input.prompt,
+        model: input.selection.model,
+        apiKey: input.selection.apiKey,
+        signal: input.signal,
+        onUsage: (reported) => {
+          usage = reported
+        },
+        ...(input.selection.baseUrl === undefined ? {} : { baseUrl: input.selection.baseUrl }),
+      })
+      [Symbol.asyncIterator]()
     const first = await iterator.next()
     return buildEventStream({
       input,
@@ -243,6 +251,8 @@ export async function startGeneration(
       store,
     })
   } catch (error) {
+    // Nothing reached the model, so the daily unit goes back; the row keeps its hourly slot.
+    await releaseGenerationReservation(reservation)
     await finishGeneration(generationId, {
       status: 'failed',
       errorCode: failureCodeOf(error, input.signal),

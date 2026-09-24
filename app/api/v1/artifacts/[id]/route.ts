@@ -1,15 +1,10 @@
 import { readJsonBody, requireJsonContentType } from '@/lib/api/guards'
 import { apiTokenViewerRef, userViewerRef } from '@/lib/artifacts/authorize'
-import {
-  assertCategoriesAvailable,
-  readArtifactTags,
-  replaceArtifactTags,
-} from '@/lib/artifacts/tags'
+import { assertCategoriesAvailable, updateArtifactWithTags } from '@/lib/artifacts/tags'
 import {
   parseUpdateArtifactBody,
   readArtifactView,
   softDeleteArtifact,
-  updateArtifact,
 } from '@/lib/artifacts/update'
 import { requireApiPrincipal, type ApiPrincipal } from '@/lib/auth/bearer'
 import { HttpError, jsonData, toErrorResponse } from '@/lib/http'
@@ -33,14 +28,6 @@ function viewerRefOf(principal: ApiPrincipal): string {
     : userViewerRef(principal.userId)
 }
 
-/** The tests invoke the PATCH handler with only a Request; fall back to the URL's last segment. */
-function artifactIdOf(request: Request, context: RouteContext | undefined): Promise<string> {
-  if (context !== undefined) return context.params.then(({ id }) => id)
-  const segment = new URL(request.url).pathname.split('/').filter(Boolean).pop()
-  if (segment === undefined) throw new HttpError('NOT_FOUND', 'No such artifact')
-  return Promise.resolve(segment)
-}
-
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   try {
     const principal = await requireApiPrincipal(request, 'artifacts:read')
@@ -55,11 +42,11 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   }
 }
 
-export async function PATCH(request: Request, context: RouteContext | undefined): Promise<Response> {
+export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
   try {
     const principal = await requireApiPrincipal(request, 'artifacts:write')
     requireJsonContentType(request)
-    const id = await artifactIdOf(request, context)
+    const { id } = await context.params
 
     const parsed = parseUpdateArtifactBody(await readJsonBody(request))
     if (!parsed.ok) {
@@ -74,27 +61,21 @@ export async function PATCH(request: Request, context: RouteContext | undefined)
       await assertCategoriesAvailable(parsed.value.categoryIds)
     }
 
-    const artifact = await updateArtifact({
+    // The rename, visibility change and tag replacement commit together or not at all.
+    const updated = await updateArtifactWithTags({
       artifactId: id,
       viewerRef: viewerRefOf(principal),
       patch: parsed.value,
       actorIp: clientIpFromHeaders(request.headers),
     })
 
-    let categories: readonly { readonly slug: string }[] = []
-    if (parsed.value.categoryIds !== undefined) {
-      const tagged = await replaceArtifactTags({
-        artifactId: id,
-        categoryIds: parsed.value.categoryIds,
-        viewerRef: viewerRefOf(principal),
-        actorIp: clientIpFromHeaders(request.headers),
-      })
-      categories = tagged.map((category) => ({ slug: category.slug }))
-    } else {
-      categories = (await readArtifactTags([id])).get(id) ?? []
-    }
+    // The response shape predates the transaction: a re-tag echoes slugs only, while a PATCH that
+    // leaves the tags alone returns them in full.
+    const categories = updated.tagsReplaced
+      ? updated.categories.map((category) => ({ slug: category.slug }))
+      : updated.categories
 
-    return jsonData({ ...artifact, categories })
+    return jsonData({ ...updated.artifact, categories })
   } catch (error) {
     return toErrorResponse(error)
   }
