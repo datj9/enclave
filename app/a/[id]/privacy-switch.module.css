@@ -88,10 +88,35 @@
   opacity: 0.55;
 }
 
+/*
+ * The hint and the "Saved" notice share one line. The notice is always mounted (an ARIA live
+ * region must exist before its text arrives), and sitting in a row with no gap means the empty
+ * region costs no space at all — a column with a gap would shift the bar on every save.
+ */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  max-width: 100%;
+}
+
 .hint {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--color-ink-2);
+}
+
+.saved {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.saved:not(:empty)::before {
+  /* Empty alt text: the separator is decoration, not part of what the live region announces. */
+  content: '·' / '';
+  padding-inline: var(--space-3xs);
 }
 
 .error {

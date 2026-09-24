@@ -8,6 +8,14 @@
   min-height: 100dvh;
   display: grid;
   grid-template-rows: auto auto 1fr;
+  /*
+   * One column that may shrink below its content. An implicit `auto` column is floored at the
+   * min-content width of its widest item, and a data table's min-content is far wider than a
+   * phone: the column grew to fit the table, and the header and nav stretched with it past the
+   * viewport. `minmax(0, 1fr)` pins every row to the viewport; the tables scroll inside their
+   * own `overflow-x: auto` wrappers instead.
+   */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .bar {

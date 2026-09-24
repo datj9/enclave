@@ -1,7 +1,7 @@
 'use client'
 
 import { Dialog } from '@base-ui/react/dialog'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 
 import {
   formatInstantLocal,
@@ -10,8 +10,10 @@ import {
 } from '@/lib/format/instant'
 import type { ShareLinkSummary, ShareableVersion } from '@/lib/shares/manage'
 import { cx } from '@/lib/ui/class-name'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import dialogStyles from '@app/_components/ui/dialog.module.css'
 import { CopyLinkButton } from './copy-link-button'
+import { useOwnerControls } from './owner-controls'
 import styles from './share-dialog.module.css'
 
 /**
@@ -24,18 +26,25 @@ import styles from './share-dialog.module.css'
  *
  * The token lives in this component's state and nowhere else: not localStorage, not the URL, and
  * the server keeps only its hash, so a reload loses it for good.
+ *
+ * The list and its live count belong to the page's owner controls (owner-controls.tsx), shared
+ * with the privacy switch and the Delete confirmation. Revoking asks first, in a ConfirmDialog
+ * nested inside this one: a revoke cannot be undone, and the person holding the link gets a 404.
  */
 
 const GENERIC_FAILURE = 'That did not work. Check the fields and try again.'
-const REVOKE_FAILED = 'That link could not be revoked.'
+const REVOKE_FAILED = 'That link could not be revoked. Try again.'
+const REVOKE_BODY =
+  'Anyone who opens it from now on gets a not-found page. This cannot be undone — create a new link if you need one again.'
 const CREATED_ANNOUNCEMENT = 'Share link created. Copy it now — this is the only time it is shown.'
 
 interface CreateResponse {
   readonly data: { readonly shareId: string; readonly token: string; readonly url: string }
 }
 
-interface ListResponse {
-  readonly data: { readonly items: readonly ShareLinkSummary[]; readonly liveCount: number }
+interface CreatedLink {
+  readonly shareId: string
+  readonly url: string
 }
 
 function versionLabel(version: ShareableVersion): string {
@@ -45,41 +54,40 @@ function versionLabel(version: ShareableVersion): string {
 export function ShareDialog({
   artifactId,
   versions,
-  initialShares,
-  initialLiveCount,
 }: {
   readonly artifactId: string
   readonly versions: readonly ShareableVersion[]
-  readonly initialShares: readonly ShareLinkSummary[]
-  readonly initialLiveCount: number
 }) {
-  const [shares, setShares] = useState(initialShares)
-  // Counted in Postgres against its own `now()`: an unrevoked link whose expiry has passed opens
-  // nothing, so the badge must not offer it as one that does.
-  const [liveShareCount, setLiveShareCount] = useState(initialLiveCount)
-  const [createdUrl, setCreatedUrl] = useState<string | null>(null)
+  // `liveCount` is counted in Postgres against its own `now()`: an unrevoked link whose expiry has
+  // passed opens nothing, so the badge must not offer it as one that does.
+  const { shares, liveCount: liveShareCount, refreshShares, markRevoked } = useOwnerControls()
+  const [created, setCreated] = useState<CreatedLink | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isBusy, setIsBusy] = useState(false)
+  // One request at a time across create and revoke; which one is running picks the busy label.
+  const [busyAction, setBusyAction] = useState<'create' | 'revoke' | null>(null)
+  const isBusy = busyAction !== null
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
+  const [isRevokeOpen, setIsRevokeOpen] = useState(false)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const isMountedForLocalTime = useIsMountedForLocalTime()
   const createdRef = useRef<HTMLElement>(null)
+  /**
+   * Where focus goes when the revoke confirmation closes. Left `null` on cancel, so base-ui returns
+   * it to the Revoke button that opened it. On success that button is gone — the row now says
+   * "Revoked" — so it is pointed at the row itself, which stays.
+   */
+  const revokeFinalFocus = useRef<HTMLElement | null>(null)
+  const revokeRow = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (createdUrl !== null) createdRef.current?.focus()
-  }, [createdUrl])
-
-  async function refreshShares(): Promise<void> {
-    const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
-    if (!response.ok) return
-    const body = (await response.json()) as ListResponse
-    setShares(body.data.items)
-    setLiveShareCount(body.data.liveCount)
-  }
+    if (created !== null) createdRef.current?.focus()
+  }, [created])
 
   async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (isBusy) return
     const form = new FormData(event.currentTarget)
-    setIsBusy(true)
+    setBusyAction('create')
     setErrorMessage(null)
 
     try {
@@ -95,33 +103,47 @@ export function ShareDialog({
       }
 
       const body = (await response.json()) as CreateResponse
-      setCreatedUrl(body.data.url)
+      setCreated({ shareId: body.data.shareId, url: body.data.url })
       await refreshShares()
     } catch {
       setErrorMessage(GENERIC_FAILURE)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
-  async function handleRevoke(shareId: string): Promise<void> {
+  function requestRevoke(shareId: string, event: MouseEvent<HTMLButtonElement>): void {
     if (isBusy) return
-    setIsBusy(true)
-    setErrorMessage(null)
+    revokeRow.current = event.currentTarget.closest('li')
+    revokeFinalFocus.current = null
+    setRevokeError(null)
+    setRevokeTarget(shareId)
+    setIsRevokeOpen(true)
+  }
+
+  async function handleRevoke(): Promise<void> {
+    const shareId = revokeTarget
+    if (shareId === null || isBusy) return
+    setBusyAction('revoke')
+    setRevokeError(null)
 
     try {
       const response = await fetch(`/api/v1/shares/${shareId}`, { method: 'DELETE' })
       if (!response.ok) {
-        setErrorMessage(REVOKE_FAILED)
+        // Stays open: the failure is shown where the decision was made, and a retry is one press.
+        setRevokeError(REVOKE_FAILED)
         return
       }
       // A revoked link's URL is dead, so the copy panel must not keep offering it.
-      setCreatedUrl(null)
+      if (created?.shareId === shareId) setCreated(null)
+      markRevoked(shareId)
+      revokeFinalFocus.current = revokeRow.current
+      setIsRevokeOpen(false)
       await refreshShares()
     } catch {
-      setErrorMessage(REVOKE_FAILED)
+      setRevokeError(REVOKE_FAILED)
     } finally {
-      setIsBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -145,7 +167,7 @@ export function ShareDialog({
 
           {/* Mounted empty and filled on create: a region that arrives with its text is not read. */}
           <p className="sr-only" role="status">
-            {createdUrl === null ? '' : CREATED_ANNOUNCEMENT}
+            {created === null ? '' : CREATED_ANNOUNCEMENT}
           </p>
 
           {errorMessage !== null && (
@@ -154,7 +176,7 @@ export function ShareDialog({
             </p>
           )}
 
-          {createdUrl !== null && (
+          {created !== null && (
             <section className={styles.created} ref={createdRef} tabIndex={-1}>
               <p className={styles.createdHeading}>Copy this link now</p>
               <p className={styles.createdBody}>
@@ -163,9 +185,9 @@ export function ShareDialog({
               </p>
               <div className={styles.createdRow}>
                 <code className={styles.createdUrl} data-testid="share-url">
-                  {createdUrl}
+                  {created.url}
                 </code>
-                <CopyLinkButton url={createdUrl} />
+                <CopyLinkButton url={created.url} />
               </div>
             </section>
           )}
@@ -173,6 +195,7 @@ export function ShareDialog({
           <CreateShareForm
             versions={versions}
             isBusy={isBusy}
+            isCreating={busyAction === 'create'}
             onSubmit={(event) => void handleCreate(event)}
           />
 
@@ -181,10 +204,27 @@ export function ShareDialog({
             versions={versions}
             isBusy={isBusy}
             isMountedForLocalTime={isMountedForLocalTime}
-            onRevoke={(shareId) => void handleRevoke(shareId)}
+            onRevoke={requestRevoke}
           />
 
           <Dialog.Close className={styles.done}>Done</Dialog.Close>
+
+          {/* Rendered inside the popup so base-ui treats it as a nested dialog: Esc closes only it. */}
+          <ConfirmDialog
+            open={isRevokeOpen}
+            onOpenChange={setIsRevokeOpen}
+            title="Revoke this link?"
+            body={REVOKE_BODY}
+            confirmLabel={busyAction === 'revoke' ? 'Revoking…' : 'Revoke link'}
+            cancelLabel="Keep it"
+            tone="danger"
+            busy={isBusy}
+            error={revokeError}
+            finalFocus={revokeFinalFocus}
+            testId="share-revoke-dialog"
+            confirmTestId="share-revoke-confirm"
+            onConfirm={() => void handleRevoke()}
+          />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
@@ -205,10 +245,12 @@ function createRequestBody(form: FormData): Record<string, unknown> {
 function CreateShareForm({
   versions,
   isBusy,
+  isCreating,
   onSubmit,
 }: {
   readonly versions: readonly ShareableVersion[]
   readonly isBusy: boolean
+  readonly isCreating: boolean
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }) {
   return (
@@ -245,7 +287,7 @@ function CreateShareForm({
         aria-disabled={isBusy}
         data-testid="share-create"
       >
-        Create link
+        {isCreating ? 'Creating…' : 'Create link'}
       </button>
     </form>
   )
@@ -262,7 +304,7 @@ function ShareList({
   readonly versions: readonly ShareableVersion[]
   readonly isBusy: boolean
   readonly isMountedForLocalTime: boolean
-  readonly onRevoke: (shareId: string) => void
+  readonly onRevoke: (shareId: string, event: MouseEvent<HTMLButtonElement>) => void
 }) {
   if (shares.length === 0) {
     return <p className={styles.empty}>No links yet.</p>
@@ -279,7 +321,8 @@ function ShareList({
       {shares.map((share) => {
         const version = versions.find((candidate) => candidate.versionId === share.versionId)
         return (
-          <li className={styles.row} key={share.shareId}>
+          // tabIndex -1: not in the tab order, but a place for focus to land once its Revoke is gone.
+          <li className={styles.row} key={share.shareId} tabIndex={-1}>
             <div>
               <p className={styles.rowName}>
                 {version === undefined ? 'Removed version' : versionLabel(version)}
@@ -295,7 +338,7 @@ function ShareList({
                 type="button"
                 aria-disabled={isBusy}
                 data-testid="share-revoke"
-                onClick={() => onRevoke(share.shareId)}
+                onClick={(event) => onRevoke(share.shareId, event)}
               >
                 Revoke
               </button>

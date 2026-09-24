@@ -105,7 +105,7 @@ function artifactOrigin(artifactId: string): string {
 async function openViewer(page: Page, artifactId: string, label: string): Promise<Frame> {
   await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
 
-  const marker = page.frameLocator('iframe[title="Artifact"]').locator('#marker')
+  const marker = page.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker')
   await expect(marker).toHaveText(`artifact ${label}`)
 
   const frame = page.frames().find((candidate) => candidate.url().startsWith(artifactOrigin(artifactId)))
@@ -216,7 +216,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
     expect(response.headers()['content-type']).toBe('text/html; charset=utf-8')
 
     await expect(
-      page.frameLocator('iframe[title="Artifact"]').locator('#second-marker'),
+      page.frameLocator('iframe[data-testid="artifact-frame"]').locator('#second-marker'),
     ).toHaveText('second page of A')
 
     const secondPage = page
@@ -377,7 +377,7 @@ test.describe('sandboxed artifact viewer (US-8, US-3·AC3)', () => {
   }) => {
     await openViewer(page, artifactA, 'A')
 
-    const enterUrl = await page.locator('iframe[title="Artifact"]').getAttribute('src')
+    const enterUrl = await page.locator('iframe[data-testid="artifact-frame"]').getAttribute('src')
     expect(enterUrl).toContain('/__enter?t=')
 
     // A fresh context, so the replay cannot be waved through by an existing grant cookie.

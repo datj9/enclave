@@ -106,9 +106,12 @@ feature grid, no everything-centred fold, no logo wall (there are no customers
 yet and inventing them is a lie).
 
 ## Exports
-`tokens.css` (in this project) is the source of truth. For Tailwind v4
-`@theme`, DTCG `tokens.json`, or shadcn/ui CSS variables, ask *"extend
-design.md with Tailwind exports"* — Hallmark will append them.
+`styles/tokens.css` is the source of truth. The app consumes the tokens
+directly as CSS custom properties — from `styles/globals.css` and from each
+component's CSS module (`*.module.css`). There is no utility-class framework
+and no build-time token export: a component reaches for `var(--space-sm)`, not
+a generated class. For another format (DTCG `tokens.json`, a design-tool
+palette), generate it from `tokens.css` rather than maintaining a second copy.
 
 ## Notes
 - Component base is `base-ui`, styled only from these tokens. Nothing arrives

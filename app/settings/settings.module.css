@@ -8,6 +8,13 @@
   min-height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr;
+  /*
+   * One column that may shrink below its content. An implicit `auto` column is floored at the
+   * min-content width of its widest item, so one wide child would widen the header and nav with
+   * it past a phone's viewport. Settings has no table today, which is the only reason it did not
+   * overflow like the admin shell did; same fix as app/admin/admin.module.css.
+   */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .bar {

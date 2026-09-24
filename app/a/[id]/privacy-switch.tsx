@@ -1,11 +1,13 @@
 'use client'
 
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 import { privateConfirmBody, privateHint } from '@/lib/artifacts/privacy-copy'
 import type { Visibility } from '@/db/schema/artifacts'
 import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
+import { useOwnerControls } from './owner-controls'
 import styles from './privacy-switch.module.css'
+import { radioFocusTarget } from './radio-keys'
 
 /**
  * The owner's privacy control. Motion is a colour + `clip-path` crossfade over 180 ms with no
@@ -19,6 +21,10 @@ import styles from './privacy-switch.module.css'
  * Two levels confirm before they commit. `public` always does: it is the one transition that hands
  * the artifact to the whole internet. `private` does only when live links remain, because the
  * downgrade does not close them — and asking about links that do not exist would be noise.
+ *
+ * Keyboard: manual activation (radio-keys.ts). Arrows move focus only; Space or Enter commits the
+ * focused level. A save is announced once, politely, as "Saved" — the crossfade alone is not
+ * something a screen reader can hear.
  */
 
 interface PrivacyOption {
@@ -42,22 +48,13 @@ function hintFor(visibility: Visibility, liveShareLinkCount: number): string {
   return visibility === 'private' ? privateHint(liveShareLinkCount) : FIXED_HINTS[visibility]
 }
 
-interface ShareListResponse {
-  readonly data: { readonly liveCount: number }
-}
-
 const SAVE_FAILED = 'That change did not save. The artifact is still set to its previous level.'
 
 const PUBLISH_WARNING =
   "Anyone can open this at its address with no account and no link. Search engines are allowed to index it, and it will appear in this instance's sitemap. You can set it back to Only me at any time — the page stops opening immediately, and leaves the index when the crawler next comes round."
 
-/** APG radiogroup: arrows move focus and selection together, wrapping at both ends. */
-const ARROW_STEPS: Readonly<Record<string, number>> = {
-  ArrowRight: 1,
-  ArrowDown: 1,
-  ArrowLeft: -1,
-  ArrowUp: -1,
-}
+/** Long enough to be read; short enough that a stale "Saved" never sits beside a later change. */
+const SAVED_NOTICE_MS = 2500
 
 function clipForIndex(activeIndex: number): string {
   const step = 100 / OPTIONS.length
@@ -67,23 +64,27 @@ function clipForIndex(activeIndex: number): string {
 export function PrivacySwitch({
   artifactId,
   initialVisibility,
-  liveShareLinkCount,
 }: {
   readonly artifactId: string
   readonly initialVisibility: Visibility
-  readonly liveShareLinkCount: number
 }) {
+  // Shared with the Share dialog on this page, so a revoke there is already reflected here.
+  const { liveCount: liveShareLinks } = useOwnerControls()
   const [visibility, setVisibility] = useState<Visibility>(initialVisibility)
-  const [liveShareLinks, setLiveShareLinks] = useState(liveShareLinkCount)
   const [isSaving, setIsSaving] = useState(false)
+  const [savedNotice, setSavedNotice] = useState('')
   const [isConfirmingPublic, setIsConfirmingPublic] = useState(false)
   const [isConfirmingPrivate, setIsConfirmingPrivate] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const radioRefs = useRef<(HTMLButtonElement | null)[]>([])
   const publicOptionRef = useRef<HTMLButtonElement | null>(null)
   const privateOptionRef = useRef<HTMLButtonElement | null>(null)
-  // The count check is a round trip; a second press before it lands would confirm twice.
-  const isCountingShareLinks = useRef(false)
+
+  useEffect(() => {
+    if (savedNotice === '') return undefined
+    const timer = setTimeout(() => setSavedNotice(''), SAVED_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [savedNotice])
 
   async function choose(next: Visibility): Promise<void> {
     if (next === visibility || isSaving) return
@@ -93,6 +94,7 @@ export function PrivacySwitch({
     setVisibility(next)
     setIsSaving(true)
     setErrorMessage(null)
+    setSavedNotice('')
 
     try {
       const response = await fetch(`/api/v1/artifacts/${artifactId}`, {
@@ -103,7 +105,9 @@ export function PrivacySwitch({
       if (!response.ok) {
         setVisibility(previous)
         setErrorMessage(SAVE_FAILED)
+        return
       }
+      setSavedNotice('Saved')
     } catch {
       setVisibility(previous)
       setErrorMessage(SAVE_FAILED)
@@ -118,69 +122,33 @@ export function PrivacySwitch({
     OPTIONS.findIndex((option) => option.value === visibility),
   )
 
-  /**
-   * The Share dialog sits on this same page and can revoke a link without a reload, so the number
-   * the server rendered may already be wrong. A failed read falls back to it rather than to zero —
-   * a warning that was true at page load beats silently downgrading as if there were no links.
-   */
-  async function readLiveShareLinkCount(): Promise<number> {
-    try {
-      const response = await fetch(`/api/v1/artifacts/${artifactId}/shares`)
-      if (!response.ok) return liveShareLinks
-      return ((await response.json()) as ShareListResponse).data.liveCount
-    } catch {
-      return liveShareLinks
-    }
-  }
-
-  async function choosePrivateOrConfirm(): Promise<void> {
-    if (isCountingShareLinks.current) return
-    isCountingShareLinks.current = true
-
-    try {
-      const liveCount = await readLiveShareLinkCount()
-      setLiveShareLinks(liveCount)
-      if (liveCount < 1) {
-        await choose('private')
-        return
-      }
-      setIsConfirmingPrivate(true)
-    } finally {
-      isCountingShareLinks.current = false
-    }
-  }
-
   function selectOption(next: Visibility): void {
     if (next === visibility || isSaving) return
     if (next === 'public') {
       setIsConfirmingPublic(true)
       return
     }
-    if (next === 'private') {
-      void choosePrivateOrConfirm()
+    // Only a downgrade that leaves live links open needs asking about.
+    if (next === 'private' && liveShareLinks > 0) {
+      setIsConfirmingPrivate(true)
       return
     }
     void choose(next)
   }
 
-  function moveSelection(fromIndex: number, step: number): void {
-    const nextIndex = (fromIndex + step + OPTIONS.length) % OPTIONS.length
-    const nextOption = OPTIONS[nextIndex]
-    if (nextOption === undefined) return
-    radioRefs.current[nextIndex]?.focus()
-    selectOption(nextOption.value)
-  }
-
   function handleTrackKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    const step = ARROW_STEPS[event.key]
-    if (step === undefined) return
-    event.preventDefault()
-    if (isSaving) return
-
-    // Cancelling the publish dialog returns focus to Public while `visibility` is still the old
-    // level, so the origin has to be the focused radio rather than the checked one.
+    // Measured from the focused radio, not the checked one: with manual activation they differ
+    // as soon as the first arrow is pressed.
     const focusedIndex = radioRefs.current.findIndex((radio) => radio === event.target)
-    moveSelection(focusedIndex === -1 ? activeIndex : focusedIndex, step)
+    const target = radioFocusTarget(
+      event.key,
+      focusedIndex === -1 ? activeIndex : focusedIndex,
+      OPTIONS.length,
+    )
+    if (target === null) return
+    event.preventDefault()
+    // Moving focus writes nothing, so it stays available mid-save.
+    radioRefs.current[target]?.focus()
   }
 
   return (
@@ -225,16 +193,22 @@ export function PrivacySwitch({
         ))}
       </div>
 
-      {OPTIONS.map((option) => (
-        <p
-          key={option.value}
-          className={styles.hint}
-          id={`privacy-hint-${option.value}`}
-          hidden={option.value !== visibility}
-        >
-          {hintFor(option.value, liveShareLinks)}
+      <div className={styles.meta}>
+        {OPTIONS.map((option) => (
+          <p
+            key={option.value}
+            className={styles.hint}
+            id={`privacy-hint-${option.value}`}
+            hidden={option.value !== visibility}
+          >
+            {hintFor(option.value, liveShareLinks)}
+          </p>
+        ))}
+        {/* Mounted empty and filled on save: a region that arrives with its text is not read. */}
+        <p className={styles.saved} role="status" data-testid="privacy-saved">
+          {savedNotice}
         </p>
-      ))}
+      </div>
 
       {errorMessage !== null && (
         <p className={styles.error} role="alert">

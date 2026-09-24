@@ -286,7 +286,7 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
 
       expect(response?.status()).toBe(200)
       await expect(
-        page.frameLocator('iframe[title="Artifact"]').locator(`#${MARKER_ID}`),
+        page.frameLocator('iframe[data-testid="artifact-frame"]').locator(`#${MARKER_ID}`),
       ).toHaveText('version two')
       // No session was involved: the token alone carried the read.
       expect(await anonymous.cookies(APP_ORIGIN)).toHaveLength(0)
@@ -308,13 +308,16 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
   test('the owner revokes it and the same URL 404s immediately', async ({ browser }) => {
     await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
     await ownerPage.getByTestId('share-open').click()
+    // Revoke asks first; the DELETE goes out only from the confirmation.
+    await ownerPage.getByTestId('share-revoke').click()
+    await expect(ownerPage.getByTestId('share-revoke-dialog')).toBeVisible()
 
     const [revokeResponse] = await Promise.all([
       ownerPage.waitForResponse(
         (response) =>
           response.url().includes('/api/v1/shares/') && response.request().method() === 'DELETE',
       ),
-      ownerPage.getByTestId('share-revoke').click(),
+      ownerPage.getByTestId('share-revoke-confirm').click(),
     ])
     expect(revokeResponse.status()).toBe(204)
 
@@ -362,7 +365,7 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
     }
   })
 
-  test('pressing Revoke twice keeps focus and still issues one DELETE', async () => {
+  test('pressing the revoke confirmation twice keeps focus and still issues one DELETE', async () => {
     await ownerPage.goto(`${APP_ORIGIN}/a/${artifactId}`)
     await ownerPage.getByTestId('share-open').click()
     await ownerPage.getByTestId('share-create').click()
@@ -378,15 +381,21 @@ test.describe('share links open for a logged-out visitor and die on revoke (US-5
     })
 
     try {
-      const revoke = ownerPage.getByTestId('share-revoke')
-      await revoke.focus()
+      // Revoke only opens the confirmation; nothing is sent until it is confirmed.
+      await ownerPage.getByTestId('share-revoke').click()
+      const confirm = ownerPage.getByTestId('share-revoke-confirm')
+      await expect(confirm).toBeVisible()
+      expect(deleteCount).toBe(0)
+
+      await confirm.focus()
       await ownerPage.keyboard.press('Space')
       const focusedTestId = await ownerPage.evaluate(
         () => document.activeElement?.getAttribute('data-testid') ?? null,
       )
       await ownerPage.keyboard.press('Space')
 
-      expect(focusedTestId).toBe('share-revoke')
+      // `aria-disabled` rather than `disabled`: the busy confirm button keeps focus.
+      expect(focusedTestId).toBe('share-revoke-confirm')
       await expect(ownerPage.getByTestId('share-revoke')).toHaveCount(0)
       expect(deleteCount).toBe(1)
     } finally {

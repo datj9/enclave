@@ -11,6 +11,7 @@ import { listShareLinks, listShareableVersions } from '@/lib/shares/manage'
 import { ArtifactFrame } from './artifact-frame'
 import { DeleteDialog } from './delete-dialog'
 import { DownloadMenu } from './download-menu'
+import { OwnerControlsProvider } from './owner-controls'
 import { PrivacySwitch } from './privacy-switch'
 import { ShareDialog } from './share-dialog'
 import styles from './page.module.css'
@@ -47,11 +48,7 @@ export async function generateMetadata({
   })
 }
 
-export default async function ArtifactViewerPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default async function ArtifactViewerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const page = await readArtifactPage(id)
 
@@ -63,28 +60,29 @@ export default async function ArtifactViewerPage({
 
   const { authorized, viewerRef, title, isSignedIn, categories } = page
 
-  const handoffToken = await signHandoffToken({
-    artifactId: authorized.artifactId,
-    versionId: authorized.versionId,
-    viewerRef,
-  })
-
   // Only the owner may create or revoke a share, and only the owner sees the privacy switch the
-  // live count feeds, so a reader never pays for these two queries.
-  const shareState = authorized.isOwner
-    ? {
-        versions: await listShareableVersions(id, viewerRef),
-        shareLinks: await listShareLinks(id, viewerRef),
-      }
-    : null
+  // live count feeds, so a reader never pays for these two queries. None of the three reads
+  // depends on another, so they run together rather than one round trip after the next.
+  const [handoffToken, shareState] = await Promise.all([
+    signHandoffToken({
+      artifactId: authorized.artifactId,
+      versionId: authorized.versionId,
+      viewerRef,
+    }),
+    authorized.isOwner
+      ? Promise.all([listShareableVersions(id, viewerRef), listShareLinks(id, viewerRef)]).then(
+          ([versions, shareLinks]) => ({ versions, shareLinks }),
+        )
+      : null,
+  ])
 
   return (
     <div className={styles.shell}>
       <header className={styles.bar}>
         {isSignedIn ? (
-          <a className={styles.back} href="/dashboard">
+          <Link className={styles.back} href="/dashboard">
             ← Artifacts
-          </a>
+          </Link>
         ) : (
           <Link className={styles.back} href="/">
             enclave
@@ -103,27 +101,21 @@ export default async function ArtifactViewerPage({
         {/* Visible to every viewer, not just the owner: the download is the viewer's own copy. */}
         <DownloadMenu downloadBasePath={`/a/${id}/download`} />
         {shareState !== null && (
-          <div className={styles.ownerControls}>
-            <PrivacySwitch
-              artifactId={id}
-              initialVisibility={authorized.visibility}
-              liveShareLinkCount={shareState.shareLinks.liveCount}
-            />
-            <ShareDialog
-              artifactId={id}
-              versions={shareState.versions}
-              initialShares={shareState.shareLinks.items}
-              initialLiveCount={shareState.shareLinks.liveCount}
-            />
-            <DeleteDialog
-              artifactId={id}
-              initialLiveShareCount={shareState.shareLinks.liveCount}
-              retentionDays={env.TRASH_RETENTION_DAYS}
-            />
-          </div>
+          <OwnerControlsProvider
+            artifactId={id}
+            initialShares={shareState.shareLinks.items}
+            initialLiveCount={shareState.shareLinks.liveCount}
+          >
+            <div className={styles.ownerControls}>
+              <PrivacySwitch artifactId={id} initialVisibility={authorized.visibility} />
+              <ShareDialog artifactId={id} versions={shareState.versions} />
+              <DeleteDialog artifactId={id} retentionDays={env.TRASH_RETENTION_DAYS} />
+            </div>
+          </OwnerControlsProvider>
         )}
       </header>
       <ArtifactFrame
+        title={title}
         enterUrl={`${artifactViewUrl(id)}__enter?t=${encodeURIComponent(handoffToken)}`}
       />
     </div>

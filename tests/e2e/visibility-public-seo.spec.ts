@@ -151,9 +151,9 @@ test.describe('public visibility, and the metadata that comes with it', () => {
       const response = await page.goto(`${APP_ORIGIN}/a/${artifactId}`)
 
       expect(response?.status()).toBe(200)
-      await expect(page.frameLocator('iframe[title="Artifact"]').locator('#marker')).toHaveText(
-        'open to everyone',
-      )
+      await expect(
+        page.frameLocator('iframe[data-testid="artifact-frame"]').locator('#marker'),
+      ).toHaveText('open to everyone')
     } finally {
       await anonymous.close()
     }
