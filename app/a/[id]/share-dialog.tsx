@@ -1,6 +1,6 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
+import { Dialog } from '@base-ui/react/dialog'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
@@ -9,6 +9,8 @@ import {
   useIsMountedForLocalTime,
 } from '@/lib/format/instant'
 import type { ShareLinkSummary, ShareableVersion } from '@/lib/shares/manage'
+import { cx } from '@/lib/ui/class-name'
+import dialogStyles from '@app/_components/ui/dialog.module.css'
 import { CopyLinkButton } from './copy-link-button'
 import styles from './share-dialog.module.css'
 
@@ -16,8 +18,9 @@ import styles from './share-dialog.module.css'
  * The owner's share surface: pin a version, optionally set an expiry, copy the link once, revoke.
  *
  * Motion is docs/motion.md § This project's surfaces — the popup and backdrop scale
- * `0.96 → 1` with opacity over 220 ms `ease-out` from the centre, the copy button gets the one
- * piece of earned delight, and the revoke button gets none at all.
+ * `0.96 → 1` with opacity over 220 ms `ease-out` from the centre (the shared modal shell in
+ * app/_components/ui/dialog.module.css), the copy button gets the one piece of earned delight,
+ * and the revoke button gets none at all.
  *
  * The token lives in this component's state and nowhere else: not localStorage, not the URL, and
  * the server keeps only its hash, so a reload loses it for good.
@@ -33,11 +36,6 @@ interface CreateResponse {
 
 interface ListResponse {
   readonly data: { readonly items: readonly ShareLinkSummary[]; readonly liveCount: number }
-}
-
-/** A CSS-module class types as `string | undefined`; base-ui's `className` prop refuses that. */
-function css(className: string | undefined): string {
-  return className ?? ''
 }
 
 function versionLabel(version: ShareableVersion): string {
@@ -134,10 +132,13 @@ export function ShareDialog({
       </Dialog.Trigger>
 
       <Dialog.Portal>
-        <Dialog.Backdrop className={css(styles.backdrop)} />
-        <Dialog.Popup className={css(styles.popup)} data-testid="share-dialog">
-          <Dialog.Title className={css(styles.title)}>Share this artifact</Dialog.Title>
-          <Dialog.Description className={css(styles.description)}>
+        <Dialog.Backdrop className={dialogStyles.backdrop} />
+        <Dialog.Popup
+          className={cx(dialogStyles.popup, dialogStyles.popupWide)}
+          data-testid="share-dialog"
+        >
+          <Dialog.Title className={dialogStyles.title}>Share this artifact</Dialog.Title>
+          <Dialog.Description className={dialogStyles.description}>
             Anyone with the link can open the version you pin, without an account. The link stays on
             that version even after you publish newer ones.
           </Dialog.Description>
@@ -183,7 +184,7 @@ export function ShareDialog({
             onRevoke={(shareId) => void handleRevoke(shareId)}
           />
 
-          <Dialog.Close className={css(styles.done)}>Done</Dialog.Close>
+          <Dialog.Close className={styles.done}>Done</Dialog.Close>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

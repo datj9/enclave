@@ -1,4 +1,5 @@
-@import 'tailwindcss';
+/* The element reset every screen assumes; see the header in reset.css. */
+@import './reset.css';
 
 /*
  * Token layer. `design.md` § Tokens is the rule; the `:root` block below reproduces it
@@ -111,53 +112,4 @@
   body {
     font-weight: 350;
   }
-}
-
-/* Tailwind v4 utility surface. `inline` keeps the var references live so the
-   prefers-color-scheme override above still applies to generated utilities. */
-@theme inline {
-  --color-paper: var(--color-paper);
-  --color-paper-2: var(--color-paper-2);
-  --color-ink: var(--color-ink);
-  --color-ink-2: var(--color-ink-2);
-  --color-rule: var(--color-rule);
-  --color-control-border: var(--color-control-border);
-  --color-accent: var(--color-accent);
-  --color-accent-ink: var(--color-accent-ink);
-  --color-focus: var(--color-focus);
-
-  --font-display: var(--font-display);
-  --font-body: var(--font-body);
-  --font-mono: var(--font-mono);
-
-  --text-xs: var(--text-xs);
-  --text-sm: var(--text-sm);
-  --text-base: var(--text-base);
-  --text-md: var(--text-md);
-  --text-lg: var(--text-lg);
-  --text-xl: var(--text-xl);
-  --text-2xl: var(--text-2xl);
-  --text-3xl: var(--text-3xl);
-  --text-display: var(--text-display);
-
-  --spacing-3xs: var(--space-3xs);
-  --spacing-2xs: var(--space-2xs);
-  --spacing-xs: var(--space-xs);
-  --spacing-sm: var(--space-sm);
-  --spacing-md: var(--space-md);
-  --spacing-lg: var(--space-lg);
-  --spacing-xl: var(--space-xl);
-  --spacing-2xl: var(--space-2xl);
-  --spacing-3xl: var(--space-3xl);
-  --spacing-4xl: var(--space-4xl);
-
-  --radius-card: var(--radius-card);
-  --radius-pill: var(--radius-pill);
-  --radius-input: var(--radius-input);
-
-  --height-control-sm: var(--control-sm);
-  --height-control-md: var(--control-md);
-  --height-control-lg: var(--control-lg);
-
-  --shadow-raised: var(--shadow-raised);
 }

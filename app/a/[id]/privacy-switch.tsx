@@ -1,13 +1,11 @@
 'use client'
 
-import { Dialog } from '@base-ui-components/react/dialog'
-import { useRef, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 
 import { privateConfirmBody, privateHint } from '@/lib/artifacts/privacy-copy'
-import { css } from '@/lib/ui/class-name'
 import type { Visibility } from '@/db/schema/artifacts'
+import { ConfirmDialog } from '@app/_components/ui/confirm-dialog'
 import styles from './privacy-switch.module.css'
-import publishStyles from './publish-dialog.module.css'
 
 /**
  * The owner's privacy control. Motion is a colour + `clip-path` crossfade over 180 ms with no
@@ -64,105 +62,6 @@ const ARROW_STEPS: Readonly<Record<string, number>> = {
 function clipForIndex(activeIndex: number): string {
   const step = 100 / OPTIONS.length
   return `inset(0 ${(OPTIONS.length - 1 - activeIndex) * step}% 0 ${activeIndex * step}%)`
-}
-
-function PublishConfirmDialog({
-  isOpen,
-  publicOptionRef,
-  onOpenChange,
-  onConfirm,
-}: {
-  readonly isOpen: boolean
-  readonly publicOptionRef: RefObject<HTMLButtonElement | null>
-  readonly onOpenChange: (isOpen: boolean) => void
-  readonly onConfirm: () => void
-}) {
-  const cancelRef = useRef<HTMLButtonElement | null>(null)
-
-  return (
-    <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(publishStyles.backdrop)} />
-        <Dialog.Popup
-          className={css(publishStyles.popup)}
-          // Default focus is the first tabbable element — here, the button that publishes.
-          initialFocus={cancelRef}
-          finalFocus={publicOptionRef}
-          data-testid="publish-public-dialog"
-        >
-          <Dialog.Title className={css(publishStyles.title)}>
-            Publish to the whole internet?
-          </Dialog.Title>
-          <Dialog.Description className={css(publishStyles.description)}>
-            {PUBLISH_WARNING}
-          </Dialog.Description>
-
-          <div className={publishStyles.actions}>
-            <button
-              className={publishStyles.confirm}
-              type="button"
-              data-testid="publish-public-confirm"
-              onClick={onConfirm}
-            >
-              Publish publicly
-            </button>
-            <Dialog.Close ref={cancelRef} className={css(publishStyles.cancel)}>
-              Keep it as it is
-            </Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
-function PrivateConfirmDialog({
-  isOpen,
-  liveShareLinkCount,
-  privateOptionRef,
-  onOpenChange,
-  onConfirm,
-}: {
-  readonly isOpen: boolean
-  readonly liveShareLinkCount: number
-  readonly privateOptionRef: RefObject<HTMLButtonElement | null>
-  readonly onOpenChange: (isOpen: boolean) => void
-  readonly onConfirm: () => void
-}) {
-  const cancelRef = useRef<HTMLButtonElement | null>(null)
-
-  return (
-    <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className={css(publishStyles.backdrop)} />
-        <Dialog.Popup
-          className={css(publishStyles.popup)}
-          initialFocus={cancelRef}
-          finalFocus={privateOptionRef}
-          data-testid="privacy-private-dialog"
-        >
-          <Dialog.Title className={css(publishStyles.title)}>Share links stay open</Dialog.Title>
-          <Dialog.Description className={css(publishStyles.description)}>
-            {privateConfirmBody(liveShareLinkCount)}
-          </Dialog.Description>
-
-          <div className={publishStyles.actions}>
-            <button
-              className={publishStyles.confirm}
-              type="button"
-              data-testid="privacy-private-confirm"
-              onClick={onConfirm}
-            >
-              Set to Only me
-            </button>
-            <Dialog.Close ref={cancelRef} className={css(publishStyles.cancel)}>
-              Keep it as it is
-            </Dialog.Close>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
 }
 
 export function PrivacySwitch({
@@ -343,21 +242,35 @@ export function PrivacySwitch({
         </p>
       )}
 
-      <PublishConfirmDialog
-        isOpen={isConfirmingPublic}
-        publicOptionRef={publicOptionRef}
-        onOpenChange={(isOpen) => setIsConfirmingPublic(isOpen)}
+      <ConfirmDialog
+        open={isConfirmingPublic}
+        onOpenChange={setIsConfirmingPublic}
+        title="Publish to the whole internet?"
+        body={PUBLISH_WARNING}
+        confirmLabel="Publish publicly"
+        cancelLabel="Keep it as it is"
+        // Default focus is the first tabbable element — here, the button that publishes.
+        initialFocus="cancel"
+        finalFocus={publicOptionRef}
+        testId="publish-public-dialog"
+        confirmTestId="publish-public-confirm"
         onConfirm={() => {
           setIsConfirmingPublic(false)
           void choose('public')
         }}
       />
 
-      <PrivateConfirmDialog
-        isOpen={isConfirmingPrivate}
-        liveShareLinkCount={liveShareLinks}
-        privateOptionRef={privateOptionRef}
-        onOpenChange={(isOpen) => setIsConfirmingPrivate(isOpen)}
+      <ConfirmDialog
+        open={isConfirmingPrivate}
+        onOpenChange={setIsConfirmingPrivate}
+        title="Share links stay open"
+        body={privateConfirmBody(liveShareLinks)}
+        confirmLabel="Set to Only me"
+        cancelLabel="Keep it as it is"
+        initialFocus="cancel"
+        finalFocus={privateOptionRef}
+        testId="privacy-private-dialog"
+        confirmTestId="privacy-private-confirm"
         onConfirm={() => {
           setIsConfirmingPrivate(false)
           void choose('private')
