@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 import { ARTIFACT_SYSTEM_PROMPT } from '@/prompts/system'
+import { fetchWithoutRedirects, type FetchLike } from './base-url'
 import { providerRefusal, toProviderError } from './errors'
 import type { ArtifactProvider, GenerateInput } from './types'
 
@@ -13,11 +14,24 @@ import type { ArtifactProvider, GenerateInput } from './types'
 
 const MAX_OUTPUT_TOKENS = 16_000
 
-/** Exported for the S7 seam and for tests; the client is otherwise created per generation. */
-export function createAnthropicClient(apiKey: string, baseUrl?: string): Anthropic {
+/**
+ * Exported for the S7 seam and for tests; the client is otherwise created per generation. A base
+ * URL only ever comes from a user's `anthropic-compatible` key, so that client never follows a
+ * redirect (see `fetchWithoutRedirects`). `fetchImpl` is injected by tests.
+ */
+export function createAnthropicClient(
+  apiKey: string,
+  baseUrl?: string,
+  fetchImpl?: FetchLike,
+): Anthropic {
   return baseUrl === undefined
     ? new Anthropic({ apiKey, maxRetries: 0 })
-    : new Anthropic({ apiKey, baseURL: baseUrl, maxRetries: 0 })
+    : new Anthropic({
+        apiKey,
+        baseURL: baseUrl,
+        maxRetries: 0,
+        fetch: fetchWithoutRedirects(fetchImpl),
+      })
 }
 
 /**

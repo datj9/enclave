@@ -5,7 +5,7 @@ import {
   authenticateWithPassword,
   credentialsSchema,
 } from '@/lib/auth/credentials'
-import { enforceAuthRateLimit } from '@/lib/auth/rate-limit-auth'
+import { enforceAuthRateLimit, enforceSigninEmailRateLimit } from '@/lib/auth/rate-limit-auth'
 import { createSessionCookie } from '@/lib/auth/session'
 import { HttpError, seeOther, toErrorResponse } from '@/lib/http'
 import { clientIpFromHeaders } from '@/lib/rate-limit'
@@ -36,6 +36,10 @@ export async function POST(request: Request): Promise<Response> {
       })
       throw new HttpError('UNAUTHENTICATED', GENERIC_SIGNIN_FAILURE)
     }
+
+    // After parsing, so only a well-formed address gets a counter; before verifying, so a locked
+    // address costs no argon2 work. The 429 is the same whether or not the account exists.
+    enforceSigninEmailRateLimit(parsed.data.email)
 
     const outcome = await authenticateWithPassword(parsed.data)
     if (!outcome.ok) {

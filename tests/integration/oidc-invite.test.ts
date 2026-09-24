@@ -55,7 +55,11 @@ async function removeTestRows(): Promise<void> {
   await db.delete(users).where(inArray(users.email, TEST_EMAILS))
 }
 
-async function signInAs(email: string, subject: string): Promise<Response> {
+async function signInAs(
+  email: string,
+  subject: string,
+  emailVerified: boolean | null = true,
+): Promise<Response> {
   const response = await startRoute(new Request('https://enclave.test/api/auth/oidc/start'))
   const location = response.headers.get('location')
   const setCookie = response.headers.get('set-cookie')
@@ -67,6 +71,7 @@ async function signInAs(email: string, subject: string): Promise<Response> {
     email,
     nonce: parameters.get('nonce') ?? '',
     codeChallenge: codeChallengeFrom(location),
+    emailVerified,
   })
 
   const callbackUrl = new URL('https://enclave.test/api/auth/oidc/callback')
@@ -109,6 +114,47 @@ describe.skipIf(!databaseReady)('first OIDC sign-in on an invite-only instance',
     const created = await db.select({ id: users.id }).from(users).where(eq(users.email, UNINVITED_EMAIL))
     expect(created).toHaveLength(0)
   })
+
+  /*
+   * An explicit `email_verified: false` was already refused on every path, inside
+   * `exchangeAuthorizationCode`, so it answers the generic 400 verification failure. A provider
+   * that says nothing gets through the exchange and is stopped only by the invite branch: 403.
+   */
+  it.each([
+    ['explicitly unverified', false, 400, 'VALIDATION_FAILED'],
+    ['silent about verification', null, 403, 'FORBIDDEN'],
+  ] as const)(
+    'will not redeem an email invite for an identity whose provider is %s',
+    async (_label, emailVerified, expectedStatus, expectedCode) => {
+      const invite = await createInvite({
+        createdBy: adminId,
+        email: INVITED_EMAIL,
+        expiresInHours: 72,
+      })
+
+      // Deleted however the assertions go: an outstanding invite for the same address would be
+      // the one the next test's sign-in claims, leaving that test's own invite unused.
+      try {
+        const response = await signInAs(INVITED_EMAIL, 'stub|unverified', emailVerified)
+        expect(response.status).toBe(expectedStatus)
+        expect(await response.json()).toMatchObject({ error: { code: expectedCode } })
+
+        const created = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, INVITED_EMAIL))
+        expect(created).toHaveLength(0)
+
+        const [row] = await db
+          .select({ usedAt: invites.usedAt })
+          .from(invites)
+          .where(eq(invites.id, invite.inviteId))
+        expect(row?.usedAt).toBeNull()
+      } finally {
+        await db.delete(invites).where(eq(invites.id, invite.inviteId))
+      }
+    },
+  )
 
   it('creates the member and burns the invite when one names the asserted address', async () => {
     const invite = await createInvite({
