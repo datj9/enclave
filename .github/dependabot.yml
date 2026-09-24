@@ -1,0 +1,46 @@
+# Weekly, grouped update PRs. Grouping keeps the queue to a handful of PRs a week instead of one per
+# package; majors stay separate because they are the ones that need reading.
+#
+# packages/cli has no dependencies of its own (it is compiled from the root with tsconfig.cli.json),
+# so the root manifest and pnpm-lock.yaml cover the whole npm surface.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+      npm-major:
+        update-types: [major]
+
+  # Also bumps the commit SHAs the workflows pin (and the `# vX` comment beside each one).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  # The Dockerfile's base images.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ['*']
+
+  # docker-compose.yml's service images (postgres, minio). Keep minio in step with ci.yml's
+  # MINIO_IMAGE by hand — Dependabot does not read workflow `env`.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker-compose:
+        patterns: ['*']

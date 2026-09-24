@@ -12,10 +12,11 @@ import {
  * The sandboxed viewer, end to end through the running app: grill-result §4.2's handoff flow and
  * §4.3's two header sets, asserted from a real browser.
  *
- * The file name sorts after `setup-and-signin.spec.ts`, which asserts `/setup` is still open on
- * an empty database. Everything below drives artifact origins through `page.goto` rather than an
- * API request context: Chrome resolves `*.localhost` to 127.0.0.1 itself, Node's resolver does
- * not. Chrome also treats `*.localhost` as a secure context, so `Secure` cookies work over http.
+ * Runs after `setup-and-signin.spec.ts` (the `first-run` project in playwright.config.ts), which
+ * asserts `/setup` is still open on an empty database. Everything below drives artifact origins
+ * through `page.goto` rather than an API request context: Chrome resolves `*.localhost` to
+ * 127.0.0.1 itself, Node's resolver does not. Chrome also treats `*.localhost` as a secure context,
+ * so `Secure` cookies work over http.
  */
 
 const ADMIN_EMAIL = 'ops@example.com'

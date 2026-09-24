@@ -1,0 +1,56 @@
+name: codeql
+
+# Static security analysis of the TypeScript/JavaScript sources and of the workflows themselves.
+# Findings land in the repository's Security tab (code scanning); the job itself fails only when
+# analysis breaks, not when it finds something.
+
+on:
+  # The default branch by name here, unlike ci.yml: code scanning's baseline is the default
+  # branch's results, and a PR is compared against it. Every PR is analysed regardless.
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so newly released queries also run against code that has not changed.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+# Only PR runs are superseded. Pushes and the schedule both run on main, and a `schedule` event's
+# payload carries no `repository`, so a default-branch comparison would read as "not main" there
+# and let a scheduled run cancel a push's analysis (or the reverse).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      security-events: write # upload the SARIF results
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # `actions` covers .github/workflows (script injection, over-broad tokens). Neither
+        # language needs a build.
+        language: [javascript-typescript, actions]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        with:
+          category: /language:${{ matrix.language }}

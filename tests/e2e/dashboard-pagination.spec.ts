@@ -4,9 +4,9 @@ import { expect, test, type APIRequestContext } from '@playwright/test'
  * The dashboard pager keeps focus on the completion note after the last `Load more` press, and the
  * always-mounted live region announces the completion to screen readers.
  *
- * The `zz-` prefix is load-bearing: every spec shares one database (workers: 1, fullyParallel:
- * false) and files run in path order. This spec seeds enough artifacts to overflow the first page,
- * which would push `Sales dash` off row 20 and break `upload-and-list.spec.ts`'s
+ * Its place in the `chromium-late` project (playwright.config.ts) is load-bearing: every spec
+ * shares one database. This spec seeds enough artifacts to overflow the first page, which would
+ * push `Sales dash` off row 20 and break `upload-and-list.spec.ts`'s
  * `getByRole('link', { name: 'Sales dash' })` assertion if it ran earlier.
  *
  * A mouse click leaves focus on the pressed element and masks the defect, so the whole journey is

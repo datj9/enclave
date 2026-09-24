@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test'
 
 /**
  * Thin password-reset UX coverage that runs without real SMTP (missing `SMTP_HOST` still boots,
- * and forgot-password still returns the generic success). The filename sorts after
- * `setup-and-signin.spec.ts`, so the first-run administrator already exists. A successful consume
+ * and forgot-password still returns the generic success). It runs after `setup-and-signin.spec.ts`
+ * (the `first-run` project in playwright.config.ts), so the first-run administrator exists. A successful consume
  * is deliberately not driven here — the full token lifecycle is covered in
  * `tests/integration/password-reset.test.ts` against real Postgres.
  */
