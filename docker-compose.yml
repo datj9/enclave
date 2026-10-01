@@ -49,7 +49,7 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     ports:
       # 5434, not 5432 or 5433 — those collide with a locally installed Postgres and with
