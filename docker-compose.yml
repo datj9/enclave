@@ -49,7 +49,7 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     ports:
       # 5434, not 5432 or 5433 — those collide with a locally installed Postgres and with
@@ -74,7 +74,7 @@ services:
     # Pinned by digest so a fresh `up` next month runs the server this was tested against. MinIO no
     # longer serves its images anonymously, so this is Chainguard's free build of the same server.
     # Keep in step with MINIO_IMAGE in .github/workflows/ci.yml.
-    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    image: cgr.dev/chainguard/minio:latest@sha256:e7ca559d9f7c0b5f24f5f669bb92f40f3ca88d56273b808bf3a7c116c17d2ffa
     profiles: ['minio']
     # The image runs as uid 65532, but a fresh named volume is owned by root, so MinIO could not
     # write /data. This is a local demo service; production uses a real S3-compatible provider.
