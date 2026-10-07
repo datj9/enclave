@@ -21,11 +21,11 @@ concurrency:
 
 env:
   NEXT_TELEMETRY_DISABLED: '1'
-  # One place for the object-storage image. A dated release, never `latest`: the same commit must
-  # test against the same server next month. From quay.io, MinIO's own registry — Docker Hub does
-  # not carry the dated tags. The digest is the one `minio/minio:latest` resolved to when this was
-  # pinned, so nothing changed underneath the tests. Keep in step with docker-compose.yml.
-  MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+  # One place for the object-storage image, pinned by digest so the same commit tests against the
+  # same server next month. MinIO no longer serves its images anonymously (Docker Hub and quay.io
+  # both answer 401), so this is Chainguard's build of the same MinIO server, which is free to pull.
+  # It runs as uid 65532 with no /data, hence the tmpfs below. Keep in step with docker-compose.yml.
+  MINIO_IMAGE: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
 
 # Actions are pinned to the commit a release tag pointed at when it was pinned (the trailing
 # comment); a moved tag cannot change what runs. Dependabot keeps both in step.
@@ -106,6 +106,7 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=enclave-dev-access-key \
             -e MINIO_ROOT_PASSWORD=enclave-dev-secret-key \
+            --tmpfs /data:rw,uid=65532,gid=65532,mode=0700 \
             "$MINIO_IMAGE" server /data
           for i in $(seq 1 40); do
             curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && exit 0
