@@ -9,7 +9,7 @@
 # The server image deliberately carries no drizzle-kit, tsx or dev dependencies; operator tasks
 # that need them run from `tools`/`migrate`, which is never the long-running container.
 
-FROM node:24-bookworm-slim AS base
+FROM node:25-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -60,7 +60,7 @@ CMD ["pnpm", "db:migrate"]
 FROM tools AS migrate
 
 # Kept last so a plain `docker build .` still produces the server image.
-FROM node:24-bookworm-slim AS runner
+FROM node:25-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
