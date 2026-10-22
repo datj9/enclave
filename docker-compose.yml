@@ -74,7 +74,7 @@ services:
     # Pinned by digest so a fresh `up` next month runs the server this was tested against. MinIO no
     # longer serves its images anonymously, so this is Chainguard's free build of the same server.
     # Keep in step with MINIO_IMAGE in .github/workflows/ci.yml.
-    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    image: cgr.dev/chainguard/minio:latest@sha256:ad134b2dd572ae0d989d6807c3e45516cc75a34883a8021db2ff04be5d1d496a
     profiles: ['minio']
     # The image runs as uid 65532, but a fresh named volume is owned by root, so MinIO could not
     # write /data. This is a local demo service; production uses a real S3-compatible provider.
